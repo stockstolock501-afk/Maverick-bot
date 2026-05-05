@@ -1,20 +1,306 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Maverick Bot Dashboard</title>
-    <link rel="stylesheet" href="styles.css">
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Maverick Terminal</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#03030c;color:#a0a0c0;font-family:'Courier New',monospace;padding:14px;min-height:100vh}
+.header{display:flex;align-items:center;gap:10px;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #0e0e22}
+.dot{width:8px;height:8px;border-radius:50%;background:#00e5a0;box-shadow:0 0 8px #00e5a0;flex-shrink:0}
+h1{color:#fff;font-size:18px;font-weight:900;letter-spacing:-0.5px}
+h1 span{color:#00e5a0}
+.sub{font-size:8px;color:#1a1a2e;letter-spacing:2px;margin-top:2px}
+.clock{margin-left:auto;font-size:9px;color:#1a1a30;font-family:monospace}
+.card{background:#06060f;border:1px solid #0e0e22;border-radius:8px;padding:14px;margin-bottom:12px}
+.section-label{font-size:9px;color:#2a2a4a;letter-spacing:2px;font-weight:700;text-transform:uppercase;margin-bottom:10px}
+input{background:#03030c;border:1px solid #111;border-radius:5px;color:#c0c0d8;padding:10px 12px;font-family:monospace;font-size:13px;width:100%;margin-bottom:8px;text-transform:uppercase}
+input::placeholder{text-transform:none;color:#1a1a2e}
+input:focus{outline:none;border-color:#00e5a040}
+.btn{border:none;border-radius:5px;padding:11px;font-family:monospace;font-size:11px;font-weight:900;cursor:pointer;width:100%;letter-spacing:1.5px;margin-bottom:8px}
+.btn-green{background:linear-gradient(135deg,#00cc88,#007755);color:#000;box-shadow:0 0 14px rgba(0,200,130,0.15)}
+.btn-gold{background:linear-gradient(135deg,#cc9900,#664400);color:#000}
+.btn-dim{background:#0a0a18;border:1px solid #111;color:#3a3a5a;font-size:10px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+.metric .lbl{font-size:8px;color:#2a2a4a;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
+.metric .val{font-size:15px;font-weight:700;font-family:monospace}
+.g{color:#00e5a0}.r{color:#ff4444}.gold{color:#ffcc00}.b{color:#3b9eff}
+.quote-result{font-size:13px;color:#606080;min-height:24px;padding:4px 0}
+.trade-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #080814;font-size:11px}
+.trade-row:last-child{border-bottom:none}
+.pill{display:inline-block;padding:1px 6px;border-radius:3px;font-size:7px;font-weight:800;letter-spacing:1px;margin-left:4px}
+.watch-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #080814}
+.watch-row:last-child{border-bottom:none}
+.rmv{background:none;border:none;color:#2a2a3a;cursor:pointer;font-size:14px;width:auto;padding:0;margin:0;font-family:monospace}
+.signal{background:#0a0600;border:1px solid #1a0e00;border-radius:6px;padding:10px;margin-bottom:8px;font-size:10px;color:#604020;line-height:1.7}
+.signal strong{display:block;margin-bottom:2px}
+@keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
+.blink{animation:blink 1.8s ease-in-out infinite}
+</style>
 </head>
 <body>
-    <header>
-        <h1>Welcome to Maverick Bot</h1>
-    </header>
-    <main>
-        <p>This is the dashboard for the Maverick Bot. You can manage your settings and view your performance here.</p>
-    </main>
-    <footer>
-        <p>&copy; 2026 Maverick Bot. All rights reserved.</p>
-    </footer>
+
+<div class="header">
+  <div class="dot blink" id="statusDot"></div>
+  <div>
+    <h1>MAVERICK <span>TERMINAL</span></h1>
+    <div class="sub">LIVE · FINNHUB REAL-TIME · VERIFIED DATA</div>
+  </div>
+  <div class="clock" id="clock">--:-- ET</div>
+</div>
+
+<!-- QUOTE -->
+<div class="card">
+  <div class="section-label">⚡ Live Quote</div>
+  <input id="qi" placeholder="Enter ticker (e.g. LFVN, SKK, CNSP)"/>
+  <button class="btn btn-green" onclick="fetchQ()">▶ GET LIVE PRICE</button>
+  <div class="quote-result" id="qr">Waiting...</div>
+</div>
+
+<!-- STATS -->
+<div class="card">
+  <div class="section-label">📊 Trade Journal</div>
+  <div class="grid3">
+    <div class="metric"><div class="lbl">Today P&L</div><div class="val g" id="todayPnl">$0.00</div></div>
+    <div class="metric"><div class="lbl">Week P&L</div><div class="val g" id="weekPnl">$0.00</div></div>
+    <div class="metric"><div class="lbl">Win Rate</div><div class="val gold" id="winRate">0%</div></div>
+  </div>
+  <div class="grid3">
+    <div class="metric"><div class="lbl">Trades</div><div class="val" id="tradeCount">0</div></div>
+    <div class="metric"><div class="lbl">Avg Win</div><div class="val g" id="avgWin">$0</div></div>
+    <div class="metric"><div class="lbl">Avg Loss</div><div class="val r" id="avgLoss">$0</div></div>
+  </div>
+  <button class="btn btn-dim" onclick="loadTrades()">↻ REFRESH TRADE LOG</button>
+</div>
+
+<!-- TRADE LOG -->
+<div class="card">
+  <div class="section-label">📋 Recent Trades</div>
+  <div id="tradeLog" style="font-size:11px;color:#1a1a2e">Close a trade in Telegram to see it here.</div>
+</div>
+
+<!-- WATCHLIST -->
+<div class="card" style="border-color:#ffcc0015">
+  <div class="section-label">👁 Price Monitor (up to 5)</div>
+  <input id="wi" placeholder="Add ticker to watch (e.g. LFVN)"/>
+  <button class="btn btn-gold" onclick="addWatch()">+ ADD TO WATCHLIST</button>
+  <div id="watchlist">
+    <div style="font-size:10px;color:#1a1a2e">No tickers added yet.</div>
+  </div>
+</div>
+
+<!-- SUPERNOVA SIGNALS -->
+<div class="card" style="border-color:#ff330015">
+  <div class="section-label">🔥 What Our Scanner Now Hunts</div>
+  <div class="signal">
+    <strong style="color:#ffcc00">⚡ DEAL-SIZE RATIO</strong>
+    Company announces deal worth 5x+ its market cap.<br>
+    <em>SKK: $4M mktcap × $258M deal = 60x = 700% move</em>
+  </div>
+  <div class="signal">
+    <strong style="color:#ff8800">🏦 OVERSUBSCRIBED PLACEMENT</strong>
+    Private placement oversubscribed with named institutions.<br>
+    <em>CNSP: oversubscribed, ADAR1+Ikarian = 346% move</em>
+  </div>
+  <div class="signal">
+    <strong style="color:#00e5a0">🎯 MICRO FLOAT (&lt;1M shares)</strong>
+    Any hard catalyst on sub-1M float = explosive move.<br>
+    <em>CNSP had 811K shares outstanding when it ran 346%</em>
+  </div>
+  <div class="signal">
+    <strong style="color:#3b9eff">🛑 HALT CONTINUATION</strong>
+    Stock halted up 2+ times = multiple squeeze legs.<br>
+    <em>Each halt resume is a new entry opportunity</em>
+  </div>
+  <div class="signal">
+    <strong style="color:#cc44ff">📚 SIXTH GRADE TRADE</strong>
+    Catalyst so obvious direction is self-evident.<br>
+    <em>Company worth $4M signs $258M deal = buy</em>
+  </div>
+</div>
+
+<!-- BOT COMMANDS REFERENCE -->
+<div class="card">
+  <div class="section-label">🤖 Telegram Bot Commands</div>
+  <div style="font-size:11px;color:#404060;line-height:2">
+    <div><span style="color:#00e5a0">watching LFVN at 5.10</span> — start watch</div>
+    <div><span style="color:#00e5a0">watching LFVN at 5.10 stop 4.80</span> — custom stop</div>
+    <div><span style="color:#00e5a0">in at 5.11 with 200 shares</span> — log entry</div>
+    <div><span style="color:#ffb800">added 100 at 5.50</span> — add to position</div>
+    <div><span style="color:#ffb800">sl 4.88</span> — override stop</div>
+    <div><span style="color:#ff4444">out at 5.85</span> — close + log P&L</div>
+    <div><span style="color:#3b9eff">status</span> — live P&L check</div>
+    <div><span style="color:#3b9eff">daily / weekly / monthly</span> — reports</div>
+    <div><span style="color:#3b9eff">history</span> — last 10 trades</div>
+    <div><span style="color:#cc44ff">analyze</span> — AI reviews your trading</div>
+    <div><span style="color:#888">LFVN</span> — quick price quote</div>
+    <div><span style="color:#888">cancel</span> — reset everything</div>
+  </div>
+</div>
+
+<div style="margin-top:10px;font-size:8px;color:#0e0e1e;text-align:center">
+  MAVERICK TERMINAL · FOR INFORMATIONAL USE ONLY · DATA: FINNHUB.IO
+</div>
+
+<script>
+// ── YOUR FINNHUB KEY — paste it between the quotes ─────────────────────────
+const FH = d7s3fn9r01qm28g86vu0d7s3fn9r01qm28g86vug;
+
+// ── YOUR JSONBIN KEYS (optional — for trade log sync) ─────────────────────
+const JB_KEY = $2a$10$a3HVYP3bn9z3KQaYk2lL2..MjZpF6Z60jV3X8EhrM5Vr3i8cxpirO;
+const JB_BIN = 69f9653836566621a8271527;
+
+// ── CLOCK + MARKET STATUS ─────────────────────────────────────────────────
+function tick() {
+  const now = new Date();
+  const et  = new Date(now.toLocaleString('en-US', { timeZone:'America/New_York' }));
+  const hh  = String(et.getHours()).padStart(2,'0');
+  const mm  = String(et.getMinutes()).padStart(2,'0');
+  document.getElementById('clock').textContent = `${hh}:${mm} ET`;
+  const d = et.getDay(), m = et.getHours()*60+et.getMinutes();
+  const open = d>0 && d<6 && m>=570 && m<960;
+  const dot  = document.getElementById('statusDot');
+  dot.style.background   = open ? '#00e5a0' : '#333';
+  dot.style.boxShadow    = open ? '0 0 8px #00e5a0' : 'none';
+  dot.style.animation    = open ? 'blink 1.8s ease-in-out infinite' : 'none';
+}
+setInterval(tick, 1000); tick();
+
+// ── QUOTE ─────────────────────────────────────────────────────────────────
+async function fetchQ() {
+  const sym = document.getElementById('qi').value.toUpperCase().trim();
+  if (!sym) return;
+  const el = document.getElementById('qr');
+  el.style.color = '#3a3a5a';
+  el.textContent = 'Fetching live data...';
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FH}`);
+    const d = await r.json();
+    if (!d.c || d.c === 0) { el.textContent = '❌ Ticker not found. Check symbol.'; return; }
+    const up = d.dp >= 0;
+    el.innerHTML =
+      `<span style="color:#fff;font-size:18px;font-weight:900">$${d.c.toFixed(2)}</span> ` +
+      `<span style="${up?'color:#00e5a0':'color:#ff4444'};font-size:14px;font-weight:700">${up?'+':''}${d.dp?.toFixed(2)}%</span><br>` +
+      `<span style="color:#2a2a4a">Open $${d.o} · High $${d.h} · Low $${d.l} · Prev $${d.pc}</span>`;
+  } catch {
+    el.textContent = '❌ Error — check your Finnhub key in the code';
+  }
+}
+document.getElementById('qi').addEventListener('keydown', e => { if(e.key==='Enter') fetchQ(); });
+
+// ── WATCHLIST ─────────────────────────────────────────────────────────────
+let wl = JSON.parse(localStorage.getItem('mv_wl') || '[]');
+let wp = {};
+
+function saveWl() { localStorage.setItem('mv_wl', JSON.stringify(wl)); }
+
+function addWatch() {
+  const sym = document.getElementById('wi').value.toUpperCase().trim();
+  if (!sym || wl.includes(sym) || wl.length >= 5) return;
+  wl.push(sym); saveWl();
+  document.getElementById('wi').value = '';
+  renderWl(); refreshPrices();
+}
+document.getElementById('wi').addEventListener('keydown', e => { if(e.key==='Enter') addWatch(); });
+
+function removeWatch(sym) { wl = wl.filter(s=>s!==sym); saveWl(); renderWl(); }
+
+function renderWl() {
+  const el = document.getElementById('watchlist');
+  if (!wl.length) { el.innerHTML = '<div style="font-size:10px;color:#1a1a2e">No tickers added yet.</div>'; return; }
+  el.innerHTML = wl.map(sym => {
+    const q = wp[sym];
+    const up = q?.dp >= 0;
+    const priceHtml = q
+      ? `<span style="color:#fff;font-weight:700">$${q.c?.toFixed(2)}</span> <span style="${up?'color:#00e5a0':'color:#ff4444'}">${up?'+':''}${q.dp?.toFixed(2)}%</span>`
+      : '<span style="color:#2a2a3a">loading...</span>';
+    return `<div class="watch-row">
+      <span style="color:#fff;font-weight:800;font-family:monospace">${sym}</span>
+      <span style="font-size:13px">${priceHtml}</span>
+      <button class="rmv" onclick="removeWatch('${sym}')">✕</button>
+    </div>`;
+  }).join('');
+}
+
+async function refreshPrices() {
+  for (const sym of wl) {
+    try {
+      const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FH}`);
+      wp[sym] = await r.json();
+    } catch {}
+  }
+  renderWl();
+}
+
+renderWl();
+if (wl.length) refreshPrices();
+setInterval(() => { if (wl.length) refreshPrices(); }, 15000);
+
+// ── TRADE LOG ─────────────────────────────────────────────────────────────
+async function loadTrades() {
+  let trades = [];
+  if (JB_KEY = $2a$10$a3HVYP3bn9z3KQaYk2lL2..MjZpF6Z60jV3X8EhrM5Vr3i8cxpirO) {
+    try {
+      const r = await fetch(`https://api.jsonbin.io/v3/b/${JB_BIN}/latest`, {
+        headers: { 'X-Master-Key': JB_KEY }
+      });
+      const d = await r.json();
+      trades = d.record?.trades || [];
+    } catch {}
+  } else {
+    trades = JSON.parse(localStorage.getItem('mv_trades') || '[]');
+  }
+  renderStats(trades);
+  renderLog(trades);
+}
+
+function renderStats(trades) {
+  if (!trades.length) return;
+  const today = new Date().toISOString().split('T')[0];
+  const todayT = trades.filter(t => t.date === today);
+  const weekT  = trades.filter(t => (Date.now()-new Date(t.date).getTime()) < 7*86400000);
+  const wins   = trades.filter(t => t.pnl > 0);
+  const losses = trades.filter(t => t.pnl <= 0);
+  const sum    = arr => arr.reduce((s,t) => s+t.pnl, 0);
+
+  const tp = sum(todayT), wp = sum(weekT);
+  const aw = wins.length   ? (sum(wins)/wins.length).toFixed(2)   : '0.00';
+  const al = losses.length ? (sum(losses)/losses.length).toFixed(2): '0.00';
+
+  document.getElementById('todayPnl').textContent   = `${tp>=0?'+':''}$${tp.toFixed(2)}`;
+  document.getElementById('todayPnl').style.color    = tp>=0?'#00e5a0':'#ff4444';
+  document.getElementById('weekPnl').textContent    = `${wp>=0?'+':''}$${wp.toFixed(2)}`;
+  document.getElementById('weekPnl').style.color     = wp>=0?'#00e5a0':'#ff4444';
+  document.getElementById('winRate').textContent    = `${((wins.length/trades.length)*100).toFixed(0)}%`;
+  document.getElementById('tradeCount').textContent = trades.length;
+  document.getElementById('avgWin').textContent     = `+$${aw}`;
+  document.getElementById('avgLoss').textContent    = `$${al}`;
+}
+
+function renderLog(trades) {
+  const el = document.getElementById('tradeLog');
+  if (!trades.length) { el.innerHTML = '<div style="color:#1a1a2e">No trades logged yet.</div>'; return; }
+  el.innerHTML = trades.slice(-8).reverse().map(t => `
+    <div class="trade-row">
+      <div>
+        <span style="color:#fff;font-weight:800">${t.symbol}</span>
+        <span style="color:#2a2a4a;font-size:9px;margin-left:6px">${t.date}</span>
+        ${t.t1Hit?'<span class="pill" style="background:#00e5a020;color:#00e5a0">T1✓</span>':''}
+        ${t.t2Hit?'<span class="pill" style="background:#3b9eff20;color:#3b9eff">T2✓</span>':''}
+      </div>
+      <div style="text-align:right">
+        <div style="color:${t.pnl>=0?'#00e5a0':'#ff4444'};font-weight:700;font-size:13px">
+          ${t.pnl>=0?'+':''}$${t.pnl.toFixed(2)}
+        </div>
+        <div style="color:#2a2a4a;font-size:9px">${t.minutesInTrade}min · ${t.pnlPct}%</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+loadTrades();
+</script>
 </body>
 </html>
