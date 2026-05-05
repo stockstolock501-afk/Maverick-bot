@@ -4,7 +4,7 @@ const WebSocket   = require('ws');
 const fetch       = require('node-fetch');
 const http        = require('http');
 
-// ── ENV ──────────────────────────────────────────────────────────────────────
+// ── ENV ─────────────────────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const FINNHUB_KEY    = process.env.FINNHUB_KEY;
 const JSONBIN_KEY    = process.env.JSONBIN_KEY;   // free at jsonbin.io
@@ -16,16 +16,16 @@ if (!TELEGRAM_TOKEN || !FINNHUB_KEY) {
   process.exit(1);
 }
 
-// ── BOT ───────────────────────────────────────────────────────────────────────
+// ── BOT ────────────────────────────────────────────────────────────
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-// ── TRADE STATE ───────────────────────────────────────────────────────────────
+// ── TRADE STATE ──────────────────────────────────────────────────────────
 const watches     = new Map();
 const trades      = new Map();
 const subscribers = new Map();
 const volTracker  = new Map();
 
-// ── JSONBIN TRADE LOG ─────────────────────────────────────────────────────────
+// ── JSONBIN TRADE LOG ────────────────────────────────────────────────────────
 // Free at jsonbin.io — stores all trades as JSON forever
 async function logLoad() {
   if (!JSONBIN_KEY || !JSONBIN_BIN) return [];
@@ -55,7 +55,7 @@ async function logTrade(entry) {
   await logSave(all);
 }
 
-// ── GROQ AI ANALYSIS ──────────────────────────────────────────────────────────
+// ── GROQ AI ANALYSIS ────────────────────────────────────────────────────────
 async function groqAnalyze(prompt) {
   if (!GROQ_KEY) return null;
   try {
@@ -76,7 +76,7 @@ async function groqAnalyze(prompt) {
   } catch { return null; }
 }
 
-// ── FINNHUB WEBSOCKET ─────────────────────────────────────────────────────────
+// ── FINNHUB WEBSOCKET ────────────────────────────────────────────────────────
 let ws;
 function connectFinnhub() {
   ws = new WebSocket(`wss://ws.finnhub.io?token=${FINNHUB_KEY}`);
@@ -110,7 +110,7 @@ function removeSub(sym, id) {
   if (!s.size) { subscribers.delete(sym); wsSub(sym, 'unsubscribe'); }
 }
 
-// ── FINNHUB REST ──────────────────────────────────────────────────────────────
+// ── FINNHUB REST ─────────────────────────────────────────────────────────
 async function getQuote(sym) {
   try {
     const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
@@ -136,7 +136,7 @@ async function getNews(sym) {
   } catch { return null; }
 }
 
-// ── TRADE MATH ────────────────────────────────────────────────────────────────
+// ── TRADE MATH ──────────────────────────────────────────────────────────
 function calcLevels(entry, customStop) {
   const stopPct = entry < 5 ? 0.035 : entry < 10 ? 0.028 : entry < 30 ? 0.02 : 0.015;
   const stop    = customStop || +(entry * (1 - stopPct)).toFixed(2);
@@ -158,7 +158,7 @@ function totalPnl(tr, exitPrice) {
   return +((exitPrice - tr.entryPrice) * tr.shares + tr.adds.reduce((s, a) => s + (exitPrice - a.price) * a.shares, 0)).toFixed(2);
 }
 
-// ── TICK HANDLER ──────────────────────────────────────────────────────────────
+// ── TICK HANDLER ─────────────────────────────────────────────────────────
 function onTick(sym, price, vol) {
   // Volume tracking
   if (!volTracker.has(sym)) volTracker.set(sym, { v1m: 0, reset: Date.now() });
@@ -166,7 +166,7 @@ function onTick(sym, price, vol) {
   if (Date.now() - vt.reset > 60000) { vt.v1m = 0; vt.reset = Date.now(); }
   vt.v1m += vol;
 
-  // ── WATCHES ─────────────────────────────────────────────────────────────────
+  // ── WATCHES ──────────────────────────────────────────────────────────
   for (const [chatId, w] of watches) {
     if (w.symbol !== sym || w.confirmed) continue;
     w.currentPrice = price;
@@ -187,7 +187,7 @@ function onTick(sym, price, vol) {
     }
   }
 
-  // ── ACTIVE TRADES ────────────────────────────────────────────────────────────
+  // ── ACTIVE TRADES ────────────────────────────────────────────────────────
   for (const [chatId, tr] of trades) {
     if (tr.symbol !== sym) continue;
     const prev = tr.currentPrice || tr.entryPrice;
@@ -223,7 +223,7 @@ function onTick(sym, price, vol) {
     if (!tr.t1Hit && price >= tr.targets.t1) {
       tr.t1Hit = true; tr.stopLoss = tr.avgCost; tr.stopAlerted = false; tr.trailAlerted = false;
       const p = totalPnl(tr, tr.targets.t1);
-      send(chatId, `🎯 *TARGET 1 — ${sym}*\nPrice: *$${price.toFixed(2)}* | Profit: *+$${p.toFixed(2)}*\n\n✅ Sell 50% → lock $${(p*0.5).toFixed(2)}\n🔄 Stop → BREAKEVEN: *$${tr.avgCost}*\n🎯 Next: *$${tr.targets.t2}*`);
+      send(chatId, `🎯 *TARGET 1 — ${sym}*\nPrice: *$${price.toFixed(2)}* | Profit: *+$${p.toFixed(2)}*\n\n✅ Sell 50% → lock $${(p*0.5).toFixed(2)}\n🔄 Stop → BREAKEVEN: *$${tr.avgCost}*`);
     }
 
     // TARGET 2
@@ -238,30 +238,30 @@ function onTick(sym, price, vol) {
       const pctGain = ((price - tr.avgCost) / tr.avgCost) * 100;
       if (pctGain > 4 && volR > 2 && price > prev * 0.995) {
         tr.addSent = true;
-        send(chatId, `📈 *ADD SIGNAL — ${sym}*\nVol: *${volR.toFixed(1)}x* | Move: *+${pctGain.toFixed(1)}%* | No reversal\n\n✅ Low risk to add\nTight stop on add: *$${(price*0.985).toFixed(2)}*\nText: _added 100 at ${price.toFixed(2)}_`);
+        send(chatId, `📈 *ADD SIGNAL — ${sym}*\nVol: *${volR.toFixed(1)}x* | Move: *+${pctGain.toFixed(1)}%* | No reversal\n\n✅ Low risk to add\nTight stop on add: *$${(price*0.985).toFixed(2)}*`);
       }
     }
 
     // 45 MIN WARNING
     if (!tr.warn45 && minsIn >= 45) {
       tr.warn45 = true;
-      send(chatId, `⏱ *45-MIN WARNING — ${sym}*\nIn: *${minsIn.toFixed(0)}min* | P&L: *${pnl>=0?'+':''}$${pnl.toFixed(2)}* (${pnlPct}%)\n\n${!tr.t1Hit ? '⚠️ T1 not hit — re-evaluate.' : '✅ T1 hit — consider full exit.'}\n\nText _status_ or _out at [price]_`);
+      send(chatId, `⏱ *45-MIN WARNING — ${sym}*\nIn: *${minsIn.toFixed(0)}min* | P&L: *${pnl>=0?'+':''}$${pnl.toFixed(2)}* (${pnlPct}%)\n\n${!tr.t1Hit ? '⚠️ T1 not hit — re-evaluate.' : '✅ Targets hit — play for T2.'}`);
     }
 
     // 90 MIN WARNING
     if (!tr.warn90 && minsIn >= 90) {
       tr.warn90 = true;
-      send(chatId, `🚨 *90-MIN — ${sym}*\nYou've been in *${minsIn.toFixed(0)} minutes*\nP&L: *${pnl>=0?'+':''}$${pnl.toFixed(2)}*\n\nDay trade momentum is typically exhausted.\n*Strongly consider exiting.*\nText: _out at ${price.toFixed(2)}_`);
+      send(chatId, `🚨 *90-MIN — ${sym}*\nYou've been in *${minsIn.toFixed(0)} minutes*\nP&L: *${pnl>=0?'+':''}$${pnl.toFixed(2)}*\n\nDay trade momentum is typically exhausted.\n*Strongly consider closing.*`);
     }
   }
 }
 
-// ── SEND ──────────────────────────────────────────────────────────────────────
+// ── SEND ────────────────────────────────────────────────────────────
 function send(chatId, text) {
   bot.sendMessage(chatId, text, { parse_mode: 'Markdown' }).catch(e => console.error('Send:', e.message));
 }
 
-// ── PARSE ─────────────────────────────────────────────────────────────────────
+// ── PARSE ───────────────────────────────────────────────────────────
 function parse(text) {
   const t = text.trim();
   let m;
@@ -298,7 +298,7 @@ function parse(text) {
   return null;
 }
 
-// ── COMMANDS ──────────────────────────────────────────────────────────────────
+// ── COMMANDS ──────────────────────────────────────────────────────────
 
 async function cmdWatch(chatId, symbol, entryLevel, customStop) {
   const old = watches.get(chatId);
@@ -462,7 +462,7 @@ function cmdCancel(chatId) {
   send(chatId, `✅ Cleared. Ready.\n\nText: _watching [TICKER] at [price]_`);
 }
 
-// ── TRADE LOG COMMANDS ────────────────────────────────────────────────────────
+// ── TRADE LOG COMMANDS ───────────────────────────────────────────────────────
 
 function filterTrades(all, days) {
   const cutoff = new Date();
@@ -562,7 +562,7 @@ function cmdHelp(chatId) {
   );
 }
 
-// ── ROUTER ────────────────────────────────────────────────────────────────────
+// ── ROUTER ───────────────────────────────────────────────────────────
 bot.on('message', async msg => {
   const chatId = msg.chat.id;
   const text   = (msg.text || '').trim();
@@ -610,9 +610,31 @@ async function autoScan() {
 
 setInterval(autoScan, 30 * 60 * 1000);
 
-// ── KEEP-ALIVE ────────────────────────────────────────────────────────────────
+// ── HTTP API SERVER (for frontend) ──────────────────────────────────────────
+const app = http.createServer(async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', 'application/json');
+
+  if (req.url.startsWith('/api/quote?')) {
+    const url = new URL(`http://localhost${req.url}`);
+    const sym = url.searchParams.get('symbol');
+    if (!sym) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing symbol' })); return; }
+    const q = await getQuote(sym);
+    res.writeHead(200);
+    res.end(JSON.stringify(q || {}));
+  } else if (req.url === '/api/trades') {
+    const trades = await logLoad();
+    res.writeHead(200);
+    res.end(JSON.stringify({ trades }));
+  } else {
+    res.writeHead(200);
+    res.end('Maverick Bot v2 API running');
+  }
+});
+
+// ── START ───────────────────────────────────────────────────────────────────────
 connectFinnhub();
-http.createServer((_, res) => res.end('Maverick Bot v2 alive')).listen(3000, () => {
+app.listen(3000, () => {
   console.log('🤖 Maverick Trade Bot v2 running');
   console.log(`   Finnhub: ✅ | Trade Log: ${JSONBIN_KEY?'✅':'⚠️ add JSONBIN_KEY'} | AI: ${GROQ_KEY?'✅':'⚠️ add GROQ_KEY'}`);
 });
