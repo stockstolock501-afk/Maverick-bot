@@ -1,11 +1,9 @@
 {
-  "name": "maverick-trade-bot",
-  "version": "1.0.0",
-  "description": "Maverick Playbook — Real-time Telegram Trade Monitor",
+  "name": "maverick-trade-bot-v2",
+  "version": "2.0.0",
+  "description": "Maverick Playbook Trade Bot — Enhanced Scanner + Trade Log + AI Analysis",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
+  "scripts": { "start": "node index.js" },
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
     "ws": "^8.16.0",
