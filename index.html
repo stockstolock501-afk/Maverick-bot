@@ -145,12 +145,8 @@ input:focus{outline:none;border-color:#00e5a040}
 </div>
 
 <script>
-// ── YOUR FINNHUB KEY — paste it between the quotes ─────────────────────────
-const FH = d7s3fn9r01qm28g86vu0d7s3fn9r01qm28g86vug;
-
-// ── YOUR JSONBIN KEYS (optional — for trade log sync) ─────────────────────
-const JB_KEY = $2a$10$a3HVYP3bn9z3KQaYk2lL2..MjZpF6Z60jV3X8EhrM5Vr3i8cxpirO;
-const JB_BIN = 69f9653836566621a8271527;
+// ── FINNHUB API ENDPOINT (trades call backend instead of exposing key) ──
+const API_ENDPOINT = '/api';
 
 // ── CLOCK + MARKET STATUS ─────────────────────────────────────────────────
 function tick() {
@@ -168,7 +164,7 @@ function tick() {
 }
 setInterval(tick, 1000); tick();
 
-// ── QUOTE ─────────────────────────────────────────────────────────────────
+// ── QUOTE ───────────────────────────────────────────────────────────
 async function fetchQ() {
   const sym = document.getElementById('qi').value.toUpperCase().trim();
   if (!sym) return;
@@ -176,7 +172,7 @@ async function fetchQ() {
   el.style.color = '#3a3a5a';
   el.textContent = 'Fetching live data...';
   try {
-    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FH}`);
+    const r = await fetch(`${API_ENDPOINT}/quote?symbol=${sym}`);
     const d = await r.json();
     if (!d.c || d.c === 0) { el.textContent = '❌ Ticker not found. Check symbol.'; return; }
     const up = d.dp >= 0;
@@ -185,12 +181,12 @@ async function fetchQ() {
       `<span style="${up?'color:#00e5a0':'color:#ff4444'};font-size:14px;font-weight:700">${up?'+':''}${d.dp?.toFixed(2)}%</span><br>` +
       `<span style="color:#2a2a4a">Open $${d.o} · High $${d.h} · Low $${d.l} · Prev $${d.pc}</span>`;
   } catch {
-    el.textContent = '❌ Error — check your Finnhub key in the code';
+    el.textContent = '❌ Error fetching data. Backend may be offline.';
   }
 }
 document.getElementById('qi').addEventListener('keydown', e => { if(e.key==='Enter') fetchQ(); });
 
-// ── WATCHLIST ─────────────────────────────────────────────────────────────
+// ── WATCHLIST ──────────────────────────────────────────────────────────
 let wl = JSON.parse(localStorage.getItem('mv_wl') || '[]');
 let wp = {};
 
@@ -227,7 +223,7 @@ function renderWl() {
 async function refreshPrices() {
   for (const sym of wl) {
     try {
-      const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FH}`);
+      const r = await fetch(`${API_ENDPOINT}/quote?symbol=${sym}`);
       wp[sym] = await r.json();
     } catch {}
   }
@@ -238,20 +234,14 @@ renderWl();
 if (wl.length) refreshPrices();
 setInterval(() => { if (wl.length) refreshPrices(); }, 15000);
 
-// ── TRADE LOG ─────────────────────────────────────────────────────────────
+// ── TRADE LOG ──────────────────────────────────────────────────────────
 async function loadTrades() {
   let trades = [];
-  if (JB_KEY = $2a$10$a3HVYP3bn9z3KQaYk2lL2..MjZpF6Z60jV3X8EhrM5Vr3i8cxpirO) {
-    try {
-      const r = await fetch(`https://api.jsonbin.io/v3/b/${JB_BIN}/latest`, {
-        headers: { 'X-Master-Key': JB_KEY }
-      });
-      const d = await r.json();
-      trades = d.record?.trades || [];
-    } catch {}
-  } else {
-    trades = JSON.parse(localStorage.getItem('mv_trades') || '[]');
-  }
+  try {
+    const r = await fetch(`${API_ENDPOINT}/trades`);
+    const d = await r.json();
+    trades = d.trades || [];
+  } catch {}
   renderStats(trades);
   renderLog(trades);
 }
