@@ -51,12 +51,49 @@ function addSub(s,id){if(!subscribers.has(s))subscribers.set(s,new Set());if(!su
 function removeSub(s,id){const x=subscribers.get(s);if(!x)return;x.delete(id);if(!x.size){subscribers.delete(s);wsSub(s,'unsubscribe');}}
 
 // ── DATA FETCH ────────────────────────────────────────────────────────────────
-async function yahooQuote(sym) {
+async async function yahooQuote(sym) {
+  // PRIMARY: Finnhub (reliable from server, key already working)
+  if (FINNHUB_KEY) {
+    try {
+      const [qr, pr] = await Promise.all([
+        fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`),
+        fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${sym}&token=${FINNHUB_KEY}`),
+      ]);
+      const q = await qr.json();
+      const p = await pr.json();
+      if (q && q.c && q.c > 0) {
+        const change = q.c - q.pc;
+        const changePct = q.pc ? (change / q.pc) * 100 : 0;
+        return {
+          price: q.c, change, changePct,
+          open: q.o, high: q.h, low: q.l, prevClose: q.pc,
+          volume: null, avgVolume: null,
+          marketCap: p?.marketCapitalization ? p.marketCapitalization * 1e6 : null,
+          floatShares: p?.shareOutstanding ? p.shareOutstanding * 1e6 : null,
+          sharesOut: p?.shareOutstanding ? p.shareOutstanding * 1e6 : null,
+          yearHigh: null, yearLow: null,
+          sector: p?.finnhubIndustry || null,
+          industry: p?.finnhubIndustry || null,
+          shortName: p?.name || sym,
+          preMarket: null, preMarketChangePct: null,
+          source: 'finnhub',
+        };
+      }
+    } catch(e) { console.error('Finnhub quote:', e.message); }
+  }
+  // FALLBACK: Yahoo with browser headers
   try {
-    const r=await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${sym}`,{headers:{'User-Agent':'Mozilla/5.0'}});
-    const d=await r.json(); const q=d?.quoteResponse?.result?.[0]; if(!q)return null;
-    return { price:q.regularMarketPrice, change:q.regularMarketChange, changePct:q.regularMarketChangePercent, open:q.regularMarketOpen, high:q.regularMarketDayHigh, low:q.regularMarketDayLow, prevClose:q.regularMarketPreviousClose, volume:q.regularMarketVolume, avgVolume:q.averageDailyVolume3Month, marketCap:q.marketCap, floatShares:q.floatShares, sharesOut:q.sharesOutstanding, pe:q.trailingPE, epsTTM:q.epsTrailingTwelveMonths, yearHigh:q.fiftyTwoWeekHigh, yearLow:q.fiftyTwoWeekLow, sector:q.sector, industry:q.industry, shortName:q.shortName, preMarket:q.preMarketPrice, preMarketChangePct:q.preMarketChangePercent };
-  } catch(e){console.error('Yahoo:',e.message);return null;}
+    const r = await fetch(
+      `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${sym}`,
+      { headers: { 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept':'application/json', 'Referer':'https://finance.yahoo.com/' }}
+    );
+    const d = await r.json();
+    const q = d?.quoteResponse?.result?.[0];
+    if (q?.regularMarketPrice) {
+      return { price:q.regularMarketPrice, change:q.regularMarketChange, changePct:q.regularMarketChangePercent, open:q.regularMarketOpen, high:q.regularMarketDayHigh, low:q.regularMarketDayLow, prevClose:q.regularMarketPreviousClose, volume:q.regularMarketVolume, avgVolume:q.averageDailyVolume3Month, marketCap:q.marketCap, floatShares:q.floatShares, sharesOut:q.sharesOutstanding, pe:q.trailingPE, yearHigh:q.fiftyTwoWeekHigh, yearLow:q.fiftyTwoWeekLow, sector:q.sector, industry:q.industry, shortName:q.shortName, preMarket:q.preMarketPrice, preMarketChangePct:q.preMarketChangePercent, source:'yahoo' };
+    }
+  } catch(e) { console.error('Yahoo fallback:', e.message); }
+  return null;
 }
 
 async function yahooCandles(sym,range,interval) {
