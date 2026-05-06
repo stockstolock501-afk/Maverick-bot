@@ -109,6 +109,7 @@ footer{margin-top:14px;font-size:8px;color:#1a1a2e;text-align:center;padding-bot
   <button class="tab" data-tab="supernova">🌟 SUPERNOVA</button>
   <button class="tab" data-tab="signals">📡 SIGNALS</button>
   <button class="tab" data-tab="catalyst">⚡ CATALYST</button>
+  <button class="tab" data-tab="chat" style="border-color:#cc44ff40;color:#cc44ff">💬 ADVISOR</button>
 </div>
 
 <!-- ═══════════════ ANALYZE ═══════════════ -->
@@ -239,7 +240,168 @@ footer{margin-top:14px;font-size:8px;color:#1a1a2e;text-align:center;padding-bot
   </div>
 </div>
 
-<footer>MAVERICK v3.3 · FINNHUB · YAHOO · GROQ AI · FOR INFORMATIONAL USE ONLY</footer>
+<!-- ═══════════════ AI ADVISOR CHAT ═══════════════ -->
+<div id="tab-chat" class="hidden">
+  <!-- Portfolio setup -->
+  <div class="card" style="border-color:#cc44ff30;background:linear-gradient(135deg,#0a0014,transparent)">
+    <div class="lbl-sm" style="color:#cc88ff">💬 Maverick AI Trading Advisor</div>
+    <div style="font-size:10px;color:#7a5a9a;margin-bottom:10px;line-height:1.5">
+      Ask anything. Position sizing · Probability · Trade management · Whale reading · Portfolio allocation
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
+      <div style="font-size:10px;color:#3a3a5a;white-space:nowrap">Portfolio $</div>
+      <input id="portfolioSize" placeholder="348" type="number" style="flex:1;margin-bottom:0;padding:8px;font-size:13px"/>
+      <button onclick="clearChat()" style="background:#0a0a18;border:1px solid #1a1a30;color:#555;border-radius:6px;padding:8px 12px;cursor:pointer;font-family:monospace;font-size:10px;white-space:nowrap">↺ Clear</button>
+    </div>
+  </div>
+
+  <!-- Quick question chips -->
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+    <button onclick="askQuick('Ford is at 11.65. Entry zone 11.60-11.70. Stop 11.20. How many shares should I buy from my portfolio?')" style="background:#0a0a18;border:1px solid #1a1a30;color:#888;border-radius:6px;padding:6px 10px;cursor:pointer;font-family:monospace;font-size:9px">📊 Position size</button>
+    <button onclick="askQuick('What is the probability this setup hits a 5% gain?')" style="background:#0a0a18;border:1px solid #1a1a30;color:#888;border-radius:6px;padding:6px 10px;cursor:pointer;font-family:monospace;font-size:9px">🎯 Probability</button>
+    <button onclick="askQuick('Should I add to my position or take profit?')" style="background:#0a0a18;border:1px solid #1a1a30;color:#888;border-radius:6px;padding:6px 10px;cursor:pointer;font-family:monospace;font-size:9px">📈 Add or exit?</button>
+    <button onclick="askQuick('What whale footprints should I look for before entering?')" style="background:#0a0a18;border:1px solid #1a1a30;color:#888;border-radius:6px;padding:6px 10px;cursor:pointer;font-family:monospace;font-size:9px">🐋 Whale check</button>
+    <button onclick="askQuick('How do I protect my gains on this trade?')" style="background:#0a0a18;border:1px solid #1a1a30;color:#888;border-radius:6px;padding:6px 10px;cursor:pointer;font-family:monospace;font-size:9px">🛡️ Protect gains</button>
+    <button onclick="askQuick('What is the max I should risk on a single trade?')" style="background:#0a0a18;border:1px solid #1a1a30;color:#888;border-radius:6px;padding:6px 10px;cursor:pointer;font-family:monospace;font-size:9px">⚠️ Max risk</button>
+  </div>
+
+  <!-- Chat history -->
+  <div id="chatHistory" style="min-height:200px;margin-bottom:12px"></div>
+
+  <!-- Input -->
+  <div style="position:sticky;bottom:0;background:#03030c;padding:8px 0">
+    <div style="display:flex;gap:8px;align-items:flex-end">
+      <textarea id="chatInput"
+        placeholder="Ask anything... e.g. 'F is at 11.65, entry 11.60-70, stop 11.20. How many shares with my portfolio?'"
+        style="flex:1;background:#06060f;border:1px solid #cc44ff40;border-radius:8px;color:#c0c0d8;padding:10px;font-family:monospace;font-size:12px;resize:none;height:60px;outline:none;line-height:1.5"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"
+      ></textarea>
+      <button onclick="sendChat()" style="background:linear-gradient(135deg,#9900cc,#660088);border:none;border-radius:8px;color:#fff;padding:12px 16px;cursor:pointer;font-size:16px;height:60px;flex-shrink:0">▶</button>
+    </div>
+    <div style="font-size:8px;color:#2a1a3a;margin-top:4px;text-align:center">Enter to send · Shift+Enter for new line · AI knows your portfolio and trading style</div>
+  </div>
+</div>
+
+<style>
+.chat-msg{margin-bottom:12px;display:flex;gap:10px;align-items:flex-start}
+.chat-user{flex-direction:row-reverse}
+.chat-bubble{padding:10px 13px;border-radius:10px;font-size:12px;line-height:1.65;max-width:85%}
+.chat-bubble-user{background:#1a0030;border:1px solid #cc44ff30;color:#ddd;border-bottom-right-radius:3px}
+.chat-bubble-ai{background:#06060f;border:1px solid #0e0e22;color:#c0c0d8;border-bottom-left-radius:3px}
+.chat-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.chat-avatar-user{background:#1a0030;border:1px solid #cc44ff30}
+.chat-avatar-ai{background:#0a0a18;border:1px solid #ffcc0030}
+.chat-typing{display:flex;gap:4px;padding:8px;align-items:center}
+.chat-typing div{width:6px;height:6px;background:#cc88ff;border-radius:50%;animation:bounce 1.4s ease-in-out infinite}
+.chat-typing div:nth-child(2){animation-delay:.2s}
+.chat-typing div:nth-child(3){animation-delay:.4s}
+.chat-highlight{color:#ffcc00;font-weight:700}
+.chat-tg-cmd{background:#0a0a18;border:1px solid #ffcc0030;border-radius:5px;padding:4px 8px;font-family:monospace;font-size:11px;color:#ffcc00;margin-top:6px;display:inline-block}
+</style>
+
+<script>
+// ── CHAT ADVISOR ────────────────────────────────────────────────────────────
+let chatSessionId = 'session_'+Date.now();
+let chatIsTyping = false;
+
+function appendMessage(role, text, isLoading) {
+  const history = document.getElementById('chatHistory');
+  const id = 'msg_'+Date.now()+'_'+Math.random().toString(36).substr(2,5);
+  const isUser = role === 'user';
+  const div = document.createElement('div');
+  div.className = 'chat-msg' + (isUser ? ' chat-user' : '');
+  div.id = id;
+
+  const avatar = '<div class="chat-avatar '+(isUser?'chat-avatar-user':'chat-avatar-ai')+'">'+(isUser?'👤':'🤖')+'</div>';
+  let content;
+  if (isLoading) {
+    content = '<div class="chat-bubble chat-bubble-ai"><div class="chat-typing"><div></div><div></div><div></div></div></div>';
+  } else {
+    const formatted = formatChatResponse(text);
+    content = '<div class="chat-bubble '+(isUser?'chat-bubble-user':'chat-bubble-ai')+'">'+formatted+'</div>';
+  }
+  div.innerHTML = isUser ? content + avatar : avatar + content;
+  history.appendChild(div);
+  div.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  return id;
+}
+
+function formatChatResponse(text) {
+  // Highlight dollar amounts
+  text = text.replace(/\$[\d,]+\.?\d*/g, '<span class="chat-highlight">$&</span>');
+  // Highlight share counts
+  text = text.replace(/(\d+)\s+shares/gi, '<span class="chat-highlight">$1 shares</span>');
+  // Highlight percentages
+  text = text.replace(/(\d+\.?\d*%)/g, '<span style="color:#3b9eff">$1</span>');
+  // Highlight "ENTER", "BUY", "AVOID", "WATCH" etc.
+  text = text.replace(/\b(ENTER NOW|BUY|AVOID|WATCH|RIDE IT|FADE|PHASE [123])\b/g, '<strong style="color:#ffcc00">$&</strong>');
+  // Highlight Telegram commands
+  text = text.replace(/_(watching .+?)_/g, '<span class="chat-tg-cmd">$1</span>');
+  // Line breaks
+  text = text.replace(/\n/g, '<br>');
+  return text;
+}
+
+function updateMessage(id, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const bubble = el.querySelector('.chat-bubble');
+  if (bubble) bubble.innerHTML = formatChatResponse(text);
+}
+
+async function sendChat() {
+  if (chatIsTyping) return;
+  const input = document.getElementById('chatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  const portfolio = document.getElementById('portfolioSize').value || '348';
+  input.value = '';
+  chatIsTyping = true;
+
+  appendMessage('user', msg);
+  const loadingId = appendMessage('ai', '', true);
+
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, sessionId: chatSessionId, portfolioSize: +portfolio }),
+    });
+    const data = await r.json();
+    if (data.error) {
+      updateMessage(loadingId, '❌ ' + data.error);
+    } else {
+      updateMessage(loadingId, data.reply);
+    }
+  } catch (e) {
+    updateMessage(loadingId, '❌ ' + e.message);
+  }
+  chatIsTyping = false;
+}
+
+function askQuick(question) {
+  document.getElementById('chatInput').value = question;
+  sendChat();
+}
+
+function clearChat() {
+  document.getElementById('chatHistory').innerHTML = '';
+  chatSessionId = 'session_'+Date.now();
+  fetch('/api/chat/clear', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({sessionId:chatSessionId}) }).catch(()=>{});
+  // Show welcome message
+  appendMessage('ai', "Ready, Maverick. Ask me anything — position sizes, probabilities, trade management, whale reading. I know your $348 portfolio and your style.\n\nTry: _Ford is at 11.65, entry zone 11.60-70, stop 11.20. How many shares?_");
+}
+
+// Show welcome on first load of chat tab
+document.querySelector('[data-tab="chat"]').addEventListener('click', function() {
+  const history = document.getElementById('chatHistory');
+  if (!history.children.length) {
+    appendMessage('ai', "Ready, Maverick. Ask me anything — position sizes, probabilities, trade management, whale reading. I know your $348 portfolio and your style.\n\nExamples:\n• _Ford 11.65, entry 11.60-70, stop 11.20 — how many shares?_\n• _How probable is a 5% gain on LFVN today?_\n• _Should I add to my winner or take profit?_\n• _What whale footprints confirm Phase 2?_");
+  }
+});
+</script>
+
 
 <script>
 // ── GLOBALS ───────────────────────────────────────────────────────────────────
@@ -604,3 +766,5 @@ async function runCatalystScan(){
 </script>
 </body>
 </html>
+<footer>MAVERICK v3.3 · FINNHUB · YAHOO · GROQ AI · FOR INFORMATIONAL USE ONLY</footer>
+</body></html>
