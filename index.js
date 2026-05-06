@@ -1083,6 +1083,317 @@ RETURN ONLY VALID JSON:
 // ═══════════════════════════════════════════════════════════════════════════
 // END FOOTPRINTS ENGINE — paste ends here
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// MAVERICK WHALE SCANNER + FIXES
+// Paste this entire block into index.js BEFORE the app.get('*'...) line
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Quick footprint score for a single ticker (lightweight, no AI) ──────────
+async function quickFootprint(symbol) {
+  try {
+    const [quote, tf1d] = await Promise.all([
+      getQuote(symbol),
+      getCandles(symbol, '3mo', '1d'),
+    ]);
+    if (!quote || !tf1d) return null;
+
+    const phase      = detectPhase(tf1d, quote.price);
+    const defense    = scorePriceDefense(tf1d);
+    const volPattern = analyzeVolumePattern(tf1d, null);
+    const footprint  = calcFootprintScore(phase, defense, volPattern, {});
+
+    return {
+      symbol,
+      price: quote.price,
+      changePct: quote.changePct,
+      marketCap: quote.marketCap,
+      floatShares: quote.floatShares,
+      sector: quote.sector,
+      shortName: quote.shortName,
+      phase: phase.phase,
+      phaseConfidence: phase.confidence,
+      phaseDesc: phase.description,
+      footprintScore: footprint.score,
+      footprintSignals: footprint.signals,
+      volumePattern: volPattern.pattern,
+      accumScore: volPattern.accumScore,
+      defendedLevel: defense.level,
+      defenseCount: defense.count,
+      rsi: tf1d.rsi,
+      atr: tf1d.atr,
+      relVolume: tf1d.relVolume,
+      trend: tf1d.trend,
+    };
+  } catch(e) {
+    return null;
+  }
+}
+
+// ── Pull scan candidates from multiple free sources ──────────────────────────
+async function getScanCandidates() {
+  const candidates = new Set();
+
+  // Source 1: Yahoo day gainers
+  try {
+    const r = await fetch(
+      'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=day_gainers',
+      { headers: { 'User-Agent':'Mozilla/5.0', 'Referer':'https://finance.yahoo.com/' }}
+    );
+    const d = await r.json();
+    const quotes = d?.finance?.result?.[0]?.quotes || [];
+    quotes.filter(q => q.regularMarketPrice < 15 && q.regularMarketPrice > 0.5)
+          .forEach(q => candidates.add(q.symbol));
+  } catch(e) { console.error('Yahoo gainers:', e.message); }
+
+  // Source 2: Yahoo unusual volume
+  try {
+    const r = await fetch(
+      'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=most_actives',
+      { headers: { 'User-Agent':'Mozilla/5.0', 'Referer':'https://finance.yahoo.com/' }}
+    );
+    const d = await r.json();
+    const quotes = d?.finance?.result?.[0]?.quotes || [];
+    quotes.filter(q => q.regularMarketPrice < 15 && q.regularMarketPrice > 0.5)
+          .forEach(q => candidates.add(q.symbol));
+  } catch(e) { console.error('Yahoo actives:', e.message); }
+
+  // Source 3: Yahoo 52-week highs (breakout candidates)
+  try {
+    const r = await fetch(
+      'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=day_losers',
+      { headers: { 'User-Agent':'Mozilla/5.0', 'Referer':'https://finance.yahoo.com/' }}
+    );
+    const d = await r.json();
+    const quotes = d?.finance?.result?.[0]?.quotes || [];
+    // Day losers with good market cap may be in Phase 1 (quiet accumulation)
+    quotes.filter(q => q.regularMarketPrice < 15 && q.regularMarketPrice > 0.5
+                    && q.marketCap > 10e6) // must have $10M+ mkt cap
+          .slice(0, 10)
+          .forEach(q => candidates.add(q.symbol));
+  } catch(e) {}
+
+  return [...candidates].slice(0, 35); // cap at 35 to avoid rate limits
+}
+
+// ── WHALE SCANNER — core scan logic ──────────────────────────────────────────
+async function runWhaleScan() {
+  console.log('🐋 Running whale scan...');
+  const symbols = await getScanCandidates();
+  if (!symbols.length) return { results: [], error: 'No candidates found' };
+
+  // Score all candidates in parallel (batched to avoid rate limits)
+  const batchSize = 5;
+  const scored = [];
+  for (let i = 0; i < symbols.length; i += batchSize) {
+    const batch = symbols.slice(i, i + batchSize);
+    const results = await Promise.all(batch.map(s => quickFootprint(s)));
+    results.forEach(r => { if (r) scored.push(r); });
+    if (i + batchSize < symbols.length) await new Promise(r => setTimeout(r, 500));
+  }
+
+  // Filter: only Phase 2 and 3 (Maverick sweet spots) with score >= 55
+  const candidates = scored
+    .filter(s => (s.phase === 2 || s.phase === 3) && s.footprintScore >= 55)
+    .sort((a, b) => b.footprintScore - a.footprintScore)
+    .slice(0, 10);
+
+  return { results: candidates, totalScanned: scored.length, timestamp: new Date().toISOString() };
+}
+
+// ── AI filter — picks the top 3 the AI would actually trade ────────────────
+async function aiFilterWhales(candidates) {
+  if (!GROQ_KEY || !candidates.length) return candidates.slice(0, 3);
+
+  const WHALE_FILTER_PROMPT = `You are MAVERICK Smart Money Analyst. 
+
+From these whale footprint candidates, select the TOP 3 setups that best fit:
+- Phase 2 (price defense) or Phase 3 (markup) only
+- Swim WITH the whales — anticipate, don't react
+- Small float preferred (more explosive)
+- Clear defended level (specific price the whales protect)
+- Volume pattern confirms ACCUMULATION not distribution
+- NO dilutive setups, NO ATM offerings, NO active distribution
+
+Return ONLY valid JSON array with your top picks and why:
+[{"symbol":"","rank":1,"why":"one sentence why this is the best whale setup","urgency":"NOW|SOON|DEVELOPING","maverick_action":"ENTER_NOW|WAIT_FOR_DIP|WATCH"}]
+
+Be decisive. If fewer than 3 qualify, return fewer. Quality over quantity.`;
+
+  try {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 600,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: WHALE_FILTER_PROMPT },
+          { role: 'user', content: 'Candidates:\n' + JSON.stringify(candidates.map(c => ({
+            symbol: c.symbol, price: c.price, phase: c.phase,
+            footprintScore: c.footprintScore, volumePattern: c.volumePattern,
+            defendedLevel: c.defendedLevel, defenseCount: c.defenseCount,
+            float: c.floatShares ? (c.floatShares/1e6).toFixed(1)+'M' : 'unknown',
+            rsi: c.rsi, accumScore: c.accumScore, signals: c.footprintSignals,
+          })), null, 2) }
+        ]
+      })
+    });
+    const d = await r.json();
+    const text = d.choices?.[0]?.message?.content || '';
+    const clean = text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
+    const m = clean.match(/\[[\s\S]*\]/);
+    if (!m) return candidates.slice(0, 3);
+    const aiPicks = JSON.parse(m[0]);
+    // Merge AI commentary into candidate data
+    return aiPicks.map(pick => {
+      const candidate = candidates.find(c => c.symbol === pick.symbol);
+      return candidate ? { ...candidate, aiWhy: pick.why, aiUrgency: pick.urgency, aiAction: pick.maverick_action } : null;
+    }).filter(Boolean);
+  } catch(e) {
+    console.error('AI filter:', e.message);
+    return candidates.slice(0, 3);
+  }
+}
+
+// ── WHALE SCAN API ROUTE ──────────────────────────────────────────────────────
+app.post('/api/whale-scan', async (req, res) => {
+  try {
+    const raw = await runWhaleScan();
+    if (raw.error) return res.json({ results: [], error: raw.error, totalScanned: 0 });
+
+    // AI filters to only top setups Maverick should see
+    const topSetups = await aiFilterWhales(raw.results);
+
+    // Alert Telegram if we found something good
+    if (topSetups.length && TG_CHAT_ID && bot && req.body.alertTelegram) {
+      const msg = `🐋 *WHALE SCAN COMPLETE*\n\n` +
+        `Scanned: ${raw.totalScanned} stocks\n` +
+        `Phase 2/3 found: ${raw.results.length}\n` +
+        `AI top picks: ${topSetups.length}\n\n` +
+        topSetups.map((s, i) =>
+          `*${i+1}. ${s.symbol}* — Phase ${s.phase} · Score ${s.footprintScore}/100\n` +
+          `$${s.price?.toFixed(2)} | ${s.volumePattern} | ${s.aiAction || 'ANALYZE'}\n` +
+          (s.aiWhy ? `_${s.aiWhy}_` : '')
+        ).join('\n\n') +
+        `\n\nText _dive [TICKER]_ for full analysis`;
+      tgSend(TG_CHAT_ID, msg);
+    }
+
+    res.json({
+      results: topSetups,
+      allCandidates: raw.results,
+      totalScanned: raw.totalScanned,
+      timestamp: raw.timestamp,
+    });
+  } catch(e) {
+    console.error('Whale scan error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── FREE MARKET SIGNALS (Barchart + Yahoo — no key needed) ──────────────────
+app.get('/api/signals', async (req, res) => {
+  const signals = [];
+
+  // Signal 1: Yahoo top gainers with high volume
+  try {
+    const r = await fetch(
+      'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=10&scrIds=day_gainers',
+      { headers: { 'User-Agent':'Mozilla/5.0', 'Referer':'https://finance.yahoo.com/' }}
+    );
+    const d = await r.json();
+    const quotes = d?.finance?.result?.[0]?.quotes || [];
+    quotes.slice(0, 8).forEach(q => {
+      if (q.regularMarketPrice && q.regularMarketChangePercent > 5) {
+        const relVol = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
+        signals.push({
+          type: 'MOMENTUM',
+          symbol: q.symbol,
+          name: q.shortName || q.symbol,
+          price: q.regularMarketPrice,
+          changePct: q.regularMarketChangePercent,
+          relVolume: +relVol.toFixed(1),
+          signal: relVol > 3 ? 'STRONG MOMENTUM — ' + relVol.toFixed(1) + 'x volume surge' : 'MOMENTUM — up ' + q.regularMarketChangePercent.toFixed(1) + '%',
+          strength: relVol > 5 ? 'STRONG' : relVol > 2 ? 'MODERATE' : 'WEAK',
+          source: 'Yahoo Finance',
+        });
+      }
+    });
+  } catch(e) { console.error('Yahoo signals:', e.message); }
+
+  // Signal 2: Unusual volume (most actives)
+  try {
+    const r = await fetch(
+      'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=10&scrIds=most_actives',
+      { headers: { 'User-Agent':'Mozilla/5.0', 'Referer':'https://finance.yahoo.com/' }}
+    );
+    const d = await r.json();
+    const quotes = d?.finance?.result?.[0]?.quotes || [];
+    quotes.slice(0, 6).forEach(q => {
+      if (q.regularMarketPrice < 20) {
+        const relVol = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
+        if (relVol > 2) {
+          signals.push({
+            type: 'VOLUME_SURGE',
+            symbol: q.symbol,
+            name: q.shortName || q.symbol,
+            price: q.regularMarketPrice,
+            changePct: q.regularMarketChangePercent,
+            relVolume: +relVol.toFixed(1),
+            signal: 'VOLUME SURGE — ' + relVol.toFixed(1) + 'x average',
+            strength: relVol > 5 ? 'STRONG' : 'MODERATE',
+            source: 'Yahoo Finance',
+          });
+        }
+      }
+    });
+  } catch(e) {}
+
+  // Signal 3: Finnhub market news catalysts
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_KEY}`);
+    const d = await r.json();
+    if (Array.isArray(d)) {
+      const recent = d.filter(n => {
+        const ageH = (Date.now()/1000 - n.datetime) / 3600;
+        return ageH < 8 && n.related && n.related.length > 0;
+      }).slice(0, 5);
+      recent.forEach(n => {
+        signals.push({
+          type: 'CATALYST',
+          symbol: n.related || 'MARKET',
+          name: n.source,
+          price: null,
+          changePct: null,
+          relVolume: null,
+          signal: n.headline?.slice(0, 80) + '...',
+          strength: 'MODERATE',
+          source: n.source,
+          url: n.url,
+          ageH: +((Date.now()/1000 - n.datetime)/3600).toFixed(1),
+        });
+      });
+    }
+  } catch(e) {}
+
+  res.json({ signals, timestamp: new Date().toISOString() });
+});
+
+// ── UPDATE HEALTH to expose bot username ─────────────────────────────────────
+// (Replace the existing /api/health route with this one)
+app.get('/api/health2', (req, res) => {
+  res.json({
+    status: 'online', version: '3.2', time: new Date().toISOString(),
+    botUsername: process.env.TG_BOT_USERNAME || '',
+    services: { telegram:!!TELEGRAM_TOKEN, finnhub:!!FINNHUB_KEY, groq:!!GROQ_KEY, memory:!!(JSONBIN_KEY&&JSONBIN_BIN) },
+    active: { watches:watches.size, trades:trades.size, alerts:[...priceAlerts.values()].flat().filter(a=>!a.fired).length, tvSignals:tvSignals.size, pendingCatalysts:pendingCatalysts.size },
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// END WHALE SCANNER BLOCK
+// ═══════════════════════════════════════════════════════════════════════════
 
 // ── FRONTEND ──────────────────────────────────────────────────────────────────
 app.get('*', (req,res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
