@@ -28,9 +28,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ── GROQ MODELS — tries each in order until one works ────────────────────────
 const GROQ_MODELS = [
   'llama-3.3-70b-versatile',
-  'llama3-70b-8192',
-  'llama-3.1-70b-versatile',
-  'mixtral-8x7b-32768',
+  'llama-3.1-8b-instant',
+  'gemma2-9b-it',
+  'llama3-8b-8192',
 ];
 
 async function groqCall(system, user, maxTokens = 1500) {
