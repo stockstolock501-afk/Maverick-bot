@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0"/>
+<title>Maverick Terminal v3</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:#03030c;color:#a0a0c0;font-family:'Courier New',monospace;padding:14px;min-height:100vh;overflow-x:hidden}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:#06060f}
+::-webkit-scrollbar-thumb{background:#1a1a30;border-radius:3px}
+
+/* HEADER */
+.hdr{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #0e0e22}
+.dot{width:9px;height:9px;border-radius:50%;background:#ffcc00;box-shadow:0 0 12px #ffcc00;flex-shrink:0;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
+h1{color:#fff;font-size:18px;font-weight:900;letter-spacing:-0.3px}
+h1 span{color:#ffcc00}
+.sub{font-size:8px;color:#3a3000;letter-spacing:2.5px;margin-top:2px}
+
+/* TABS */
+.tabs{display:flex;gap:6px;margin-bottom:14px;overflow-x:auto;padding-bottom:4px}
+.tab{flex-shrink:0;background:transparent;border:1px solid #0e0e22;color:#3a3a5a;padding:7px 14px;font-size:9px;font-weight:800;letter-spacing:1.5px;border-radius:6px;cursor:pointer;font-family:monospace;white-space:nowrap}
+.tab.active{background:rgba(255,204,0,0.1);border-color:#ffcc00;color:#ffcc00;box-shadow:0 0 12px rgba(255,204,0,0.2)}
+
+/* CARD */
+.card{background:#06060f;border:1px solid #0e0e22;border-radius:9px;padding:14px;margin-bottom:12px}
+.card-glow{border-color:#ffcc0030;box-shadow:0 0 20px rgba(255,204,0,0.05)}
+.label{font-size:9px;color:#2a2a4a;letter-spacing:2px;font-weight:700;text-transform:uppercase;margin-bottom:8px}
+
+/* INPUT */
+input,select{background:#03030c;border:1px solid #1a1a30;border-radius:6px;color:#c0c0d8;padding:11px 13px;font-family:monospace;font-size:14px;width:100%;margin-bottom:8px;text-transform:uppercase}
+input::placeholder{text-transform:none;color:#1a1a2e}
+input:focus,select:focus{outline:none;border-color:#ffcc00}
+
+/* BUTTONS */
+.btn{border:none;border-radius:6px;padding:13px;font-family:monospace;font-size:11px;font-weight:900;cursor:pointer;width:100%;letter-spacing:2px;margin-bottom:8px;transition:transform 0.1s}
+.btn:active{transform:scale(0.98)}
+.btn-primary{background:linear-gradient(135deg,#ffcc00,#cc9900);color:#000;box-shadow:0 0 18px rgba(255,204,0,0.25)}
+.btn-buy{background:linear-gradient(135deg,#00cc88,#007755);color:#000}
+.btn-secondary{background:#0a0a18;border:1px solid #1a1a30;color:#888;font-size:10px}
+.btn-tg{background:#229ED9;color:#fff;display:flex;align-items:center;justify-content:center;gap:8px}
+
+/* VERDICT BLOCK */
+.verdict{padding:18px;border-radius:10px;margin-bottom:14px;border:2px solid;position:relative;overflow:hidden}
+.verdict.BUY{background:linear-gradient(135deg,#00220a,#001a05);border-color:#00cc88;box-shadow:0 0 30px rgba(0,200,130,0.2)}
+.verdict.DONT_BUY{background:linear-gradient(135deg,#220a0a,#1a0505);border-color:#cc4444}
+.verdict.WATCH{background:linear-gradient(135deg,#221a00,#1a1500);border-color:#ffcc00}
+.verdict-emoji{font-size:32px;margin-bottom:6px}
+.verdict-action{font-size:24px;font-weight:900;letter-spacing:2px}
+.verdict.BUY .verdict-action{color:#00ff99}
+.verdict.DONT_BUY .verdict-action{color:#ff5555}
+.verdict.WATCH .verdict-action{color:#ffcc00}
+.verdict-headline{font-size:13px;color:#ddd;margin-top:8px;line-height:1.5;font-weight:600}
+.conviction-bar{height:6px;background:#0a0a18;border-radius:3px;margin-top:12px;overflow:hidden}
+.conviction-fill{height:100%;border-radius:3px;transition:width 0.8s ease}
+.conviction-num{font-size:11px;font-family:monospace;font-weight:800;margin-top:4px}
+
+/* DATA GRID */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
+.metric{background:#03030a;border:1px solid #0e0e1e;border-radius:6px;padding:8px}
+.metric .lbl{font-size:8px;color:#2a2a4a;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
+.metric .val{font-size:13px;font-weight:700;font-family:monospace;color:#c0c0d8}
+.g{color:#00cc88}.r{color:#ff5555}.gold{color:#ffcc00}.b{color:#3b9eff}
+
+/* TRADE PLAN */
+.plan{background:#03030a;border:1px solid #ffcc0020;border-radius:8px;padding:14px;margin-bottom:10px}
+.plan-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a18;font-size:12px}
+.plan-row:last-child{border-bottom:none}
+.plan-row .lbl{color:#3a3a5a;font-size:10px;letter-spacing:1px}
+.plan-row .val{color:#fff;font-weight:700;font-family:monospace;font-size:14px}
+
+/* REASONING */
+.reasoning{background:#03030a;border-left:3px solid #ffcc00;padding:10px 12px;margin-bottom:8px;border-radius:0 6px 6px 0}
+.reasoning ul{list-style:none}
+.reasoning li{font-size:12px;color:#a0a0b8;line-height:1.6;padding:4px 0;padding-left:14px;position:relative}
+.reasoning li:before{content:"▸";position:absolute;left:0;color:#ffcc00}
+
+/* RISK BOX */
+.risk{background:#1a0a0a;border:1px solid #cc444430;border-radius:6px;padding:10px;font-size:11px;color:#cc8888;line-height:1.5}
+.risk strong{color:#ff5555}
+
+/* SOURCES */
+.sources{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.src-pill{font-size:8px;padding:2px 8px;border-radius:4px;font-weight:700;letter-spacing:1px}
+.src-yahoo{background:#5400b430;color:#a06fff}
+.src-finviz{background:#00669930;color:#3b9eff}
+.src-finnhub{background:#22cc8830;color:#00cc88}
+.src-tv{background:#ff3300}
+.src-tv{background:#ff993030;color:#ffaa44}
+.src-ai{background:#ffcc0030;color:#ffcc00}
+
+/* PATTERN MEMORY */
+.memory{background:#0a0a18;border:1px dashed #3a3a5a;border-radius:6px;padding:10px;margin-bottom:10px;font-size:11px;color:#7070a0}
+.memory strong{color:#cc44ff}
+
+/* SUPERNOVA SCAN ITEMS (kept from v2) */
+.nova-item{background:#080600;border:1px solid #1a1400;border-left:4px solid #ffcc00;border-radius:8px;padding:12px;margin-bottom:8px}
+
+/* LOADING */
+.loading{text-align:center;padding:40px 20px;color:#3a3a5a;font-size:12px;letter-spacing:2px}
+.loader{display:flex;justify-content:center;gap:5px;margin-top:14px}
+.loader div{width:7px;height:7px;background:#ffcc00;border-radius:50%;animation:bounce 1.4s ease-in-out infinite}
+.loader div:nth-child(2){animation-delay:0.2s}
+.loader div:nth-child(3){animation-delay:0.4s}
+@keyframes bounce{0%,80%,100%{opacity:0.3;transform:scale(0.8)}40%{opacity:1;transform:scale(1.2)}}
+
+/* HIDE/SHOW */
+.hidden{display:none}
+
+footer{margin-top:14px;font-size:8px;color:#1a1a2e;text-align:center;padding-bottom:30px}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="dot" id="statusDot"></div>
+  <div>
+    <h1>MAVERICK <span>v3</span></h1>
+    <div class="sub">HEDGE FUND STACK · MULTI-SOURCE · AI BRAIN</div>
+  </div>
+  <div style="margin-left:auto;font-size:9px;color:#1a1a30;font-family:monospace" id="clock">--:-- ET</div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <button class="tab active" data-tab="analyze">🎯 ANALYZE</button>
+  <button class="tab" data-tab="supernova">🌟 SUPERNOVA</button>
+  <button class="tab" data-tab="signals">📡 TV SIGNALS</button>
+  <button class="tab" data-tab="memory">🧠 MEMORY</button>
+</div>
+
+<!-- ═══════════════ ANALYZE TAB ═══════════════ -->
+<div id="tab-analyze">
+  <div class="card card-glow">
+    <div class="label">⚡ Live AI Analysis</div>
+    <div style="font-size:10px;color:#3a3a5a;margin-bottom:10px;line-height:1.5">
+      Multi-source fresh data → AI synthesis → 4-verdict decision
+    </div>
+    <input id="ticker" placeholder="Enter ticker (e.g. LFVN, PN, SLQT)" autocomplete="off"/>
+    <button class="btn btn-primary" onclick="runAnalysis()">▶ ANALYZE NOW</button>
+  </div>
+
+  <div id="analyzeResult"></div>
+</div>
+
+<!-- ═══════════════ SUPERNOVA TAB ═══════════════ -->
+<div id="tab-supernova" class="hidden">
+  <div class="card card-glow">
+    <div class="label">🌟 Supernova Scanner</div>
+    <div style="font-size:10px;color:#3a3a5a;margin-bottom:10px;line-height:1.5">
+      Live scan of today's biggest movers. AI identifies real supernova events.
+    </div>
+    <button class="btn btn-primary" onclick="runSupernova()">▶ NOVA SCAN</button>
+  </div>
+  <div id="novaResult"></div>
+</div>
+
+<!-- ═══════════════ TV SIGNALS TAB ═══════════════ -->
+<div id="tab-signals" class="hidden">
+  <div class="card">
+    <div class="label">📡 TradingView Webhook Status</div>
+    <div id="tvStatus" style="font-size:11px;color:#606080;line-height:1.7">Loading...</div>
+    <button class="btn btn-secondary" onclick="loadTvStatus()" style="margin-top:8px">↻ REFRESH</button>
+  </div>
+
+  <div class="card">
+    <div class="label">🔧 Setup Instructions</div>
+    <div style="font-size:11px;color:#888;line-height:1.7">
+      In TradingView, when an alert fires from <strong style="color:#ffcc00">UT Bot Alerts</strong> or <strong style="color:#ffcc00">LuxAlgo</strong>, configure the alert webhook URL to:<br><br>
+      <div style="background:#03030a;border:1px solid #1a1a30;border-radius:5px;padding:8px;font-family:monospace;font-size:10px;color:#3b9eff;word-break:break-all" id="webhookUrl">Loading...</div><br>
+      Alert message body (JSON):<br>
+      <div style="background:#03030a;border:1px solid #1a1a30;border-radius:5px;padding:8px;font-family:monospace;font-size:10px;color:#00cc88">{<br>
+&nbsp;"ticker":"{{ticker}}",<br>
+&nbsp;"action":"BUY",<br>
+&nbsp;"indicator":"UT Bot",<br>
+&nbsp;"price":{{close}}<br>
+}</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ MEMORY TAB ═══════════════ -->
+<div id="tab-memory" class="hidden">
+  <div class="card">
+    <div class="label">🧠 Pattern Memory</div>
+    <div style="font-size:10px;color:#3a3a5a;margin-bottom:10px">
+      System learns from every scan + trade. Edge detection over time.
+    </div>
+    <div id="memoryStats" style="font-size:11px;color:#606080;line-height:1.8">Loading...</div>
+  </div>
+</div>
+
+<footer>MAVERICK v3 · YAHOO + FINVIZ + FINNHUB + TRADINGVIEW · GROQ AI · FOR INFORMATIONAL USE ONLY</footer>
+
+<script>
+// ── TAB SWITCHING ───────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('[id^=tab-]').forEach(x => x.classList.add('hidden'));
+    t.classList.add('active');
+    document.getElementById('tab-' + t.dataset.tab).classList.remove('hidden');
+    if (t.dataset.tab === 'signals') loadTvStatus();
+    if (t.dataset.tab === 'memory') loadMemory();
+  };
+});
+
+// ── CLOCK ───────────────────────────────────────────────────────────────────
+function tick() {
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const h = String(et.getHours()).padStart(2, '0');
+  const m = String(et.getMinutes()).padStart(2, '0');
+  document.getElementById('clock').textContent = `${h}:${m} ET`;
+  const min = et.getHours() * 60 + et.getMinutes();
+  const open = et.getDay() > 0 && et.getDay() < 6 && min >= 570 && min < 960;
+  const dot = document.getElementById('statusDot');
+  dot.style.background = open ? '#00ff88' : '#ffcc00';
+  dot.style.boxShadow = open ? '0 0 12px #00ff88' : '0 0 12px #ffcc00';
+}
+setInterval(tick, 30000); tick();
+
+// ── ANALYZE ─────────────────────────────────────────────────────────────────
+async function runAnalysis() {
+  const ticker = document.getElementById('ticker').value.toUpperCase().trim();
+  if (!ticker) return;
+  const out = document.getElementById('analyzeResult');
+  out.innerHTML = `
+    <div class="card">
+      <div class="loading">⚡ PULLING LIVE DATA · YAHOO · FINVIZ · FINNHUB · AI SYNTHESIS</div>
+      <div class="loader"><div></div><div></div><div></div></div>
+    </div>`;
+  try {
+    const r = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker })
+    });
+    const data = await r.json();
+    if (data.error) { out.innerHTML = `<div class="card"><div style="color:#ff5555">❌ ${data.error}</div></div>`; return; }
+    renderAnalysis(data, out);
+  } catch (e) {
+    out.innerHTML = `<div class="card"><div style="color:#ff5555">❌ ${e.message}</div></div>`;
+  }
+}
+
+document.getElementById('ticker').addEventListener('keydown', e => { if (e.key === 'Enter') runAnalysis(); });
+
+function renderAnalysis(data, out) {
+  const v = data.verdict;
+  const y = data.data.yahoo || {};
+  const f = data.data.finviz || {};
+  const tv = data.data.tradingview;
+  const hist = data.data.history;
+  const news = data.data.news || [];
+
+  const emoji = { BUY: '🟢', DONT_BUY: '🔴', WATCH: '🟡' }[v.verdict] || '⚪';
+  const actionText = v.verdict === 'DONT_BUY' ? "DON'T BUY" : v.verdict;
+
+  let buyPlan = '';
+  if (v.verdict === 'BUY' && v.entry_zone) {
+    const tgUrl = `https://t.me/share/url?text=${encodeURIComponent(`watching ${data.ticker} at ${v.entry_zone.low}`)}`;
+    buyPlan = `
+      <div class="plan">
+        <div class="label" style="margin-bottom:10px">📋 Trade Plan</div>
+        <div class="plan-row"><span class="lbl">Entry Zone</span><span class="val gold">$${v.entry_zone.low}–$${v.entry_zone.high}</span></div>
+        <div class="plan-row"><span class="lbl">Stop Loss</span><span class="val r">$${v.stop_loss}</span></div>
+        <div class="plan-row"><span class="lbl">Target 1</span><span class="val b">$${v.target_1}</span></div>
+        <div class="plan-row"><span class="lbl">Target 2</span><span class="val g">$${v.target_2}</span></div>
+        <div class="plan-row"><span class="lbl">Risk:Reward</span><span class="val gold">${v.risk_reward}:1</span></div>
+        <div class="plan-row"><span class="lbl">Position Size</span><span class="val">${v.position_size_suggestion}</span></div>
+        <div class="plan-row"><span class="lbl">Trade Type</span><span class="val">${v.trade_type}</span></div>
+        <div class="plan-row"><span class="lbl">Time Horizon</span><span class="val">${v.time_horizon}</span></div>
+      </div>
+      <a href="${tgUrl}" target="_blank" style="text-decoration:none">
+        <button class="btn btn-tg">📲 SEND TO TELEGRAM BOT</button>
+      </a>`;
+  } else if (v.verdict === 'WATCH') {
+    buyPlan = `
+      <div class="plan">
+        <div class="label" style="margin-bottom:10px;color:#ffcc00">⏳ Trigger Condition</div>
+        <div style="font-size:13px;color:#ddd;line-height:1.6">${v.trigger_to_watch}</div>
+      </div>`;
+  }
+
+  const convColor = v.conviction >= 75 ? '#00cc88' : v.conviction >= 55 ? '#ffcc00' : '#ff5555';
+
+  let memoryHtml = '';
+  if (hist?.hasOutcome) {
+    memoryHtml = `<div class="memory">🧠 <strong>Pattern memory:</strong> Found ${hist.count} similar past setups in your history. Win rate: <strong>${hist.winRate}%</strong> (n=${hist.sampleSize}). Avg P&L: <strong>$${hist.avgPnl}</strong></div>`;
+  } else if (hist?.count) {
+    memoryHtml = `<div class="memory">🧠 ${hist.count} similar setups detected (no completed outcomes yet)</div>`;
+  }
+
+  out.innerHTML = `
+    <div class="verdict ${v.verdict}">
+      <div class="verdict-emoji">${emoji}</div>
+      <div class="verdict-action">${actionText}</div>
+      <div class="verdict-headline">${v.headline}</div>
+      <div class="conviction-bar"><div class="conviction-fill" style="width:${v.conviction}%;background:${convColor}"></div></div>
+      <div class="conviction-num" style="color:${convColor}">CONVICTION ${v.conviction}/100</div>
+    </div>
+
+    ${memoryHtml}
+
+    <div class="card">
+      <div class="label">🎯 Reasoning</div>
+      <div class="reasoning">
+        <ul>${v.reasoning.map(r => `<li>${r}</li>`).join('')}</ul>
+      </div>
+      <div class="risk"><strong>⚠️ Key Risk:</strong> ${v.key_risk}</div>
+    </div>
+
+    ${buyPlan}
+
+    <div class="card">
+      <div class="label">📊 Live Data</div>
+      <div class="grid3">
+        <div class="metric"><div class="lbl">Price</div><div class="val">$${y.price?.toFixed(2) || '—'}</div></div>
+        <div class="metric"><div class="lbl">Change</div><div class="val ${(y.changePct||0)>=0?'g':'r'}">${y.changePct ? (y.changePct>=0?'+':'')+y.changePct.toFixed(2)+'%' : '—'}</div></div>
+        <div class="metric"><div class="lbl">Volume</div><div class="val">${y.volume ? (y.volume/1e6).toFixed(2)+'M' : '—'}</div></div>
+      </div>
+      <div class="grid3">
+        <div class="metric"><div class="lbl">Mkt Cap</div><div class="val">${y.marketCap ? '$'+(y.marketCap/1e6).toFixed(0)+'M' : '—'}</div></div>
+        <div class="metric"><div class="lbl">Float</div><div class="val">${y.floatShares ? (y.floatShares/1e6).toFixed(1)+'M' : '—'}</div></div>
+        <div class="metric"><div class="lbl">Short %</div><div class="val gold">${f.shortFloat || '—'}</div></div>
+      </div>
+      <div class="grid3">
+        <div class="metric"><div class="lbl">RSI</div><div class="val">${f.rsi || '—'}</div></div>
+        <div class="metric"><div class="lbl">ATR</div><div class="val">${f.atr || '—'}</div></div>
+        <div class="metric"><div class="lbl">Rel Vol</div><div class="val">${f.relVolume || '—'}</div></div>
+      </div>
+      <div class="grid3">
+        <div class="metric"><div class="lbl">52w High</div><div class="val">$${y.yearHigh?.toFixed(2) || '—'}</div></div>
+        <div class="metric"><div class="lbl">52w Low</div><div class="val">$${y.yearLow?.toFixed(2) || '—'}</div></div>
+        <div class="metric"><div class="lbl">Sector</div><div class="val" style="font-size:9px">${y.sector || '—'}</div></div>
+      </div>
+      <div class="sources">
+        <span class="src-pill src-yahoo">YAHOO ✓</span>
+        <span class="src-pill src-finviz">FINVIZ ${f.price?'✓':'—'}</span>
+        <span class="src-pill src-finnhub">FINNHUB ✓</span>
+        <span class="src-pill src-tv">TV ${tv?'✓':'—'}</span>
+        <span class="src-pill src-ai">AI ✓</span>
+      </div>
+    </div>
+
+    ${tv ? `<div class="card" style="border-color:#ff993030">
+      <div class="label" style="color:#ffaa44">📡 TradingView Signal Active</div>
+      <div style="font-size:12px;color:#ffaa44">${tv.indicator}: <strong>${tv.action}</strong> at $${tv.price || '?'}</div>
+      <div style="font-size:9px;color:#664400;margin-top:4px">Fired ${Math.round((Date.now()-tv.time)/60000)}min ago</div>
+    </div>` : ''}
+
+    ${news.length ? `<div class="card">
+      <div class="label">📰 Recent News</div>
+      ${news.map(n => `<div style="font-size:11px;color:#888;padding:6px 0;border-bottom:1px solid #0a0a18">${n.headline}<br><span style="font-size:9px;color:#3a3a5a">${n.source}</span></div>`).join('')}
+    </div>` : ''}
+  `;
+}
+
+// ── SUPERNOVA SCAN ──────────────────────────────────────────────────────────
+async function runSupernova() {
+  const out = document.getElementById('novaResult');
+  out.innerHTML = `<div class="card"><div class="loading">🌟 SCANNING TODAY'S MARKET MOVERS</div><div class="loader"><div></div><div></div><div></div></div></div>`;
+  try {
+    const r = await fetch('/api/supernova', { method: 'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+    const data = await r.json();
+    if (data.error) { out.innerHTML = `<div class="card"><div style="color:#ff5555">❌ ${data.error}</div></div>`; return; }
+    const novas = data.supernovas || [];
+    out.innerHTML = `
+      <div class="card"><div style="font-size:11px;color:#888">${data.market_pulse || ''}</div></div>
+      ${novas.map(n => `
+        <div class="nova-item">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:18px;font-weight:900;color:#fff">${n.ticker}</span>
+            <span style="background:#ffcc0020;color:#ffcc00;padding:3px 8px;border-radius:4px;font-size:9px;font-weight:800">${n.tier}</span>
+          </div>
+          <div style="font-size:11px;color:#888;margin-bottom:6px">${n.company || ''}</div>
+          <div style="font-size:11px;color:#cc9900;margin-bottom:8px">⚡ ${n.catalyst || 'No catalyst'}</div>
+          <div class="grid3">
+            <div class="metric"><div class="lbl">Price</div><div class="val">$${n.price?.toFixed(2)}</div></div>
+            <div class="metric"><div class="lbl">Move</div><div class="val g">+${n.price_change_pct?.toFixed(1)}%</div></div>
+            <div class="metric"><div class="lbl">Score</div><div class="val gold">${n.supernova_score}/100</div></div>
+          </div>
+          <button class="btn btn-secondary" onclick="document.querySelector('[data-tab=analyze]').click();document.getElementById('ticker').value='${n.ticker}';runAnalysis()" style="margin-top:8px">▶ DEEP ANALYZE ${n.ticker}</button>
+        </div>
+      `).join('')}
+    `;
+  } catch (e) {
+    out.innerHTML = `<div class="card"><div style="color:#ff5555">❌ ${e.message}</div></div>`;
+  }
+}
+
+// ── TV STATUS ───────────────────────────────────────────────────────────────
+async function loadTvStatus() {
+  try {
+    const r = await fetch('/api/health');
+    const d = await r.json();
+    const url = window.location.origin + '/webhook/tradingview?secret=' + (d.webhook_secret || 'maverick');
+    document.getElementById('webhookUrl').textContent = url;
+    document.getElementById('tvStatus').innerHTML = `
+      <div>Active TV signals cached: <strong style="color:#ffcc00">${d.tv_signals_active || 0}</strong></div>
+      <div>Webhook endpoint: <strong style="color:#00cc88">ARMED</strong></div>
+      <div>Telegram alerts: <strong style="color:${d.services?.telegram?'#00cc88':'#ff5555'}">${d.services?.telegram?'ENABLED':'DISABLED'}</strong></div>
+    `;
+  } catch {}
+}
+
+// ── MEMORY STATS ────────────────────────────────────────────────────────────
+async function loadMemory() {
+  document.getElementById('memoryStats').innerHTML = 'Memory analysis lives in your Telegram bot. Text <strong>analyze</strong> to your bot for AI review of your trading patterns.';
+}
+</script>
+</body>
+</html>
