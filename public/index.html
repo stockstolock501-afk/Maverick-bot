@@ -251,11 +251,12 @@ document.getElementById('ticker').addEventListener('keydown', e => { if (e.key =
 
 function renderAnalysis(data, out) {
   const v = data.verdict;
-  const y = data.data.yahoo || {};
-  const f = data.data.finviz || {};
+  const y = data.data.quote || {};
+  const tf = data.data.timeframes || {};
   const tv = data.data.tradingview;
-  const hist = data.data.history;
   const news = data.data.news || [];
+  const chartUrl5 = data.chartUrl5min;
+  const chartUrlD  = data.chartUrlDaily;
 
   const emoji = { BUY: '🟢', DONT_BUY: '🔴', WATCH: '🟡' }[v.verdict] || '⚪';
   const actionText = v.verdict === 'DONT_BUY' ? "DON'T BUY" : v.verdict;
@@ -295,21 +296,42 @@ function renderAnalysis(data, out) {
     memoryHtml = `<div class="memory">🧠 ${hist.count} similar setups detected (no completed outcomes yet)</div>`;
   }
 
+  // Timeframe summary row
+  const tfRow = [
+    tf.daily   ? `D:${tf.daily.trend}(RSI${tf.daily.rsi})` : null,
+    tf.fourhour? `4H:${tf.fourhour.trend}(RSI${tf.fourhour.rsi})` : null,
+    tf.onehour ? `1H:${tf.onehour.trend}(RSI${tf.onehour.rsi})` : null,
+    tf.fifteen ? `15m:${tf.fifteen.trend}(RSI${tf.fifteen.rsi})` : null,
+  ].filter(Boolean).join(' · ');
+
   out.innerHTML = `
     <div class="verdict ${v.verdict}">
       <div class="verdict-emoji">${emoji}</div>
       <div class="verdict-action">${actionText}</div>
       <div class="verdict-headline">${v.headline}</div>
+      ${v.chart_pattern ? `<div style="font-size:11px;color:#888;margin-top:6px">📊 Pattern: <strong style="color:#ffcc00">${v.chart_pattern}</strong> · Alignment: <strong>${v.timeframe_alignment||'—'}</strong></div>` : ''}
       <div class="conviction-bar"><div class="conviction-fill" style="width:${v.conviction}%;background:${convColor}"></div></div>
       <div class="conviction-num" style="color:${convColor}">CONVICTION ${v.conviction}/100</div>
     </div>
 
-    ${memoryHtml}
+    ${chartUrl5 ? `<div class="card" style="padding:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="label" style="margin:0">📈 5-MIN CHART · ${data.ticker}</div>
+        <div style="display:flex;gap:6px">
+          <button onclick="document.getElementById('chart5').src='${chartUrl5}&nocache='+Date.now()" style="background:#0a0a18;border:1px solid #1a1a30;color:#888;font-size:9px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:monospace">↻</button>
+          <button onclick="switchChart('daily')" style="background:#0a0a18;border:1px solid #1a1a30;color:#888;font-size:9px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:monospace">DAILY</button>
+          <button onclick="switchChart('5min')" style="background:#ffcc0020;border:1px solid #ffcc0050;color:#ffcc00;font-size:9px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:monospace">5-MIN</button>
+        </div>
+      </div>
+      <img id="chart5" src="${chartUrl5}" alt="${data.ticker} 5-min chart" style="width:100%;border-radius:6px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"/>
+      <div style="display:none;font-size:10px;color:#3a3a5a;padding:10px;text-align:center">Chart loading... Finviz may take a moment</div>
+      ${tfRow ? `<div style="font-size:9px;color:#3a3a5a;margin-top:6px;font-family:monospace">${tfRow}</div>` : ''}
+    </div>` : ''}
 
     <div class="card">
       <div class="label">🎯 Reasoning</div>
       <div class="reasoning">
-        <ul>${v.reasoning.map(r => `<li>${r}</li>`).join('')}</ul>
+        <ul>${(v.reasoning||[]).map(r => `<li>${r}</li>`).join('')}</ul>
       </div>
       <div class="risk"><strong>⚠️ Key Risk:</strong> ${v.key_risk}</div>
     </div>
@@ -317,49 +339,42 @@ function renderAnalysis(data, out) {
     ${buyPlan}
 
     <div class="card">
-      <div class="label">📊 Live Data</div>
+      <div class="label">📊 Live Data · <span style="color:#3a3a5a;font-size:8px">Source: ${y.source||'live'}</span></div>
       <div class="grid3">
-        <div class="metric"><div class="lbl">Price</div><div class="val">$${y.price?.toFixed(2) || '—'}</div></div>
-        <div class="metric"><div class="lbl">Change</div><div class="val ${(y.changePct||0)>=0?'g':'r'}">${y.changePct ? (y.changePct>=0?'+':'')+y.changePct.toFixed(2)+'%' : '—'}</div></div>
-        <div class="metric"><div class="lbl">Volume</div><div class="val">${y.volume ? (y.volume/1e6).toFixed(2)+'M' : '—'}</div></div>
+        <div class="metric"><div class="lbl">Price</div><div class="val">$${y.price?.toFixed(2)||'—'}</div></div>
+        <div class="metric"><div class="lbl">Change</div><div class="val ${(y.changePct||0)>=0?'g':'r'}">${y.changePct?(y.changePct>=0?'+':'')+y.changePct.toFixed(2)+'%':'—'}</div></div>
+        <div class="metric"><div class="lbl">H/L</div><div class="val" style="font-size:10px">$${y.high?.toFixed(2)||'—'}/$${y.low?.toFixed(2)||'—'}</div></div>
       </div>
       <div class="grid3">
-        <div class="metric"><div class="lbl">Mkt Cap</div><div class="val">${y.marketCap ? '$'+(y.marketCap/1e6).toFixed(0)+'M' : '—'}</div></div>
-        <div class="metric"><div class="lbl">Float</div><div class="val">${y.floatShares ? (y.floatShares/1e6).toFixed(1)+'M' : '—'}</div></div>
-        <div class="metric"><div class="lbl">Short %</div><div class="val gold">${f.shortFloat || '—'}</div></div>
+        <div class="metric"><div class="lbl">Mkt Cap</div><div class="val">${y.marketCap?'$'+(y.marketCap/1e6).toFixed(0)+'M':'—'}</div></div>
+        <div class="metric"><div class="lbl">Float</div><div class="val">${y.floatShares?(y.floatShares/1e6).toFixed(1)+'M':'—'}</div></div>
+        <div class="metric"><div class="lbl">Sector</div><div class="val" style="font-size:9px">${y.sector||y.industry||'—'}</div></div>
       </div>
-      <div class="grid3">
-        <div class="metric"><div class="lbl">RSI</div><div class="val">${f.rsi || '—'}</div></div>
-        <div class="metric"><div class="lbl">ATR</div><div class="val">${f.atr || '—'}</div></div>
-        <div class="metric"><div class="lbl">Rel Vol</div><div class="val">${f.relVolume || '—'}</div></div>
-      </div>
-      <div class="grid3">
-        <div class="metric"><div class="lbl">52w High</div><div class="val">$${y.yearHigh?.toFixed(2) || '—'}</div></div>
-        <div class="metric"><div class="lbl">52w Low</div><div class="val">$${y.yearLow?.toFixed(2) || '—'}</div></div>
-        <div class="metric"><div class="lbl">Sector</div><div class="val" style="font-size:9px">${y.sector || '—'}</div></div>
-      </div>
+      ${tf.daily ? `<div class="grid3">
+        <div class="metric"><div class="lbl">RSI (D)</div><div class="val ${tf.daily.rsi>70?'r':tf.daily.rsi<30?'g':''}">${tf.daily.rsi||'—'}</div></div>
+        <div class="metric"><div class="lbl">ATR (D)</div><div class="val">$${tf.daily.atr?.toFixed(3)||'—'}</div></div>
+        <div class="metric"><div class="lbl">EMA9 (D)</div><div class="val">$${tf.daily.ema9?.toFixed(2)||'—'}</div></div>
+      </div>` : ''}
       <div class="sources">
-        <span class="src-pill src-yahoo">YAHOO ✓</span>
-        <span class="src-pill src-finviz">FINVIZ ${f.price?'✓':'—'}</span>
         <span class="src-pill src-finnhub">FINNHUB ✓</span>
+        <span class="src-pill src-yahoo">YAHOO ${tf.daily?'✓':'—'}</span>
         <span class="src-pill src-tv">TV ${tv?'✓':'—'}</span>
         <span class="src-pill src-ai">AI ✓</span>
       </div>
     </div>
 
-    ${tv ? `<div class="card" style="border-color:#ff993030">
-      <div class="label" style="color:#ffaa44">📡 TradingView Signal Active</div>
-      <div style="font-size:12px;color:#ffaa44">${tv.indicator}: <strong>${tv.action}</strong> at $${tv.price || '?'}</div>
-      <div style="font-size:9px;color:#664400;margin-top:4px">Fired ${Math.round((Date.now()-tv.time)/60000)}min ago</div>
-    </div>` : ''}
-
     ${news.length ? `<div class="card">
       <div class="label">📰 Recent News</div>
-      ${news.map(n => `<div style="font-size:11px;color:#888;padding:6px 0;border-bottom:1px solid #0a0a18">${n.headline}<br><span style="font-size:9px;color:#3a3a5a">${n.source}</span></div>`).join('')}
+      ${news.map(n=>`<div style="font-size:11px;color:#888;padding:6px 0;border-bottom:1px solid #0a0a18">${n.headline}<br><span style="font-size:9px;color:#3a3a5a">${n.source||''}</span></div>`).join('')}
     </div>` : ''}
   `;
-}
 
+  // Chart switcher function
+  window.switchChart = (tf) => {
+    const img = document.getElementById('chart5');
+    if (!img) return;
+    img.src = tf === 'daily' ? '${chartUrlD}' : '${chartUrl5}';
+  };
 // ── SUPERNOVA SCAN ──────────────────────────────────────────────────────────
 async function runSupernova() {
   const out = document.getElementById('novaResult');
