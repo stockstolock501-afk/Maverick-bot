@@ -744,6 +744,345 @@ if (bot) {
 
   bot.on('polling_error', e => console.error('Polling:', e.message));
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// MAVERICK SMART MONEY FOOTPRINTS ENGINE
+// Paste this block into index.js BEFORE the app.get('*'...) catch-all line
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Phase Detection Algorithm ──────────────────────────────────────────────
+function detectPhase(dailyCandles, currentPrice) {
+  if (!dailyCandles || dailyCandles.candleCount < 10) {
+    return { phase: 0, confidence: 0, description: 'Insufficient data', signals: [] };
+  }
+
+  const { high, low, last, ema9, rsi, relVolume, atr, pctChange } = dailyCandles;
+  const priceRange = high - low;
+  const pricePosition = priceRange > 0 ? (currentPrice - low) / priceRange : 0.5; // 0=at lows, 1=at highs
+
+  let phase = 0, confidence = 0, description = '', signals = [];
+
+  // Phase 1 — Quiet Accumulation
+  // Price near lows, RSI recovering from oversold, volume low
+  if (pricePosition < 0.30 && rsi < 50 && rsi > 25 && relVolume < 1.2) {
+    phase = 1; confidence = 65 + Math.round((0.30 - pricePosition) * 100);
+    description = 'Institutions quietly absorbing supply near lows. Retail uninterested.';
+    signals.push('Price in bottom 30% of range');
+    signals.push('RSI recovering from oversold (' + rsi + ')');
+    signals.push('Below-average volume = quiet absorption');
+    if (pctChange > -5 && pctChange < 5) signals.push('Price not breaking down despite low interest');
+  }
+
+  // Phase 2 — Price Defense (Maverick's ENTRY zone)
+  else if (pricePosition >= 0.15 && pricePosition <= 0.50 && rsi >= 40 && rsi <= 65) {
+    phase = 2; confidence = 70 + Math.round(Math.abs(0.35 - pricePosition) * 50);
+    description = 'DEFENDED. Institutions protecting their entry. Buy every dip pattern active.';
+    signals.push('Price in consolidation zone (defended range)');
+    signals.push('RSI healthy and rising (' + rsi + ')');
+    signals.push('Higher lows forming — institutions absorbing each dip');
+    if (relVolume > 0.8 && relVolume < 1.5) signals.push('Controlled volume = institutional hand');
+    if (atr) signals.push('ATR $' + atr.toFixed(2) + ' — use for stop placement');
+  }
+
+  // Phase 3 — Distribution / Markup (Maverick's RIDE zone)
+  else if (pricePosition > 0.50 && pricePosition <= 0.80 && rsi > 50 && pctChange > 0) {
+    phase = 3; confidence = 72 + Math.round(pricePosition * 20);
+    description = 'MARKUP IN PROGRESS. Institutions distributing into retail buying. Ride with them.';
+    signals.push('Price in upper half of range — breakout territory');
+    signals.push('RSI bullish momentum (' + rsi + ')');
+    signals.push('Positive price change confirms directional move');
+    if (relVolume > 1.3) signals.push('Volume expanding = institutions inviting retail in');
+  }
+
+  // Phase 4 — FOMO Distribution
+  else if (pricePosition > 0.80 && rsi > 70) {
+    phase = 4; confidence = 75;
+    description = 'DANGER. FOMO zone. Institutions selling into retail euphoria. Do NOT buy.';
+    signals.push('Price at 80%+ of range — extended');
+    signals.push('RSI overbought (' + rsi + ') — reversal risk high');
+    signals.push('Whales distributing. Retail is the exit liquidity.');
+  }
+
+  // Phase 5 — Bag Holding / Decline
+  else if (pctChange < -15 || (pricePosition < 0.25 && rsi < 35)) {
+    phase = 5; confidence = 68;
+    description = 'DECLINE. Institutions gone. Retail holding the bag. Avoid.';
+    signals.push('Price declining sharply from highs');
+    signals.push('RSI in bearish territory (' + rsi + ')');
+    signals.push('Smart money has exited. Do not catch falling knife.');
+  }
+
+  // Uncertain — transitional
+  else {
+    phase = 0; confidence = 45;
+    description = 'TRANSITIONAL. Phase unclear. Wait for definition.';
+    signals.push('Mixed signals — no clean phase identified');
+    signals.push('Wait for price to define direction');
+  }
+
+  return { phase, confidence, description, signals, pricePosition: +(pricePosition * 100).toFixed(0), rsi, relVolume };
+}
+
+// ── Price Defense Score (how many times a level has been defended) ──────────
+function scorePriceDefense(candles) {
+  if (!candles) return { score: 0, level: null, count: 0 };
+  // Use the candle low as approximate support
+  const supportLevel = candles.low;
+  const tolerance = candles.atr || supportLevel * 0.03;
+  // We estimate bounces from the range contraction
+  const rangeVsAtR = candles.atr > 0 ? (candles.high - candles.low) / candles.atr : 0;
+  const estimatedBounces = Math.max(1, Math.round(Math.min(rangeVsAtR / 3, 8)));
+  const score = Math.min(100, estimatedBounces * 15 + (candles.rsi > 40 && candles.rsi < 65 ? 20 : 0));
+  return { score, level: +supportLevel.toFixed(2), count: estimatedBounces };
+}
+
+// ── Institutional Data (Finnhub + SEC EDGAR) ───────────────────────────────
+async function getInstitutionalData(symbol) {
+  const results = { earnings: null, ownership: null, recommendations: null, insiders: null };
+
+  if (!FINNHUB_KEY) return results;
+
+  try {
+    // Earnings calendar and estimates
+    const now = Math.floor(Date.now() / 1000);
+    const [earningsR, recR] = await Promise.all([
+      fetch(`https://finnhub.io/api/v1/calendar/earnings?symbol=${symbol}&token=${FINNHUB_KEY}`),
+      fetch(`https://finnhub.io/api/v1/recommendation?symbol=${symbol}&token=${FINNHUB_KEY}`),
+    ]);
+    const earningsD = await earningsR.json();
+    const recD = await recR.json();
+
+    // Next earnings
+    if (earningsD?.earningsCalendar?.length) {
+      const upcoming = earningsD.earningsCalendar
+        .filter(e => new Date(e.date).getTime() > Date.now())
+        .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
+      if (upcoming) {
+        results.earnings = {
+          date: upcoming.date,
+          epsEstimate: upcoming.epsEstimate,
+          revenueEstimate: upcoming.revenueEstimate,
+          daysUntil: Math.ceil((new Date(upcoming.date) - Date.now()) / 86400000),
+        };
+      }
+    }
+
+    // Analyst recommendations (buying pressure proxy)
+    if (Array.isArray(recD) && recD.length) {
+      const latest = recD[0];
+      results.recommendations = {
+        strongBuy: latest.strongBuy || 0,
+        buy: latest.buy || 0,
+        hold: latest.hold || 0,
+        sell: latest.sell || 0,
+        strongSell: latest.strongSell || 0,
+        period: latest.period,
+      };
+    }
+  } catch(e) { console.error('Institutional data:', e.message); }
+
+  return results;
+}
+
+// ── Volume Pattern Analysis ────────────────────────────────────────────────
+function analyzeVolumePattern(tf1d, tf1h) {
+  if (!tf1d) return { pattern: 'UNKNOWN', accumScore: 0, signals: [] };
+  const signals = [];
+  let accumScore = 50; // neutral
+
+  // High volume on dips (accumulation) vs high volume on rallies (distribution)
+  if (tf1d.relVolume > 1.5 && tf1d.trend === 'UP') {
+    accumScore += 15; signals.push('High volume on uptrend = institutional buying');
+  }
+  if (tf1d.relVolume > 1.5 && tf1d.trend === 'DOWN') {
+    accumScore -= 20; signals.push('High volume on downtrend = distribution warning');
+  }
+  if (tf1d.rsi < 50 && tf1d.relVolume < 0.8) {
+    accumScore += 10; signals.push('Quiet tape at low RSI = stealth accumulation pattern');
+  }
+  if (tf1h && tf1h.trend === 'UP' && tf1d.trend === 'DOWN') {
+    accumScore += 8; signals.push('1H turning up while daily still down = early reversal');
+  }
+  if (tf1d.pctChange > 20 && tf1d.relVolume > 3) {
+    accumScore -= 25; signals.push('Parabolic volume = FOMO, not smart money');
+  }
+
+  const pattern = accumScore >= 65 ? 'ACCUMULATION' : accumScore <= 35 ? 'DISTRIBUTION' : 'NEUTRAL';
+  return { pattern, accumScore: Math.max(0, Math.min(100, accumScore)), signals };
+}
+
+// ── Overall Footprint Score ────────────────────────────────────────────────
+function calcFootprintScore(phase, defense, volPattern, institutional) {
+  let score = 0;
+  const signals = [];
+
+  // Phase scoring (Phase 2 and 3 are ideal)
+  if (phase.phase === 2) { score += 35; signals.push('🔥 PHASE 2 — Price defense active (Maverick sweet spot)'); }
+  else if (phase.phase === 3) { score += 28; signals.push('🔥 PHASE 3 — Markup in progress (ride the whale)'); }
+  else if (phase.phase === 1) { score += 18; signals.push('👀 PHASE 1 — Quiet accumulation (early position)'); }
+  else if (phase.phase === 4) { score -= 20; signals.push('⚠️ PHASE 4 — FOMO zone (whale exit)'); }
+  else if (phase.phase === 5) { score -= 35; signals.push('❌ PHASE 5 — Bag holding (avoid)'); }
+
+  // Price defense
+  if (defense.count >= 3) { score += 20; signals.push('🛡️ Support defended ' + defense.count + 'x at $' + defense.level); }
+  else if (defense.count >= 2) { score += 12; signals.push('🛡️ Support tested ' + defense.count + 'x at $' + defense.level); }
+
+  // Volume pattern
+  if (volPattern.pattern === 'ACCUMULATION') { score += 18; signals.push('📊 Volume pattern = ACCUMULATION (whales buying)'); }
+  else if (volPattern.pattern === 'DISTRIBUTION') { score -= 15; signals.push('📊 Volume pattern = DISTRIBUTION (whales selling)'); }
+
+  // Institutional signals
+  if (institutional?.earnings?.daysUntil <= 14 && institutional.earnings.daysUntil > 0) {
+    score += 15; signals.push('⚡ CATALYST: Earnings in ' + institutional.earnings.daysUntil + ' days');
+  }
+  if (institutional?.recommendations) {
+    const r = institutional.recommendations;
+    const bullish = r.strongBuy + r.buy;
+    const bearish = r.sell + r.strongSell;
+    if (bullish > bearish * 2) { score += 10; signals.push('📈 Analyst consensus: ' + bullish + ' BUY vs ' + bearish + ' SELL'); }
+  }
+
+  return { score: Math.max(0, Math.min(100, score)), signals };
+}
+
+// ── FOOTPRINTS API ROUTE ───────────────────────────────────────────────────
+app.post('/api/footprints', async (req, res) => {
+  const { ticker } = req.body;
+  if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  const sym = ticker.toUpperCase().trim();
+
+  try {
+    // Pull all data in parallel
+    const [quote, tf1d, tf4h, tf1h, tf15, news, institutional] = await Promise.all([
+      getQuote(sym),
+      getCandles(sym, '3mo', '1d'),
+      getCandles(sym, '1mo', '60m'),
+      getCandles(sym, '5d', '60m'),
+      getCandles(sym, '2d', '15m'),
+      getNews(sym),
+      getInstitutionalData(sym),
+    ]);
+
+    if (!quote) return res.status(404).json({ error: sym + ' not found' });
+
+    // Run all analyses
+    const phase       = detectPhase(tf1d, quote.price);
+    const defense     = scorePriceDefense(tf1d);
+    const volPattern  = analyzeVolumePattern(tf1d, tf1h);
+    const footprint   = calcFootprintScore(phase, defense, volPattern, institutional);
+    const chartUrl    = getChartUrl(sym, 'daily');
+
+    res.json({
+      ticker: sym,
+      quote,
+      phase,
+      defense,
+      volPattern,
+      institutional,
+      footprint,
+      chartUrl,
+      timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 },
+      news: news.slice(0, 3),
+      timestamp: new Date().toISOString(),
+    });
+  } catch(e) {
+    console.error('Footprints error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── FOOTPRINTS DEEP DIVE (full AI analysis) ────────────────────────────────
+app.post('/api/footprints/deepdive', async (req, res) => {
+  const { ticker } = req.body;
+  if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  if (!GROQ_KEY) return res.status(503).json({ error: 'GROQ_KEY not set' });
+  const sym = ticker.toUpperCase().trim();
+
+  try {
+    // Get base footprint data first
+    const fpRes = await fetch(`http://localhost:${process.env.PORT || 3000}/api/footprints`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: sym })
+    });
+    const fp = await fpRes.json();
+    if (fp.error) return res.status(404).json({ error: fp.error });
+
+    const DEEPDIVE_PROMPT = `You are MAVERICK Smart Money Analyst — the most sophisticated institutional footprint reader on the street.
+
+TRADING PHILOSOPHY:
+- We swim WITH whales, never against them
+- We eat their leftovers (Phase 2 and 3 entries)
+- We ANTICIPATE their arrival, not react to it
+- The whales ARE the catalyst. Retail is our exit liquidity.
+- We never fight dilution, ATMs, or active distribution
+
+5 PHASES:
+Phase 1 — Quiet Accumulation: Institutions loading quietly, retail unaware
+Phase 2 — PRICE DEFENSE: Institutions protecting entry, buying every dip (MAVERICK ENTRY)
+Phase 3 — MARKUP/DISTRIBUTION: Breakout begins, ride with the whale (MAVERICK RIDE)
+Phase 4 — FOMO Distribution: Whales selling into euphoria (AVOID/FADE)
+Phase 5 — Bag Holding: Institutions gone, avoid (AVOID)
+
+4 WHALE FOOTPRINTS TO DETECT:
+1. CATALYST ANTICIPATION: Earnings whisper, FDA date, contract expected, options flow
+2. PRICE DEFENSE: Exact level defended 3+ times, volume spike on dips, fade on rallies
+3. BID STACKING: Volume at key levels, block accumulation off-hours, round number support
+4. INSTITUTIONAL ACCUMULATION: 13F changes, analyst upgrades post-accumulation, ownership rise
+
+YOUR JOB: Analyze ALL data. Take a clear, aggressive position. Name the footprints. Tell Maverick exactly what to do.
+
+RETURN ONLY VALID JSON:
+{
+  "phase_detected": 1-5,
+  "phase_confidence": 0-100,
+  "phase_name": "QUIET_ACCUMULATION|PRICE_DEFENSE|MARKUP|FOMO_DISTRIBUTION|BAG_HOLDING",
+  "maverick_verdict": "ENTER_NOW|ENTER_ON_DIP|WATCH_FOR_PHASE2|RIDE_IT|FADE|AVOID",
+  "conviction": 0-100,
+  "headline": "one decisive sentence in Maverick's voice",
+  "footprints_detected": [
+    {"footprint": "name", "signal": "specific evidence", "strength": "STRONG|MODERATE|WEAK"}
+  ],
+  "whale_activity": "What are the whales doing RIGHT NOW based on data",
+  "anticipated_catalyst": "What catalyst are whales positioned for, if any",
+  "defended_level": 0.00,
+  "entry_zone": {"low": 0.00, "high": 0.00},
+  "stop_loss": 0.00,
+  "target_1": 0.00,
+  "target_2": 0.00,
+  "risk_reward": 0.0,
+  "time_to_move": "estimate of when the move happens",
+  "key_risk": "what would invalidate the thesis",
+  "reasoning": ["3-5 specific data bullets with numbers"]
+}`;
+
+    const verdict = await groqCall(DEEPDIVE_PROMPT, JSON.stringify({
+      ticker: sym,
+      current_price: fp.quote?.price,
+      price_change_pct: fp.quote?.changePct,
+      market_cap: fp.quote?.marketCap,
+      float_shares: fp.quote?.floatShares,
+      sector: fp.quote?.sector,
+      phase_preliminary: fp.phase,
+      defense_analysis: fp.defense,
+      volume_pattern: fp.volPattern,
+      footprint_score: fp.footprint,
+      institutional_data: fp.institutional,
+      timeframe_daily: fp.timeframes?.daily,
+      timeframe_4h: fp.timeframes?.fourhour,
+      timeframe_1h: fp.timeframes?.onehour,
+      recent_news: fp.news?.map(n => n.headline),
+    }));
+
+    if (!verdict) return res.status(503).json({ error: 'AI unavailable' });
+
+    res.json({ ticker: sym, verdict, baseData: fp, timestamp: new Date().toISOString() });
+  } catch(e) {
+    console.error('Deep dive error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// END FOOTPRINTS ENGINE — paste ends here
+// ═══════════════════════════════════════════════════════════════════════════
 
 // ── FRONTEND ──────────────────────────────────────────────────────────────────
 app.get('*', (req,res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
