@@ -1,7 +1,6 @@
 {
-  "name": "maverick-terminal-v3",
-  "version": "3.1.0",
-  "description": "Maverick Terminal v3.1",
+  "name": "maverick-terminal",
+  "version": "3.2.0",
   "main": "index.js",
   "scripts": { "start": "node index.js" },
   "dependencies": {
