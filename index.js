@@ -571,6 +571,130 @@ app.post('/api/chat/clear', (req, res) => { chatSessions.delete(req.body.session
 app.get('/api/health', (req, res) => {
   res.json({ status: 'online', version: '3.3', time: new Date().toISOString(), botUsername: BOT_USERNAME, services: { telegram: !!TELEGRAM_TOKEN, finnhub: !!FINNHUB_KEY, groq: !!GROQ_KEY, memory: !!(JSONBIN_KEY && JSONBIN_BIN) }, active: { watches: watches.size, trades: trades.size, alerts: [...priceAlerts.values()].flat().filter(a => !a.fired).length, tvSignals: tvSignals.size } });
 });
+// ═══════════════════════════════════════════════════════════════════════════
+// MAVERICK AI CHAT ADVISOR
+// Paste this block into index.js BEFORE the app.get('*'...) line
+// ═══════════════════════════════════════════════════════════════════════════
+
+const MAVERICK_ADVISOR_PROMPT = `You are MAVERICK's personal hedge fund AI trading advisor. You have one user: Maverick, an aggressive day trader building a $348 portfolio to $1,000 by end of May 2026.
+
+MAVERICK'S PROFILE:
+- Portfolio: $348 (working capital, grows with wins)
+- Risk tolerance: AGGRESSIVE — but calculated, not reckless
+- Style: Phases 2 and 3 player. Swims with whales, not against them.
+- Specialties: Sub-$10 momentum, supernova plays, short squeezes
+- Rules: Never fight dilution, ATMs, or active distribution
+- Entry philosophy: ANTICIPATE whale arrival, don't react to it
+- The whale IS the catalyst. Retail is the exit liquidity.
+- 5 phases: 1=Quiet Accum, 2=Price Defense (ENTER), 3=Markup (RIDE), 4=FOMO Dist, 5=Bag Holding
+
+WHAT YOU CAN DO:
+1. Position sizing: Calculate exact share count given portfolio, risk %, stop distance
+2. Probability assessment: Estimate % likelihood of a price target based on setup quality
+3. Risk/reward analysis: Full R:R breakdown for any proposed trade
+4. Add-to-position guidance: Whether to add, how much, at what level
+5. Chart pattern reading: Interpret TA questions in plain English
+6. Whale detection: Read between the lines on institutional behavior
+7. Trade management: When to exit, trail stops, protect profits
+8. Portfolio advice: How to allocate $348 across multiple setups
+
+POSITION SIZING FORMULA (always use this):
+- Max risk per trade = 2% of portfolio for STANDARD, 3% for AGGRESSIVE
+- Position size = Risk amount / (Entry - Stop)
+- Never put more than 35% of portfolio in one trade
+- Keep $100 reserve always (never trade your last dollar)
+- Tradeable capital = Portfolio - $100 reserve
+
+PROBABILITY FRAMEWORK:
+- Phase 2 + defended level + volume confirmation = 65-75% probability of move
+- Phase 2 + catalyst + short squeeze setup = 75-85%
+- Phase 3 breakout confirmed = 60-70% (move already started, less upside)
+- No phase confirmation = 40-50% (coin flip — avoid)
+
+RESPONSE STYLE:
+- Direct and decisive. No hedging language.
+- Use exact numbers always.
+- Keep responses under 200 words unless a complex calculation is needed.
+- End every position sizing answer with the exact command to send the Telegram bot.
+- Never say "it depends" without immediately giving the answer.
+
+LIVE DATA: When the user mentions a ticker, live data will be provided if available.`;
+
+// Chat history per session (in-memory, resets on server restart)
+const chatSessions = new Map(); // sessionId → [messages]
+
+app.post('/api/chat', async (req, res) => {
+  if (!GROQ_KEY) return res.status(503).json({ error: 'GROQ_KEY not set in Render environment variables' });
+
+  const { message, sessionId, ticker, portfolioSize } = req.body;
+  if (!message) return res.status(400).json({ error: 'No message provided' });
+
+  const sid = sessionId || 'default';
+  if (!chatSessions.has(sid)) chatSessions.set(sid, []);
+  const history = chatSessions.get(sid);
+
+  // Build context — fetch live data if ticker mentioned
+  let liveContext = '';
+  const mentionedTicker = ticker || message.match(/\b([A-Z]{2,5})\b/)?.[1];
+  if (mentionedTicker && mentionedTicker.length >= 2 && !['THE','AND','FOR','BUT','NOT','BUY','ADD','OUT'].includes(mentionedTicker)) {
+    try {
+      const q = await getQuote(mentionedTicker);
+      if (q) {
+        liveContext = `\n\nLIVE DATA for ${mentionedTicker}: Price $${q.price?.toFixed(2)}, Change ${q.changePct?.toFixed(2)}%, H $${q.high?.toFixed(2)}, L $${q.low?.toFixed(2)}, Market Cap ${q.marketCap?(q.marketCap/1e6).toFixed(0)+'M':'unknown'}, Float ${q.floatShares?(q.floatShares/1e6).toFixed(1)+'M shares':'unknown'}, Sector: ${q.sector||'unknown'}`;
+      }
+    } catch {}
+  }
+
+  // Add portfolio context if provided
+  const portfolioContext = portfolioSize
+    ? `\n\nCURRENT PORTFOLIO: $${portfolioSize} | Tradeable: $${portfolioSize - 100} | Max per trade: $${Math.round((portfolioSize - 100) * 0.35)}`
+    : `\n\nCURRENT PORTFOLIO: $348 | Tradeable: $248 | Max per trade: $86`;
+
+  // Build messages for Groq
+  const messages = [
+    { role: 'system', content: MAVERICK_ADVISOR_PROMPT + portfolioContext },
+    ...history.slice(-10), // keep last 10 exchanges for context
+    { role: 'user', content: message + liveContext },
+  ];
+
+  try {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 500,
+        temperature: 0.3,
+        messages,
+      }),
+    });
+
+    const d = await r.json();
+    const reply = d.choices?.[0]?.message?.content;
+    if (!reply) return res.status(503).json({ error: 'AI returned empty response. Check GROQ_KEY.' });
+
+    // Save to history
+    history.push({ role: 'user', content: message });
+    history.push({ role: 'assistant', content: reply });
+    if (history.length > 20) history.splice(0, 2); // trim old messages
+
+    res.json({ reply, ticker: mentionedTicker || null, sessionId: sid });
+  } catch (e) {
+    console.error('Chat error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Clear chat history
+app.post('/api/chat/clear', (req, res) => {
+  const { sessionId } = req.body;
+  chatSessions.delete(sessionId || 'default');
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// END CHAT ADVISOR BLOCK
+// ═══════════════════════════════════════════════════════════════════════════
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
