@@ -88,6 +88,7 @@ footer{margin-top:14px;font-size:8px;color:#1a1a2e;text-align:center;padding-bot
   <button class="tab" data-tab="supernova">🌟 SUPERNOVA</button>
   <button class="tab" data-tab="signals">📡 SIGNALS</button>
   <button class="tab" data-tab="catalyst">⚡ CATALYST</button>
+  <button class="tab" data-tab="footprints">🐋 FOOTPRINTS</button>
 </div>
 
 <!-- ANALYZE TAB -->
@@ -444,5 +445,329 @@ async function runCatalystScan() {
   }
 }
 </script>
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- STEP 1: Add this tab button to your tabs div (after the catalyst tab) -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- <button class="tab" data-tab="footprints">🐋 FOOTPRINTS</button> -->
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- STEP 2: Paste this entire div BEFORE your closing </body> tag         -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+
+<style>
+.phase-track{display:flex;gap:4px;margin:14px 0}
+.phase-block{flex:1;padding:8px 4px;text-align:center;border-radius:5px;border:1px solid #1a1a30;cursor:default;transition:all 0.3s}
+.phase-block .pn{font-size:8px;color:#3a3a5a;letter-spacing:1px;margin-bottom:3px}
+.phase-block .pi{font-size:16px}
+.phase-block.active-1{background:#1a1a0a;border-color:#888840;box-shadow:0 0 12px #88884040}
+.phase-block.active-2{background:#0a2a0a;border-color:#00cc88;box-shadow:0 0 16px #00cc8840}
+.phase-block.active-3{background:#0a1a2a;border-color:#3b9eff;box-shadow:0 0 16px #3b9eff40}
+.phase-block.active-4{background:#2a1500;border-color:#ff8800;box-shadow:0 0 12px #ff880040}
+.phase-block.active-5{background:#2a0a0a;border-color:#ff5555;box-shadow:0 0 12px #ff555540}
+.fp-row{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #0a0a18}
+.fp-row:last-child{border-bottom:none}
+.fp-icon{font-size:16px;flex-shrink:0;margin-top:2px}
+.fp-label{font-size:10px;color:#ffcc00;font-weight:700;letter-spacing:1px;margin-bottom:3px}
+.fp-signal{font-size:11px;color:#8080a0;line-height:1.5}
+.fp-strength{font-size:8px;padding:1px 6px;border-radius:3px;font-weight:800;margin-left:6px}
+.fp-STRONG{background:#00cc8820;color:#00cc88}
+.fp-MODERATE{background:#ffcc0020;color:#ffcc00}
+.fp-WEAK{background:#ff555520;color:#ff5555}
+.meter-bar{height:8px;background:#0a0a18;border-radius:4px;overflow:hidden;margin-top:6px}
+.meter-fill{height:100%;border-radius:4px;transition:width 0.8s ease}
+.whale-box{background:#0a1a0a;border:1px solid #00cc8820;border-radius:7px;padding:12px;margin-bottom:10px}
+.catalyst-box{background:#1a1400;border:1px solid #ffcc0020;border-radius:7px;padding:12px;margin-bottom:10px}
+</style>
+
+<div id="tab-footprints" class="hidden">
+  <!-- Search -->
+  <div class="card card-glow">
+    <div class="lbl-sm">🐋 Smart Money Footprint Scanner</div>
+    <div style="font-size:10px;color:#3a3a5a;margin-bottom:10px;line-height:1.5">
+      Detects institutional accumulation phases · Price defense · Whale footprints · Catalyst anticipation
+    </div>
+    <input id="fp-ticker" placeholder="Enter ticker (e.g. LFVN, CIFR, PN)" autocomplete="off"/>
+    <button class="btn btn-primary" onclick="runFootprints()">🐋 SCAN FOOTPRINTS</button>
+  </div>
+
+  <!-- Phase Guide -->
+  <div class="card" style="padding:12px">
+    <div class="lbl-sm" style="margin-bottom:10px">Your Sweet Spots</div>
+    <div class="phase-track">
+      <div class="phase-block"><div class="pn">PHASE 1</div><div class="pi">👀</div></div>
+      <div class="phase-block" style="border-color:#00cc8840"><div class="pn" style="color:#00cc88">PHASE 2</div><div class="pi">🔥</div></div>
+      <div class="phase-block" style="border-color:#3b9eff40"><div class="pn" style="color:#3b9eff">PHASE 3</div><div class="pi">🔥</div></div>
+      <div class="phase-block"><div class="pn">PHASE 4</div><div class="pi">⚠️</div></div>
+      <div class="phase-block"><div class="pn">PHASE 5</div><div class="pi">❌</div></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:8px;color:#2a2a4a;margin-top:4px">
+      <span>Accumulation</span><span style="color:#00cc88;font-weight:700">← Entry Sweet Spots →</span><span>Distribution</span>
+    </div>
+  </div>
+
+  <div id="fp-result"></div>
+</div>
+
+<script>
+// ── FOOTPRINTS SCAN ──────────────────────────────────────────────────────────
+async function runFootprints() {
+  const ticker = document.getElementById('fp-ticker').value.toUpperCase().trim();
+  if (!ticker) return;
+  const out = document.getElementById('fp-result');
+  out.innerHTML = '<div class="card"><div class="loading-txt">🐋 READING WHALE FOOTPRINTS · PHASE DETECTION · VOLUME ANALYSIS</div><div class="loader"><div></div><div></div><div></div></div></div>';
+  try {
+    const r = await fetch('/api/footprints', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ticker})
+    });
+    const data = await r.json();
+    if (data.error) { out.innerHTML = '<div class="card"><div style="color:#ff5555">❌ '+data.error+'</div></div>'; return; }
+    renderFootprints(data, out);
+  } catch(e) {
+    out.innerHTML = '<div class="card"><div style="color:#ff5555">❌ '+e.message+'</div></div>';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const fpInput = document.getElementById('fp-ticker');
+  if (fpInput) fpInput.addEventListener('keydown', function(e) { if(e.key==='Enter') runFootprints(); });
+});
+
+function renderFootprints(data, out) {
+  const q = data.quote || {};
+  const ph = data.phase || {};
+  const def = data.defense || {};
+  const vol = data.volPattern || {};
+  const fp = data.footprint || {};
+  const inst = data.institutional || {};
+  const news = data.news || [];
+
+  const phaseColors = ['#888', '#888840', '#00cc88', '#3b9eff', '#ff8800', '#ff5555'];
+  const phaseColor = phaseColors[ph.phase] || '#888';
+  const phaseNames = ['?', 'QUIET ACCUMULATION', 'PRICE DEFENSE 🔥', 'MARKUP/DISTRIBUTION 🔥', 'FOMO DISTRIBUTION ⚠️', 'BAG HOLDING ❌'];
+  const phaseName = phaseNames[ph.phase] || 'UNKNOWN';
+  const isSweetSpot = ph.phase === 2 || ph.phase === 3;
+
+  // Phase tracker visual
+  const phaseBlocks = [1,2,3,4,5].map(function(p) {
+    const icons = ['','👀','🔥','🔥','⚠️','❌'];
+    const active = p === ph.phase;
+    const cls = active ? 'phase-block active-'+p : 'phase-block';
+    return '<div class="'+cls+'"><div class="pn">P'+p+'</div><div class="pi">'+icons[p]+'</div></div>';
+  }).join('');
+
+  // Score bar color
+  const scoreColor = fp.score >= 70 ? '#00cc88' : fp.score >= 50 ? '#ffcc00' : '#ff5555';
+
+  // Footprint signals
+  const fpSignals = (fp.signals || []).map(function(s) {
+    const icon = s.includes('PHASE 2') || s.includes('PHASE 3') ? '🔥' :
+                 s.includes('Support') || s.includes('defended') ? '🛡️' :
+                 s.includes('Volume') || s.includes('volume') ? '📊' :
+                 s.includes('CATALYST') ? '⚡' : s.includes('Analyst') ? '📈' : '●';
+    return '<div class="fp-row"><span class="fp-icon">'+icon+'</span><span class="fp-signal">'+s+'</span></div>';
+  }).join('');
+
+  // Phase signals
+  const phaseSignals = (ph.signals || []).map(function(s) {
+    return '<div style="font-size:11px;color:#8080a0;padding:4px 0;border-bottom:1px solid #0a0a18">▸ '+s+'</div>';
+  }).join('');
+
+  // Volume pattern
+  const volColor = vol.pattern === 'ACCUMULATION' ? '#00cc88' : vol.pattern === 'DISTRIBUTION' ? '#ff5555' : '#ffcc00';
+  const volSignals = (vol.signals || []).map(function(s) {
+    return '<div style="font-size:11px;color:#8080a0;padding:3px 0">▸ '+s+'</div>';
+  }).join('');
+
+  // Earnings catalyst
+  const earningsHtml = inst.earnings ? (
+    '<div class="catalyst-box">'+
+    '<div style="font-size:9px;color:#ffcc00;font-weight:700;letter-spacing:1px;margin-bottom:6px">⚡ CATALYST ANTICIPATION</div>'+
+    '<div style="font-size:12px;color:#cc9900">Earnings in <strong>'+inst.earnings.daysUntil+' days</strong> ('+inst.earnings.date+')</div>'+
+    (inst.earnings.epsEstimate ? '<div style="font-size:11px;color:#888;margin-top:4px">EPS estimate: $'+inst.earnings.epsEstimate+'</div>' : '')+
+    '</div>'
+  ) : '';
+
+  // Analyst recs
+  const recHtml = inst.recommendations ? (function() {
+    const r = inst.recommendations;
+    const total = r.strongBuy+r.buy+r.hold+r.sell+r.strongSell;
+    const bullPct = total > 0 ? Math.round((r.strongBuy+r.buy)/total*100) : 0;
+    return '<div style="margin-bottom:10px">'+
+      '<div style="font-size:9px;color:#3a3a5a;margin-bottom:4px">ANALYST SENTIMENT</div>'+
+      '<div style="display:flex;gap:8px;font-size:10px;font-family:monospace">'+
+      '<span style="color:#00cc88">BUY: '+(r.strongBuy+r.buy)+'</span>'+
+      '<span style="color:#ffcc00">HOLD: '+r.hold+'</span>'+
+      '<span style="color:#ff5555">SELL: '+(r.sell+r.strongSell)+'</span>'+
+      '<span style="color:#888">('+bullPct+'% bullish)</span>'+
+      '</div></div>';
+  })() : '';
+
+  out.innerHTML =
+    // Phase indicator header
+    '<div class="card" style="border-color:'+phaseColor+'40;background:'+phaseColor+'08">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'+
+    '<div>'+
+    '<div style="font-size:9px;color:'+phaseColor+';font-weight:700;letter-spacing:2px;margin-bottom:4px">'+data.ticker+' · PHASE ANALYSIS</div>'+
+    '<div style="font-size:20px;font-weight:900;color:#fff">PHASE '+ph.phase+': <span style="color:'+phaseColor+'">'+phaseName+'</span></div>'+
+    '<div style="font-size:11px;color:#888;margin-top:6px">'+ph.description+'</div>'+
+    '</div>'+
+    '<div style="text-align:right">'+
+    '<div style="font-size:9px;color:#3a3a5a">CONFIDENCE</div>'+
+    '<div style="font-size:22px;font-weight:900;color:'+phaseColor+'">'+ph.confidence+'%</div>'+
+    '</div>'+
+    '</div>'+
+    '<div class="phase-track">'+phaseBlocks+'</div>'+
+    (isSweetSpot ? '<div style="background:'+phaseColor+'15;border:1px solid '+phaseColor+'30;border-radius:5px;padding:8px 10px;margin-top:10px;font-size:11px;color:'+phaseColor+';font-weight:700">🔥 THIS IS YOUR SWEET SPOT — Maverick entry zone active</div>' : '')+
+    '</div>'+
+
+    // Footprint Score
+    '<div class="card">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
+    '<div class="lbl-sm" style="margin:0">🐋 Footprint Score</div>'+
+    '<div style="font-size:20px;font-weight:900;color:'+scoreColor+'">'+fp.score+'/100</div>'+
+    '</div>'+
+    '<div class="meter-bar"><div class="meter-fill" style="width:'+fp.score+'%;background:'+scoreColor+'"></div></div>'+
+    '<div style="margin-top:12px">'+fpSignals+'</div>'+
+    '</div>'+
+
+    // Phase signals detail
+    '<div class="card">'+
+    '<div class="lbl-sm">📊 Phase Evidence</div>'+
+    phaseSignals+
+    '</div>'+
+
+    // Earnings / Catalyst
+    earningsHtml +
+
+    // Volume pattern
+    '<div class="card">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
+    '<div class="lbl-sm" style="margin:0">📈 Volume Pattern</div>'+
+    '<div style="font-size:13px;font-weight:800;color:'+volColor+'">'+vol.pattern+'</div>'+
+    '</div>'+
+    '<div class="meter-bar"><div class="meter-fill" style="width:'+(vol.accumScore||50)+'%;background:'+volColor+'"></div></div>'+
+    '<div style="font-size:9px;color:#3a3a5a;margin-bottom:8px;margin-top:4px">Accumulation ←→ Distribution (Score: '+(vol.accumScore||50)+')</div>'+
+    volSignals+
+    '</div>'+
+
+    // Analyst recs + key data
+    '<div class="card">'+
+    '<div class="lbl-sm">🏛️ Institutional Context</div>'+
+    recHtml+
+    '<div class="grid3">'+
+    '<div class="metric"><div class="ml">Price</div><div class="mv">$'+(q.price?q.price.toFixed(2):'—')+'</div></div>'+
+    '<div class="metric"><div class="ml">Float</div><div class="mv">'+(q.floatShares?(q.floatShares/1e6).toFixed(1)+'M':'—')+'</div></div>'+
+    '<div class="metric"><div class="ml">Mkt Cap</div><div class="mv">'+(q.marketCap?'$'+(q.marketCap/1e6).toFixed(0)+'M':'—')+'</div></div>'+
+    '</div>'+
+    '<div class="grid2">'+
+    '<div class="metric"><div class="ml">Defense Level</div><div class="mv gold">$'+def.level+'</div></div>'+
+    '<div class="metric"><div class="ml">Bounces</div><div class="mv '+(def.count>=3?'g':def.count>=2?'gold':'r')+'">'+def.count+'x</div></div>'+
+    '</div>'+
+    '</div>'+
+
+    // Recent news
+    (news.length ? (
+      '<div class="card"><div class="lbl-sm">📰 Recent News</div>'+
+      news.map(function(n) {
+        return '<div style="font-size:11px;color:#888;padding:6px 0;border-bottom:1px solid #0a0a18">'+
+          n.headline+'<br><span style="font-size:9px;color:#3a3a5a">'+(n.source||'')+'</span></div>';
+      }).join('')+'</div>'
+    ) : '')+
+
+    // Deep Dive button
+    '<div style="margin-bottom:20px">'+
+    '<button class="btn btn-primary" onclick="runDeepDive(\''+data.ticker+'\')" style="background:linear-gradient(135deg,#3b0080,#1a0050)">'+
+    '🐋 DEEP DIVE — AI WHALE ANALYSIS'+
+    '</button>'+
+    '<div style="font-size:9px;color:#3a3a5a;text-align:center;margin-top:4px">AI reads all footprints → names the whales → tells you exactly what to do</div>'+
+    '</div>'+
+
+    '<div id="deepdive-result-'+data.ticker+'"></div>';
+}
+
+// ── DEEP DIVE ─────────────────────────────────────────────────────────────────
+async function runDeepDive(ticker) {
+  const out = document.getElementById('deepdive-result-'+ticker);
+  if (!out) return;
+  out.innerHTML = '<div class="card"><div class="loading-txt">🐋 AI READING ALL FOOTPRINTS · WHALE BEHAVIOR SYNTHESIS · POSITIONING...</div><div class="loader"><div></div><div></div><div></div></div></div>';
+  try {
+    const r = await fetch('/api/footprints/deepdive', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ticker})
+    });
+    const data = await r.json();
+    if (data.error) { out.innerHTML = '<div class="card"><div style="color:#ff5555">❌ '+data.error+'</div></div>'; return; }
+    renderDeepDive(data, out, ticker);
+  } catch(e) {
+    out.innerHTML = '<div class="card"><div style="color:#ff5555">❌ '+e.message+'</div></div>';
+  }
+}
+
+function renderDeepDive(data, out, ticker) {
+  const v = data.verdict;
+  if (!v) { out.innerHTML = '<div class="card"><div style="color:#ff5555">❌ AI unavailable</div></div>'; return; }
+
+  const verdictColors = {
+    ENTER_NOW: '#00cc88', ENTER_ON_DIP: '#3b9eff', WATCH_FOR_PHASE2: '#ffcc00',
+    RIDE_IT: '#00ff99', FADE: '#ff8800', AVOID: '#ff5555'
+  };
+  const vc = verdictColors[v.maverick_verdict] || '#888';
+  const phaseColors = ['#888','#888840','#00cc88','#3b9eff','#ff8800','#ff5555'];
+  const pc = phaseColors[v.phase_detected] || '#888';
+
+  const footprintsHtml = (v.footprints_detected || []).map(function(f) {
+    return '<div class="fp-row">'+
+      '<span class="fp-icon">🐾</span>'+
+      '<div>'+
+      '<div class="fp-label">'+f.footprint+'<span class="fp-strength fp-'+(f.strength||'MODERATE')+'">'+f.strength+'</span></div>'+
+      '<div class="fp-signal">'+f.signal+'</div>'+
+      '</div></div>';
+  }).join('');
+
+  const tgText = encodeURIComponent('watching '+ticker+' at '+(v.entry_zone?.low||''));
+  const hasPlan = v.entry_zone?.low && v.stop_loss;
+
+  out.innerHTML =
+    '<div class="whale-box">'+
+    '<div style="font-size:9px;color:#00cc88;font-weight:700;letter-spacing:2px;margin-bottom:8px">🐋 AI WHALE INTELLIGENCE</div>'+
+    '<div style="font-size:22px;font-weight:900;color:'+vc+';margin-bottom:4px">'+v.maverick_verdict.replace(/_/g,' ')+'</div>'+
+    '<div style="font-size:13px;color:#ddd;line-height:1.5;margin-bottom:8px">'+v.headline+'</div>'+
+    '<div style="font-size:11px;color:#888;margin-bottom:10px">Phase <strong style="color:'+pc+'">'+v.phase_detected+'</strong> · Confidence <strong style="color:'+vc+'">'+v.conviction+'%</strong></div>'+
+    '</div>'+
+
+    '<div class="card">'+
+    '<div class="lbl-sm">🐾 Footprints Detected</div>'+
+    footprintsHtml+
+    '</div>'+
+
+    '<div class="card">'+
+    '<div class="lbl-sm">🐋 Whale Activity</div>'+
+    '<div style="font-size:12px;color:#a0a0b8;line-height:1.6;margin-bottom:10px">'+v.whale_activity+'</div>'+
+    (v.anticipated_catalyst ? '<div class="catalyst-box"><div style="font-size:9px;color:#ffcc00;font-weight:700;margin-bottom:4px">⚡ ANTICIPATED CATALYST</div><div style="font-size:12px;color:#cc9900">'+v.anticipated_catalyst+'</div></div>' : '')+
+    '</div>'+
+
+    (hasPlan ? (
+      '<div class="plan-box">'+
+      '<div class="lbl-sm" style="margin-bottom:10px">📋 Whale-Aligned Trade Plan</div>'+
+      (v.defended_level ? '<div class="plan-row"><span class="pl">Defended Level</span><span class="pv gold">$'+v.defended_level+'</span></div>' : '')+
+      '<div class="plan-row"><span class="pl">Entry Zone</span><span class="pv gold">$'+v.entry_zone.low+'–$'+v.entry_zone.high+'</span></div>'+
+      '<div class="plan-row"><span class="pl">Stop Loss</span><span class="pv r">$'+v.stop_loss+'</span></div>'+
+      '<div class="plan-row"><span class="pl">Target 1</span><span class="pv b">$'+v.target_1+'</span></div>'+
+      '<div class="plan-row"><span class="pl">Target 2</span><span class="pv g">$'+v.target_2+'</span></div>'+
+      '<div class="plan-row"><span class="pl">R:R</span><span class="pv gold">'+v.risk_reward+':1</span></div>'+
+      '<div class="plan-row"><span class="pl">When to Move</span><span class="pv">'+v.time_to_move+'</span></div>'+
+      '</div>'+
+      '<a href="https://t.me/share/url?text='+tgText+'" target="_blank" style="text-decoration:none">'+
+      '<button class="btn" style="background:#229ED9;color:#fff;border:none;margin-bottom:8px">📲 SEND TO TELEGRAM BOT</button></a>'
+    ) : '') +
+
+    '<div class="card">'+
+    '<div class="lbl-sm">🎯 AI Reasoning</div>'+
+    '<ul style="list-style:none">'+(v.reasoning||[]).map(function(r){return '<li style="font-size:12px;color:#a0a0b8;padding:4px 0 4px 14px;border-bottom:1px solid #0a0a18;position:relative"><span style="position:absolute;left:0;color:#ffcc00">▸</span>'+r+'</li>';}).join('')+'</ul>'+
+    '<div style="background:#1a0a0a;border:1px solid #cc444430;border-radius:6px;padding:10px;margin-top:10px;font-size:11px;color:#cc8888">'+
+    '<strong style="color:#ff5555">⚠️ Invalidation:</strong> '+v.key_risk+'</div>'+
+    '</div>';
+}
+      </script>
 </body>
 </html>
