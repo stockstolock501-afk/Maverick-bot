@@ -288,7 +288,7 @@ async function logTrade(entry){const m=await memLoad();m.trades=m.trades||[];m.t
 async function groqCall(system, user, maxTokens=1500) {
   if(!GROQ_KEY)return null;
   try{
-    const r=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${GROQ_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:maxTokens,temperature:0.25,messages:[{role:'system',content:system},{role:'user',content:user}]})});
+    const r=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${GROQ_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({model: 'llama3-70b-8192', max_tokens:maxTokens,temperature:0.25,messages:[{role:'system',content:system},{role:'user',content:user}]})});
     const d=await r.json(); const text=d.choices?.[0]?.message?.content||'';
     const m=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim().match(/\{[\s\S]*\}/);
     return m?JSON.parse(m[0]):null;
