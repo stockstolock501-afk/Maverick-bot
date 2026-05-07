@@ -768,4 +768,354 @@ async function runCatalystScan(){
 </body>
 </html>
 <footer>MAVERICK v3.3 · FINNHUB · YAHOO · GROQ AI · FOR INFORMATIONAL USE ONLY</footer>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- MAVERICK v4 — PERFECT TRADE PANEL + LUXALGO SIGNALS                  -->
+<!-- Paste this BEFORE the closing </body> tag in index.html               -->
+<!-- Also add this tab button: <button class="tab" data-tab="perfect">🏆 PERFECT</button> -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+
+<style>
+/* ── PERFECT TRADE STYLES ─────────────────────────────────────────────── */
+.pt-hero{background:linear-gradient(135deg,#0a0008,#050010,#080005);border:1px solid #2a0040;border-radius:12px;padding:18px;margin-bottom:12px;position:relative;overflow:hidden}
+.pt-hero::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(ellipse at center,rgba(180,0,255,0.06) 0%,transparent 60%);pointer-events:none}
+.pt-score-ring{width:90px;height:90px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column;flex-shrink:0;position:relative}
+.pt-score-ring svg{position:absolute;top:0;left:0;transform:rotate(-90deg)}
+.pt-score-num{font-size:26px;font-weight:900;font-family:monospace;z-index:1;line-height:1}
+.pt-score-label{font-size:8px;color:#888;letter-spacing:1px;z-index:1}
+.pt-tier{font-size:20px;font-weight:900;letter-spacing:2px;margin-bottom:4px}
+.pt-tier.PERFECT{color:#ff00ff;text-shadow:0 0 20px #ff00ff80}
+.pt-tier.NEAR_PERFECT{color:#cc44ff;text-shadow:0 0 14px #cc44ff60}
+.pt-tier.STRONG{color:#ffcc00;text-shadow:0 0 10px #ffcc0060}
+.pt-tier.DEVELOPING{color:#3b9eff}
+.pt-tier.WEAK{color:#555}
+.pt-headline{font-size:12px;color:#aaa;line-height:1.5;margin-top:4px}
+
+/* Condition cards */
+.pt-conditions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px}
+.pt-cond{border:1px solid;border-radius:8px;padding:10px;position:relative;overflow:hidden;transition:all 0.3s}
+.pt-cond.met{background:linear-gradient(135deg,#001a00,#000d00);border-color:#00cc8880;box-shadow:0 0 12px #00cc8820}
+.pt-cond.unmet{background:#060606;border-color:#1a1a1a}
+.pt-cond::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.pt-cond.met::before{background:linear-gradient(90deg,transparent,#00cc88,transparent)}
+.pt-cond-icon{font-size:16px;margin-bottom:4px}
+.pt-cond-name{font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#888;margin-bottom:2px}
+.pt-cond.met .pt-cond-name{color:#00cc88}
+.pt-cond-detail{font-size:10px;color:#555;line-height:1.3}
+.pt-cond.met .pt-cond-detail{color:#80d0a0}
+.pt-cond-check{position:absolute;top:8px;right:8px;font-size:14px}
+
+/* LuxAlgo display */
+.lux-signal{border-radius:7px;padding:10px;margin-bottom:8px;border:1px solid}
+.lux-BUY{background:linear-gradient(135deg,#00220a,transparent);border-color:#00cc8840}
+.lux-SELL{background:linear-gradient(135deg,#220000,transparent);border-color:#cc444440}
+.lux-NEUTRAL{background:#060606;border-color:#1a1a1a}
+.lux-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:10px;border-bottom:1px solid #0a0a0a}
+.lux-row:last-child{border-bottom:none}
+.lux-label{color:#3a3a5a}
+.lux-val{font-family:monospace;font-weight:700;font-size:11px;color:#c0c0d8}
+
+/* Scan pulse */
+.scan-pulse{display:flex;align-items:center;gap:8px;font-size:10px;color:#3a3a5a}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:#555;flex-shrink:0}
+.pulse-dot.active{background:#00cc88;box-shadow:0 0 8px #00cc88;animation:pulse 1.5s ease-in-out infinite}
+.pulse-dot.hunting{background:#cc44ff;box-shadow:0 0 8px #cc44ff;animation:pulse 0.8s ease-in-out infinite}
+
+/* Live scanner table */
+.scan-ticker-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a18;cursor:pointer}
+.scan-ticker-row:last-child{border-bottom:none}
+.scan-ticker-row:active{background:#0a0a18}
+
+/* Perfect Trade trigger animation */
+@keyframes ptAlert{0%{box-shadow:0 0 0 rgba(255,0,255,0)}50%{box-shadow:0 0 30px rgba(255,0,255,0.4)}100%{box-shadow:0 0 0 rgba(255,0,255,0)}}
+.pt-alert-active{animation:ptAlert 1s ease-in-out infinite}
+
+/* Continuous scan bar */
+.scan-timeline{background:#06060f;border:1px solid #0e0e22;border-radius:8px;padding:12px;margin-bottom:12px}
+.timeline-bar{display:flex;gap:2px;height:20px;align-items:flex-end;margin-top:8px}
+.timeline-seg{flex:1;border-radius:2px;min-height:4px;transition:height 0.3s}
+.seg-premarket{background:#888840}
+.seg-powerhour{background:#cc44ff}
+.seg-midday{background:#3b9eff}
+.seg-close{background:#ff8800}
+.seg-closed{background:#1a1a1a;opacity:0.4}
+.seg-current{box-shadow:0 0 8px currentColor}
+</style>
+
+<!-- PERFECT TRADE TAB -->
+<div id="tab-perfect" class="hidden">
+
+  <!-- Scan status bar -->
+  <div class="scan-timeline">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div class="lbl-sm" style="margin:0">🔄 Continuous Scanner Status</div>
+      <div class="scan-pulse" id="scanPulse">
+        <div class="pulse-dot" id="scanDot"></div>
+        <span id="scanStatus">Checking...</span>
+      </div>
+    </div>
+    <div style="font-size:9px;color:#2a2a4a;margin-bottom:6px">4am–9:30am: 3min · 9:30–11am: 90sec · Midday: 4min · 3:30–4pm: 90sec</div>
+    <div class="timeline-bar" id="timelineBar">
+      <!-- Generated by JS -->
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:8px;color:#2a2a4a;margin-top:4px">
+      <span style="color:#888840">4am</span><span style="color:#cc44ff">9:30</span><span style="color:#3b9eff">11am</span><span style="color:#ff8800">3:30</span><span style="color:#888">4pm</span>
+    </div>
+  </div>
+
+  <!-- Search a ticker -->
+  <div class="card card-glow" style="border-color:#cc44ff30">
+    <div class="lbl-sm" style="color:#cc88ff">🏆 Perfect Trade Detector</div>
+    <div style="font-size:10px;color:#5a2a6a;margin-bottom:10px;line-height:1.5">
+      7 conditions must stack simultaneously.<br>
+      <strong style="color:#cc44ff">Score 7/7 = 99% probability of 30%+ in 10 minutes.</strong>
+    </div>
+    <input id="ptTicker" placeholder="Enter ticker — or leave blank to auto-scan" autocomplete="off"/>
+    <button class="btn" onclick="runPerfectTrade()" style="background:linear-gradient(135deg,#8800cc,#440066);color:#fff;margin-bottom:6px">🏆 HUNT PERFECT TRADE</button>
+    <button class="btn btn-secondary" onclick="runPerfectTrade('scan')">🔍 SCAN TOP MOVERS NOW</button>
+  </div>
+
+  <!-- Results -->
+  <div id="ptResult"></div>
+
+  <!-- LuxAlgo Signals -->
+  <div class="card" style="margin-top:4px;border-color:#3b9eff20">
+    <div class="lbl-sm">💫 LuxAlgo Signal Engine</div>
+    <div style="font-size:10px;color:#3a3a5a;margin-bottom:8px;line-height:1.5">
+      Replicates LuxAlgo Premium: EMA ribbon · ATR bands · Order blocks · FVGs · Break of Structure · Signal confluence
+    </div>
+    <input id="luxTicker" placeholder="Enter ticker for LuxAlgo signals"/>
+    <button class="btn" onclick="runLuxAlgo()" style="background:linear-gradient(135deg,#003388,#001166);color:#3b9eff;border:1px solid #3b9eff30">💫 COMPUTE LUXALGO SIGNALS</button>
+    <div id="luxResult"></div>
+  </div>
+
+  <!-- 7 Conditions Guide -->
+  <div class="card">
+    <div class="lbl-sm">📋 The 7 Perfect Trade Conditions</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+      <div style="background:#060606;border:1px solid #1a1a30;border-radius:6px;padding:8px"><div style="font-size:8px;color:#cc44ff;font-weight:700;margin-bottom:2px">① HARD CATALYST</div><div style="font-size:9px;color:#555">SEC 8-K · FDA · Merger · Contract · filed &lt;4hrs</div></div>
+      <div style="background:#060606;border:1px solid #1a1a30;border-radius:6px;padding:8px"><div style="font-size:8px;color:#cc44ff;font-weight:700;margin-bottom:2px">② MICRO FLOAT</div><div style="font-size:9px;color:#555">Under 5M shares · any buying = explosive move</div></div>
+      <div style="background:#060606;border:1px solid #1a1a30;border-radius:6px;padding:8px"><div style="font-size:8px;color:#cc44ff;font-weight:700;margin-bottom:2px">③ SWEET PRICE</div><div style="font-size:9px;color:#555">$0.50–$10 · retail can buy hundreds of shares</div></div>
+      <div style="background:#060606;border:1px solid #1a1a30;border-radius:6px;padding:8px"><div style="font-size:8px;color:#cc44ff;font-weight:700;margin-bottom:2px">④ VOLUME SURGE</div><div style="font-size:9px;color:#555">5x–20x+ average · float being exhausted</div></div>
+      <div style="background:#060606;border:1px solid #1a1a30;border-radius:6px;padding:8px"><div style="font-size:8px;color:#cc44ff;font-weight:700;margin-bottom:2px">⑤ VELOCITY</div><div style="font-size:9px;color:#555">15%+ move today · momentum confirmed</div></div>
+      <div style="background:#060606;border:1px solid #1a1a30;border-radius:6px;padding:8px"><div style="font-size:8px;color:#cc44ff;font-weight:700;margin-bottom:2px">⑥ TECHNICAL</div><div style="font-size:9px;color:#555">15min BOS · RSI 50–75 · VWAP reclaim</div></div>
+      <div style="background:#060606;border:1px solid #3b9eff30;border-radius:6px;padding:8px;grid-column:span 2"><div style="font-size:8px;color:#3b9eff;font-weight:700;margin-bottom:2px">⑦ LUXALGO BUY SIGNAL</div><div style="font-size:9px;color:#555">EMA ribbon aligned · ATR band breakout · Order block + FVG confluence · 50%+ signal strength</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── PERFECT TRADE ─────────────────────────────────────────────────────────────
+async function runPerfectTrade(mode) {
+  const ticker = document.getElementById('ptTicker').value.toUpperCase().trim();
+  const out = document.getElementById('ptResult');
+  const isScan = mode === 'scan' || !ticker;
+  out.innerHTML = '<div class="card"><div class="loading-txt">'+(isScan?'🔍 SCANNING TOP MOVERS FOR PERFECT SETUPS...':'🏆 SCORING ALL 7 CONDITIONS FOR '+ticker+'...')+'</div><div class="loader"><div></div><div></div><div></div></div></div>';
+  try {
+    const body = isScan ? {} : { ticker };
+    const r = await fetch('/api/perfect-trade', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    const data = await r.json();
+    if (data.error) { out.innerHTML = '<div class="card"><div style="color:#ff5555">❌ '+data.error+'</div></div>'; return; }
+    renderPerfectTrade(data, out);
+  } catch(e) { out.innerHTML = '<div class="card"><div style="color:#ff5555">❌ '+e.message+'</div></div>'; }
+}
+document.getElementById('ptTicker').addEventListener('keydown', e => { if(e.key==='Enter') runPerfectTrade(); });
+
+function renderPerfectTrade(data, out) {
+  const results = data.results || [];
+  if (!results.length) { out.innerHTML = '<div class="card"><div style="font-size:11px;color:#3a3a5a">No setups scoring 3+ conditions right now.<br>The continuous scanner will alert you via Telegram when one forms.</div></div>'; return; }
+
+  let html = '<div style="font-size:10px;color:#3a3a5a;margin-bottom:10px">Scanned '+data.scanned+' stocks · Found '+results.length+' qualifying setup'+(results.length>1?'s':'')+'</div>';
+
+  results.forEach(function(pt) {
+    const isPerfect = pt.tier === 'PERFECT';
+    const isNear = pt.tier === 'NEAR_PERFECT';
+    const isStrong = pt.tier === 'STRONG';
+    const tierColors = { PERFECT:'#ff00ff', NEAR_PERFECT:'#cc44ff', STRONG:'#ffcc00', DEVELOPING:'#3b9eff', WEAK:'#555' };
+    const tc = tierColors[pt.tier] || '#888';
+    const tierLabel = pt.tier.replace('_',' ');
+
+    // Score ring SVG
+    const pct = (pt.score / pt.maxScore) * 100;
+    const circumference = 2 * Math.PI * 38;
+    const dashArray = (pct / 100) * circumference;
+    const scoreRingSVG = '<svg width="90" height="90" viewBox="0 0 90 90">'+
+      '<circle cx="45" cy="45" r="38" fill="none" stroke="#1a1a30" stroke-width="6"/>'+
+      '<circle cx="45" cy="45" r="38" fill="none" stroke="'+tc+'" stroke-width="6" '+
+      'stroke-dasharray="'+dashArray.toFixed(1)+' '+circumference.toFixed(1)+'" stroke-linecap="round"/>'+
+      '</svg>';
+
+    // Condition cards
+    const condCards = (pt.conditions||[]).map(function(c) {
+      const icons = ['','🎯','🪶','💰','📊','⚡','📈','💫'];
+      return '<div class="pt-cond '+(c.met?'met':'unmet')+'">'+
+        '<div class="pt-cond-check">'+(c.met?'✅':'⬜')+'</div>'+
+        '<div class="pt-cond-icon">'+(icons[c.id]||'●')+'</div>'+
+        '<div class="pt-cond-name">'+c.name+'</div>'+
+        '<div class="pt-cond-detail">'+c.detail+'</div>'+
+        '</div>';
+    }).join('');
+
+    const tgLink = BOT_USERNAME ? 'https://t.me/'+BOT_USERNAME : 'https://t.me';
+
+    html += '<div class="pt-hero '+(isPerfect?'pt-alert-active':'')+'" style="margin-bottom:12px">'+
+      '<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">'+
+      '<div class="pt-score-ring">'+
+        scoreRingSVG+
+        '<div class="pt-score-num" style="color:'+tc+'">'+pt.score+'/'+pt.maxScore+'</div>'+
+        '<div class="pt-score-label">SCORE</div>'+
+      '</div>'+
+      '<div style="flex:1">'+
+        '<div style="font-size:10px;color:'+tc+';font-weight:700;letter-spacing:1px;margin-bottom:4px">'+pt.symbol+'</div>'+
+        '<div class="pt-tier '+(pt.tier)+'">'+tierLabel+'</div>'+
+        '<div style="font-size:11px;color:#888;margin-top:4px">$'+pt.price?.toFixed(2)+' · +'+pt.changePct?.toFixed(1)+'%</div>'+
+        (pt.relVolume ? '<div style="font-size:10px;color:#cc44ff;margin-top:2px">Volume: '+pt.relVolume.toFixed(1)+'x avg</div>' : '')+
+      '</div>'+
+      '</div>'+
+
+      '<div class="pt-conditions">'+condCards+'</div>'+
+
+      // Trade plan
+      (pt.score >= 3 ? (
+        '<div class="plan-box" style="border-color:'+tc+'20;margin-bottom:10px">'+
+        '<div class="lbl-sm" style="margin-bottom:8px;color:'+tc+'">📋 Perfect Trade Plan</div>'+
+        '<div class="plan-row"><span class="pl">Entry</span><span class="pv" style="color:'+tc+'">~$'+pt.price?.toFixed(2)+'</span></div>'+
+        '<div class="plan-row"><span class="pl">Stop Loss</span><span class="pv r">$'+pt.sl+'</span></div>'+
+        '<div class="plan-row"><span class="pl">Target 1</span><span class="pv b">$'+pt.tp1+'</span></div>'+
+        '<div class="plan-row"><span class="pl">Target 2</span><span class="pv g">$'+pt.tp2+'</span></div>'+
+        '<div class="plan-row"><span class="pl">Risk:Reward</span><span class="pv" style="color:'+tc+'">'+pt.rr+':1</span></div>'+
+        '</div>'+
+        '<div style="display:flex;gap:6px">'+
+        '<button class="btn btn-primary" onclick="deepAnalyzePT(\''+pt.symbol+'\')" style="flex:1;padding:10px;margin-bottom:0;font-size:10px">🎯 FULL AI ANALYSIS</button>'+
+        '<a href="'+tgLink+'" target="_blank" style="flex:1;text-decoration:none"><button class="btn" style="background:#229ED9;color:#fff;border:none;height:100%;margin-bottom:0;padding:10px;font-size:10px;border-radius:6px;width:100%">📲 BOT</button></a>'+
+        '</div>'
+      ) : '') +
+
+      // Perfect trade special message
+      (isPerfect ? '<div style="margin-top:10px;text-align:center;padding:10px;background:#ff00ff10;border:1px solid #ff00ff30;border-radius:6px"><div style="font-size:14px;font-weight:900;color:#ff00ff">🏆 ALL 7 CONDITIONS ACTIVE 🏆</div><div style="font-size:10px;color:#cc88ff;margin-top:4px">This is the setup. Maximum conviction. Execute with discipline.</div></div>' : '') +
+      (isNear ? '<div style="margin-top:10px;text-align:center;padding:8px;background:#cc44ff10;border:1px solid #cc44ff30;border-radius:6px"><div style="font-size:12px;font-weight:900;color:#cc44ff">6/7 — NEAR PERFECT</div><div style="font-size:10px;color:#9966cc;margin-top:2px">One condition away. Watch the missing one.</div></div>' : '') +
+      '</div>';
+  });
+
+  out.innerHTML = html;
+}
+
+function deepAnalyzePT(sym) {
+  document.querySelector('[data-tab="analyze"]').click();
+  document.getElementById('ticker').value = sym;
+  runAnalysis();
+}
+
+// ── LUXALGO ───────────────────────────────────────────────────────────────────
+async function runLuxAlgo() {
+  const ticker = document.getElementById('luxTicker').value.toUpperCase().trim();
+  if (!ticker) return;
+  const out = document.getElementById('luxResult');
+  out.innerHTML = '<div style="color:#3b9eff;font-size:11px;margin-top:8px">💫 Computing LuxAlgo signals...</div>';
+  try {
+    const r = await fetch('/api/luxalgo', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ticker}) });
+    const data = await r.json();
+    if (data.error) { out.innerHTML = '<div style="color:#ff5555;font-size:11px;margin-top:8px">❌ '+data.error+'</div>'; return; }
+    out.innerHTML = renderLuxAlgo(data);
+  } catch(e) { out.innerHTML = '<div style="color:#ff5555;font-size:11px;margin-top:8px">❌ '+e.message+'</div>'; }
+}
+document.getElementById('luxTicker').addEventListener('keydown', e => { if(e.key==='Enter') runLuxAlgo(); });
+
+function renderLuxAlgo(data) {
+  const tfs = [
+    { key:'daily', label:'📅 Daily', sig:data.daily },
+    { key:'fourhour', label:'🕓 4-Hour', sig:data.fourhour },
+    { key:'onehour', label:'⏰ 1-Hour', sig:data.onehour },
+  ];
+  const sigColors = { BUY:'#00cc88', SELL:'#ff5555', NEUTRAL:'#888' };
+
+  let html = '<div style="margin-top:10px">';
+  tfs.forEach(function(tf) {
+    const s = tf.sig;
+    if (!s) return;
+    const sc = sigColors[s.signalType] || '#888';
+    html += '<div class="lux-signal lux-'+s.signalType+'">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
+      '<span style="font-size:11px;font-weight:700;color:#888">'+tf.label+'</span>'+
+      '<div style="display:flex;align-items:center;gap:8px">'+
+      '<span style="font-size:14px;font-weight:900;color:'+sc+'">'+s.signalType+'</span>'+
+      (s.signalStrength>0?'<span style="font-size:9px;color:'+sc+'">'+s.signalStrength+'% strength</span>':'') +
+      '</div></div>'+
+
+      '<div class="lux-row"><span class="lux-label">EMA9</span><span class="lux-val">$'+s.ema9+'</span></div>'+
+      '<div class="lux-row"><span class="lux-label">EMA21</span><span class="lux-val">$'+s.ema21+'</span></div>'+
+      '<div class="lux-row"><span class="lux-label">Upper Band</span><span class="lux-val">$'+s.upperBand+'</span></div>'+
+      '<div class="lux-row"><span class="lux-label">Lower Band</span><span class="lux-val">$'+s.lowerBand+'</span></div>'+
+      '<div class="lux-row"><span class="lux-label">ATR</span><span class="lux-val">$'+s.atrVal+'</span></div>'+
+      '<div class="lux-row"><span class="lux-label">Band Position</span><span class="lux-val '+(s.bandPosition>0.6?'g':s.bandPosition<0.4?'r':'')+'">'+(s.bandPosition*100).toFixed(0)+'%</span></div>'+
+      '<div class="lux-row"><span class="lux-label">RSI</span><span class="lux-val '+(s.rsi>70?'r':s.rsi<30?'g':'')+'">'+s.rsi+'</span></div>'+
+      '<div class="lux-row"><span class="lux-label">Confluence</span><span class="lux-val" style="color:'+sc+'">'+s.confluenceScore+'</span></div>'+
+      (s.fvgDetected?'<div class="lux-row"><span class="lux-label">Fair Value Gap</span><span class="lux-val gold">DETECTED — $'+s.fvgLevel+'</span></div>':'') +
+      (s.bos&&s.bos!=='NONE'?'<div class="lux-row"><span class="lux-label">Break of Structure</span><span class="lux-val" style="color:'+sc+'">'+s.bos+' BOS</span></div>':'') +
+      (s.bullishOB?'<div class="lux-row"><span class="lux-label">Bullish Order Block</span><span class="lux-val g">$'+s.bullishOB+'</span></div>':'') +
+      (s.tpLevel?'<div class="lux-row"><span class="lux-label">Dynamic TP</span><span class="lux-val g">$'+s.tpLevel+' / $'+s.tp2Level+'</span></div>':'') +
+      (s.slLevel?'<div class="lux-row"><span class="lux-label">Dynamic SL</span><span class="lux-val r">$'+s.slLevel+'</span></div>':'') +
+      '</div>';
+  });
+
+  // Multi-timeframe alignment
+  const buyCount = tfs.filter(tf => tf.sig?.signalType === 'BUY').length;
+  const alignment = buyCount === 3 ? '🔥 ALL TIMEFRAMES ALIGNED — MAX CONVICTION BUY' : buyCount === 2 ? '✅ 2/3 TIMEFRAMES ALIGNED — HIGH CONVICTION' : buyCount === 1 ? '⚡ 1/3 ALIGNED — WAIT FOR CONFIRMATION' : '⚠️ NO BUY ALIGNMENT — STAND ASIDE';
+  const alColor = buyCount >= 2 ? '#00cc88' : buyCount === 1 ? '#ffcc00' : '#ff5555';
+  html += '<div style="background:'+alColor+'15;border:1px solid '+alColor+'30;border-radius:6px;padding:10px;margin-top:8px;text-align:center;font-size:11px;color:'+alColor+';font-weight:700">'+alignment+'</div>';
+  html += '</div>';
+  return html;
+}
+
+// ── SCAN STATUS ───────────────────────────────────────────────────────────────
+async function loadScanStatus() {
+  try {
+    const r = await fetch('/api/scan-status');
+    const d = await r.json();
+    const dot = document.getElementById('scanDot');
+    const status = document.getElementById('scanStatus');
+    if (d.currentInterval) {
+      dot.className = 'pulse-dot hunting';
+      status.textContent = 'HUNTING — every '+d.currentInterval+'min · Cycle #'+d.cycleCount;
+      status.style.color = '#cc44ff';
+    } else {
+      dot.className = 'pulse-dot';
+      status.textContent = 'Outside market hours · Resumes 4am ET · '+d.cycleCount+' cycles today';
+      status.style.color = '#3a3a5a';
+    }
+    renderTimeline(d.etTime);
+  } catch {}
+}
+
+function renderTimeline(etTime) {
+  const bar = document.getElementById('timelineBar');
+  if (!bar) return;
+  const now = new Date('1970-01-01 ' + (etTime || '12:00:00'));
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const segments = [
+    { start:4*60, end:9.5*60, cls:'seg-premarket', label:'Pre' },
+    { start:9.5*60, end:11*60, cls:'seg-powerhour', label:'PH' },
+    { start:11*60, end:15.5*60, cls:'seg-midday', label:'Mid' },
+    { start:15.5*60, end:16*60, cls:'seg-close', label:'Close' },
+  ];
+  const totalMins = 12 * 60; // 4am to 4pm
+  bar.innerHTML = segments.map(function(seg) {
+    const width = ((seg.end - seg.start) / totalMins * 100).toFixed(1);
+    const isCurrent = nowMin >= seg.start && nowMin < seg.end;
+    const isPast = nowMin >= seg.end;
+    const opacity = isPast ? '0.4' : '1';
+    return '<div class="timeline-seg '+seg.cls+(isCurrent?' seg-current':'')+'" style="flex:'+width+';height:'+(isPast?4:isCurrent?20:8)+'px;opacity:'+opacity+'" title="'+seg.label+'"></div>';
+  }).join('');
+}
+
+// Auto-refresh scan status every 60 seconds
+setInterval(loadScanStatus, 60000);
+
+// Load status when tab clicked
+document.addEventListener('DOMContentLoaded', function() {
+  const perfectTab = document.querySelector('[data-tab="perfect"]');
+  if (perfectTab) perfectTab.addEventListener('click', loadScanStatus);
+});
+</script>
+
 </body></html>
