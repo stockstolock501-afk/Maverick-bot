@@ -1,71 +1,164 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MAVERICK v3.5 COMMAND</title>
-    <style>
-        body { background: #050505; color: #00ff41; font-family: monospace; margin: 0; padding: 10px; }
-        .header { text-align: center; border-bottom: 1px solid #222; padding-bottom: 10px; margin-bottom: 15px; }
-        .btn-row { display: flex; gap: 8px; margin-bottom: 15px; }
-        button { flex: 1; padding: 16px; border: none; border-radius: 6px; font-weight: bold; font-size: 13px; color: white; cursor: pointer; text-transform: uppercase; }
-        .btn-nova { background: linear-gradient(45deg, #ff0000, #990000); }
-        .btn-whale { background: linear-gradient(45deg, #0055ff, #002288); }
-        .card { background: #111; padding: 12px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #222; position: relative; }
-        .mmr-ring { position: absolute; right: 12px; top: 12px; font-size: 18px; font-weight: bold; color: #fff; border: 2px solid #ff0000; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: #000; }
-        .symbol { font-size: 1.4em; color: #fff; }
-        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 10px 0; font-size: 12px; }
-        .stat { color: #888; }
-        .val { color: #fff; }
-        .chart-btn { width: 100%; background: #222; margin-top: 10px; padding: 10px; border: 1px solid #444; color: #00ff41; }
-        .lux-buy { color: #00ff41; font-weight: bold; }
-    </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>MAVERICK v3.5 COMMAND</title>
+<style>
+/* CSS: HEDGE FUND STACK v3.5 */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#03030c;color:#a0a0c0;font-family:'Courier New',monospace;padding:14px;min-height:100vh}
+.header{display:flex;align-items:center;gap:10px;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #0e0e22}
+.dot{width:8px;height:8px;border-radius:50%;background:#00e5a0;box-shadow:0 0 8px #00e5a0;flex-shrink:0}
+h1{color:#fff;font-size:18px;font-weight:900;letter-spacing:-0.5px}
+h1 span{color:#e2b714}
+.clock{margin-left:auto;font-size:10px;color:#333;font-family:monospace}
+
+/* TAB NAV */
+.tab-row{display:flex;gap:5px;margin-bottom:15px;overflow-x:auto;padding-bottom:8px}
+.tab{background:#0a0a18;border:1px solid #111;color:#3a3a5a;padding:10px 14px;font-size:10px;font-weight:900;cursor:pointer;white-space:nowrap;border-radius:4px;text-transform:uppercase}
+.tab.active{border-color:#e2b714;color:#fff;background:#111}
+
+/* CARDS & UI */
+.card{background:#06060f;border:1px solid #0e0e22;border-radius:8px;padding:14px;margin-bottom:12px;position:relative}
+.section-label{font-size:9px;color:#2a2a4a;letter-spacing:2px;font-weight:700;text-transform:uppercase;margin-bottom:12px}
+input{background:#03030c;border:1px solid #111;border-radius:5px;color:#fff;padding:12px;font-size:14px;width:100%;margin-bottom:10px}
+.btn{border:none;border-radius:5px;padding:14px;font-family:monospace;font-size:11px;font-weight:900;cursor:pointer;width:100%;letter-spacing:1px;text-transform:uppercase}
+.btn-gold{background:linear-gradient(135deg,#e2b714,#8a6d00);color:#000}
+
+/* MMR UI */
+.mmr-ring{position:absolute;right:14px;top:14px;width:48px;height:48px;border:3px solid #e2b714;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:#fff;background:#000}
+.g{color:#00e5a0}.r{color:#ff4444}.gold{color:#e2b714}.b{color:#3b9eff}
+
+/* RESULT GRID */
+.stat-row{display:flex;justify-content:space-between;margin-bottom:8px;font-size:11px}
+.val{color:#fff;font-weight:bold}
+.chart-link{display:block;text-align:center;background:#111;padding:8px;border:1px solid #222;color:#00e5a0;text-decoration:none;font-size:10px;margin-top:10px}
+
+@keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
+.blink{animation:blink 1.8s ease-in-out infinite}
+.hidden{display:none}
+</style>
 </head>
 <body>
-    <div class="header">
-        <h2 style="margin:0;">MAVERICK v3.5</h2>
-        <small id="status">CORE ENGINE: ONLINE</small>
+
+<div class="header">
+  <div class="dot blink" id="statusDot"></div>
+  <div>
+    <h1>MAVERICK <span>TERMINAL v3.5</span></h1>
+    <div style="font-size:8px;color:#1a1a2e;letter-spacing:2px;">HEDGE FUND STACK • WHALE INTELLIGENCE</div>
+  </div>
+  <div class="clock" id="clock">--:-- ET</div>
+</div>
+
+<div class="tab-row">
+    <div class="tab active" onclick="switchTab('analyze')">🎯 ANALYZE</div>
+    <div class="tab" onclick="switchTab('supernova')">🌟 SUPERNOVA</div>
+    <div class="tab" onclick="switchTab('signals')">📡 SIGNALS</div>
+    <div class="tab" onclick="switchTab('stats')">📊 STATS</div>
+</div>
+
+<div id="tab-analyze" class="tab-content">
+    <div class="card">
+        <div class="section-label">⚡ AI Deep Dive</div>
+        <input id="analyzeInput" placeholder="ENTER TICKER (e.g. ATRA)"/>
+        <button class="btn btn-gold" onclick="runAnalyze()">▶ START AI AUDIT</button>
+        <div id="analyzeOutput" style="margin-top:15px;"></div>
     </div>
-    
-    <div class="btn-row">
-        <button class="btn-nova" onclick="runScan('supernova')">🚀 SUPERNOVA</button>
-        <button class="btn-whale" onclick="runScan('whale')">🐋 WHALE HUNT</button>
+</div>
+
+<div id="tab-supernova" class="tab-content hidden">
+    <div class="card">
+        <div class="section-label">🔥 MMR Momentum Scan</div>
+        <button class="btn btn-gold" onclick="runScan('supernova')">SCAN FOR SUPERNOVAS</button>
+        <div id="scanOutput" style="margin-top:15px;"></div>
     </div>
+</div>
 
-    <div id="results"></div>
+<div id="tab-signals" class="tab-content hidden">
+    <div class="card">
+        <div class="section-label">📡 SEC 8-K LIVE FEED</div>
+        <div id="signalOutput"></div>
+    </div>
+</div>
 
-    <script>
-        async function runScan(type) {
-            const resDiv = document.getElementById('results');
-            document.getElementById('status').innerText = "CRUNCHING MATH...";
-            resDiv.innerHTML = "";
-            
-            try {
-                const r = await fetch('/api/maverick-scan', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ type }) });
-                const data = await r.json();
-                document.getElementById('status').innerText = `FOUND ${data.results.length} SETUPS`;
-                
-                resDiv.innerHTML = data.results.map(res => `
-                    <div class="card" style="border-left: 4px solid ${res.mmr > 70 ? '#ff0000' : '#0055ff'}">
-                        <div class="mmr-ring" style="border-color: ${res.mmr > 70 ? '#ff0000' : '#0055ff'}">${res.mmr}</div>
-                        <div class="symbol">$${res.symbol}</div>
-                        <div style="color: ${res.change > 0 ? '#00ff41' : '#ff4444'}">$${res.price} (${res.change > 0 ? '+' : ''}${res.change.toFixed(2)}%)</div>
-                        
-                        <div class="stat-grid">
-                            <div class="stat">ROTATION: <span class="val">${res.rotation}x</span></div>
-                            <div class="stat">RVOL: <span class="val">${res.rvol}x</span></div>
-                            <div class="stat">LUXALGO: <span class="${res.luxSignal === 'BUY' ? 'lux-buy' : 'val'}">${res.luxSignal}</span></div>
-                        </div>
+<div id="tab-stats" class="tab-content hidden">
+    <div class="card">
+        <div class="section-label">📊 Trade Performance</div>
+        <div id="statsOutput">Trade history from Telegram logs here.</div>
+    </div>
+</div>
 
-                        <div style="font-size: 0.85em; color: #aaa; border-top: 1px solid #222; padding-top: 8px;">
-                            ${res.catalyst}
-                        </div>
+<script>
+// CLOCK
+function tick() {
+  const et = new Date(new Date().toLocaleString('en-US', { timeZone:'America/New_York' }));
+  document.getElementById('clock').textContent = `${String(et.getHours()).padStart(2,'0')}:${String(et.getMinutes()).padStart(2,'0')} ET`;
+}
+setInterval(tick, 1000); tick();
 
-                        <button class="chart-btn" onclick="window.open('https://finviz.com/chart.ashx?t=${res.symbol}&p=i5')">VIEW 5M CHART 📈</button>
-                    </div>
-                `).join('');
-            } catch (e) { document.getElementById('status').innerText = "OFFLINE - RECHECK RENDER"; }
-        }
-    </script>
+// TAB SWITCHER
+function switchTab(id) {
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-'+id).classList.remove('hidden');
+    event.currentTarget.classList.add('active');
+}
+
+// MMR SCANNER
+async function runScan(type) {
+    const out = document.getElementById('scanOutput');
+    out.innerHTML = "<div style='color:#333'>CRUNCHING MATH...</div>";
+    const r = await fetch('/api/maverick-scan', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type}) });
+    const data = await r.json();
+    out.innerHTML = data.results.map(res => `
+        <div class="card" style="border-left: 4px solid ${res.mmr > 70 ? '#e2b714' : '#0e0e22'}">
+            <div class="mmr-ring" style="border-color:${res.mmr > 75 ? '#00e5a0' : '#e2b714'}">${res.mmr}</div>
+            <div style="font-size:16px;color:#fff;font-weight:900">$${res.symbol}</div>
+            <div style="color:${res.change > 0 ? '#00e5a0' : '#ff4444'};font-size:12px;margin:4px 0">$${res.price} (${res.change.toFixed(2)}%)</div>
+            <div class="stat-row">
+                <span>ROTATION: <span class="val">${res.rotation}x</span></span>
+                <span>RVOL: <span class="val">${res.rvol}x</span></span>
+            </div>
+            <div style="font-size:10px;color:#00e5a0;margin-top:8px">${res.catalyst}</div>
+            <a href="https://finviz.com/chart.ashx?t=${res.symbol}&p=i5" target="_blank" class="chart-link">VIEW 5M CHART 📈</a>
+        </div>
+    `).join('');
+}
+
+// AI ANALYZE
+async function runAnalyze() {
+    const ticker = document.getElementById('analyzeInput').value.toUpperCase();
+    const out = document.getElementById('analyzeOutput');
+    out.innerHTML = "<div style='color:#333'>CONSULTING THE BRAIN...</div>";
+    const r = await fetch('/api/analyze', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ticker}) });
+    const data = await r.json();
+    out.innerHTML = `
+        <div class="card">
+            <div class="mmr-ring">${data.mmr.total}</div>
+            <b class="gold" style="font-size:18px">$${data.ticker} AUDIT</b>
+            <div style="margin:10px 0; font-size:12px; line-height:1.5; color:#fff;">${data.verdict}</div>
+            <div class="section-label" style="margin-top:15px">Latest Catalyst</div>
+            <div style="font-size:11px;color:#00e5a0">${data.news[0]?.headline || 'No major news.'}</div>
+        </div>
+    `;
+}
+
+// SEC SIGNALS
+async function getSignals() {
+    const out = document.getElementById('signalOutput');
+    const r = await fetch('/api/signals');
+    const data = await r.json();
+    out.innerHTML = data.signals.map(s => `
+        <div class="signal">
+            <strong style="color:#00e5a0">SEC 8-K FILING</strong>
+            ${s.headline} <br>
+            <em style="font-size:8px">${s.ageH}h ago</em>
+        </div>
+    `).join('');
+}
+setInterval(getSignals, 60000); getSignals();
+
+</script>
 </body>
 </html>
