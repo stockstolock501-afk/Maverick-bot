@@ -1,3 +1,8 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// MAVERICK TERMINAL v3.5 — HARD MATH & WHALE ENGINE
+// Optimized for Mobile · High-Conviction Supernova Logic
+// ═══════════════════════════════════════════════════════════════════════════
+
 require('dotenv').config();
 const express     = require('express');
 const TelegramBot = require('node-telegram-bot-api');
@@ -5,48 +10,96 @@ const WebSocket   = require('ws');
 const fetch       = require('node-fetch');
 const path        = require('path');
 
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const FINNHUB_KEY    = process.env.FINNHUB_KEY;
-const GROQ_KEY       = process.env.GROQ_KEY;
-const JSONBIN_KEY    = process.env.JSONBIN_KEY;
-const JSONBIN_BIN    = process.env.JSONBIN_BIN;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'maverick';
-const TG_CHAT_ID     = process.env.TG_CHAT_ID;
-const BOT_USERNAME   = process.env.TG_BOT_USERNAME || '';
-
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Groq models - verified working on your account
-const GROQ_MODELS = [
-  'llama-3.3-70b-versatile',
-  'llama-3.1-8b-instant',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-];
+// ── ENV ───────────────────────────────────────────────────────────────────────
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const FINNHUB_KEY    = process.env.FINNHUB_KEY;
+const GROQ_KEY       = process.env.GROQ_KEY;
+const TG_CHAT_ID     = process.env.TG_CHAT_ID;
 
-async function groqCall(system, user, maxTokens) {
-  maxTokens = maxTokens || 1500;
-  if (!GROQ_KEY) { console.error('GROQ_KEY missing'); return null; }
-  for (var i = 0; i < GROQ_MODELS.length; i++) {
-    var model = GROQ_MODELS[i];
-    try {
-      var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: model, max_tokens: maxTokens, temperature: 0.25, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
+const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+
+// ── MAVERICK MATH ENGINE (THE HEART OF v3.5) ──────────────────────────────────
+function calculateMMR(quote, tf1d, news) {
+  let score = 0;
+  const floatShares = quote.floatShares || 10000000; // Default if null
+  const floatRotation = quote.volume / floatShares;
+  const rvol = tf1d ? tf1d.relVolume : (quote.volume / (quote.avgVolume || 1));
+  
+  // 1. Float Rotation (Max 30pts)
+  score += Math.min(floatRotation, 3) * 10;
+  
+  // 2. Whale Intensity / RVOL (Max 30pts)
+  score += Math.min(rvol / 5, 1) * 30;
+  
+  // 3. Price Velocity (Max 20pts)
+  score += Math.min(Math.abs(quote.changePct || 0) / 20, 1) * 20;
+  
+  // 4. Fresh Catalyst (Max 20pts)
+  const hasNews = news && news.some(n => n.ageH < 2);
+  if (hasNews) score += 20;
+
+  return {
+    total: Math.round(score),
+    rotation: floatRotation.toFixed(2),
+    rvol: rvol.toFixed(2),
+    isSupernova: score > 80 && floatRotation > 1.5,
+    isWhaleAccum: score > 60 && floatRotation < 0.5
+  };
+}
+
+// ── UPDATED API FOR PUSH-BUTTON DASHBOARD ─────────────────────────────────────
+
+app.post('/api/maverick-scan', async (req, res) => {
+  const type = req.body.type || 'supernova'; // 'supernova' or 'whale'
+  try {
+    const candidates = new Set();
+    const screener = type === 'supernova' ? 'day_gainers' : 'most_actives';
+    const r = await fetch(`https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=${screener}&_=${Date.now()}`, { headers:{'User-Agent':'Mozilla/5.0'} });
+    const d = await r.json();
+    const rawList = d?.finance?.result?.[0]?.quotes || [];
+
+    const results = [];
+    for (const q of rawList.slice(0, 12)) {
+      const news = await getFreshNews(q.symbol);
+      const quote = await getQuote(q.symbol);
+      if (!quote) continue;
+      
+      const mmr = calculateMMR(quote, null, news);
+      
+      // Filter based on button pressed
+      if (type === 'supernova' && mmr.total < 50) continue;
+      if (type === 'whale' && (mmr.total < 40 || mmr.rotation > 1.0)) continue;
+
+      results.push({
+        symbol: q.symbol,
+        price: quote.price,
+        change: quote.changePct,
+        mmr: mmr.total,
+        rotation: mmr.rotation,
+        rvol: mmr.rvol,
+        catalyst: news[0]?.headline || "No fresh news",
+        isDilutionRisk: news.some(n => n.headline.toLowerCase().includes('offering') || n.headline.toLowerCase().includes('dilution'))
       });
-      if (!r.ok) { var err = await r.text(); console.error('Groq [' + model + '] ' + r.status + ': ' + err.slice(0,150)); continue; }
-      var d = await r.json();
-      var text = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '';
-      if (!text) { console.error('Groq [' + model + '] empty'); continue; }
-      var cleaned = text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
-      var m = cleaned.match(/\{[\s\S]*\}/);
-      if (!m) { console.error('Groq [' + model + '] no JSON'); continue; }
-      return JSON.parse(m[0]);
-    } catch(e) { console.error('Groq [' + model + ']: ' + e.message); }
-  }
-  return null;
+    }
+    res.json({ type, results: results.sort((a,b) => b.mmr - a.mmr) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── AI BRAIN (REFINED FOR v3.5) ───────────────────────────────────────────────
+async function groqCall(system, user) {
+  try {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: GROQ_MODELS[0], temperature: 0.1, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+    });
+    const d = await r.json();
+    return d.choices?.[0]?.message?.content || null;
+  } catch (e) { return null; }    
 }
 
 async function groqChat(messages, maxTokens) {
@@ -64,21 +117,56 @@ async function groqChat(messages, maxTokens) {
   } catch(e) { console.error('groqChat: ' + e.message); return null; }
 }
 
-// Telegram
-var bot = null;
-async function initTelegram() {
-  if (!TELEGRAM_TOKEN) return;
-  try {
-    await fetch('https://api.telegram.org/bot' + TELEGRAM_TOKEN + '/deleteWebhook?drop_pending_updates=true');
-    await new Promise(function(r) { setTimeout(r, 1000); });
-    bot = new TelegramBot(TELEGRAM_TOKEN, { polling: { interval: 2000, params: { timeout: 10, allowed_updates: ['message'] } } });
-    console.log('Telegram started');
-    setupTelegramHandlers();
-  } catch(e) { console.error('TG init: ' + e.message); }
-}
-function tgSend(chatId, text) {
-  if (!bot || !chatId) return;
-  bot.sendMessage(String(chatId), text, { parse_mode: 'Markdown' }).catch(function(e) { console.error('TG: ' + e.message); });
+// ── TELEGRAM & STARTUP ────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Maverick v3.5 Online | Hard Math Engine Active`);
+});
+
+```
+### **The "Push-Button" Dashboard (public/index.html)**
+Since you are on a phone, you need big buttons and high-contrast stats. Update your index.html with this structure:
+```html
+<div class="maverick-container" style="background:#0a0a0a; color:#00ff41; font-family:monospace; padding:15px;">
+  <h2 style="text-align:center;">MAVERICK v3.5</h2>
+  
+  <div style="display:flex; gap:10px; margin-bottom:20px;">
+    <button onclick="runScan('supernova')" style="flex:1; background:#ff0000; color:white; padding:15px; border:none; font-weight:bold; border-radius:8px;">🚀 SUPERNOVA</button>
+    <button onclick="runScan('whale')" style="flex:1; background:#0055ff; color:white; padding:15px; border:none; font-weight:bold; border-radius:8px;">🐋 WHALE HUNT</button>
+  </div>
+
+  <div style="margin-bottom:20px;">
+    <input id="tickerInput" type="text" placeholder="ENTER TICKER" style="width:70%; padding:12px; background:#1a1a1a; border:1px solid #333; color:white;">
+    <button onclick="analyzeTicker()" style="width:25%; padding:12px; background:#00ff41; color:black; border:none; font-weight:bold;">DIVE</button>
+  </div>
+
+  <div id="resultsGrid">
+    </div>
+</div>
+
+<script>
+  async function runScan(type) {
+    const grid = document.getElementById('resultsGrid');
+    grid.innerHTML = "<p>Crunching Hard Math...</p>";
+    const r = await fetch('/api/maverick-scan', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type}) });
+    const data = await r.json();
+    
+    grid.innerHTML = data.results.map(res => `
+      <div style="background:#1a1a1a; padding:15px; border-radius:8px; margin-bottom:10px; border-left:4px solid ${res.mmr > 80 ? '#ff0000' : '#0055ff'}">
+        <div style="display:flex; justify-content:space-between;">
+          <b style="font-size:1.4em;">$${res.symbol}</b>
+          <span style="background:${res.mmr > 80 ? '#ff0000' : '#333'}; padding:2px 8px;">MMR: ${res.mmr}</span>
+        </div>
+        <p style="margin:5px 0;">Price: $${res.price} (${res.change > 0 ? '+' : ''}${res.change.toFixed(2)}%)</p>
+        <p style="font-size:0.8em; color:#888;">Rot: ${res.rotation}x | RVOL: ${res.rvol}x</p>
+        <p style="font-size:0.9em; color:#00ff41;">${res.catalyst}</p>
+        ${res.isDilutionRisk ? '<p style="color:#ffcc00; font-size:0.8em;">⚠️ DILUTION FLAG</p>' : ''}
+      </div>
+    `).join('');
+  }
+</script>
+
+```
 }
 
 // State
