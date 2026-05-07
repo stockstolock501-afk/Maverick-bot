@@ -414,6 +414,7 @@ async function runCatalystScan(manual = false) {
 }
 
 function scheduleCatalystScans() {
+  startContinuousScanner()
   setInterval(() => runCatalystScan(false), 30 * 60 * 1000);
   setInterval(() => { const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })); const h = et.getHours(); const m = et.getMinutes(); const isWeekday = et.getDay() > 0 && et.getDay() < 6; if (!isWeekday) return; if ((h === 4 || h === 6 || h === 8) && m < 3) runCatalystScan(false); }, 60 * 1000);
 }
