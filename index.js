@@ -1,3 +1,10 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// MAVERICK TERMINAL v3.5 — THE WHALE INTELLIGENCE REFACTOR
+// ═══════════════════════════════════════════════════════════════════════════
+// Features: MMR Math Engine · LuxAlgo v2 · Telegram Bot · SEC 8-K Scraper
+// WebSocket Live Tapes · AI Synthesis (Groq) · High-Conviction Filtration
+// ═══════════════════════════════════════════════════════════════════════════
+
 require('dotenv').config();
 const express     = require('express');
 const TelegramBot = require('node-telegram-bot-api');
@@ -5,60 +12,105 @@ const WebSocket   = require('ws');
 const fetch       = require('node-fetch');
 const path        = require('path');
 
-const app = express();
-app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
-
 // ── ENV ───────────────────────────────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const FINNHUB_KEY    = process.env.FINNHUB_KEY;
 const GROQ_KEY       = process.env.GROQ_KEY;
+const JSONBIN_KEY    = process.env.JSONBIN_KEY;
+const JSONBIN_BIN    = process.env.JSONBIN_BIN;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'maverick';
 const TG_CHAT_ID     = process.env.TG_CHAT_ID;
-const GROQ_MODELS    = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+const BOT_USERNAME   = process.env.TG_BOT_USERNAME || '';
 
-// ── MAVERICK MATH ENGINE (v3.5 ADDITION) ──────────────────────────────────────
+const app = express();
+app.use(express.json({ limit: '2mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+const GROQ_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'meta-llama/llama-4-scout-17b-16e-instruct'
+];
+
+// ── MAVERICK MOMENTUM RATIO (MMR) — THE NEW MATH ──────────────────────────────
 function calculateMMR(quote, tf1d, news) {
   let score = 0;
   const floatShares = quote.floatShares || 10000000;
   const floatRotation = quote.volume / floatShares;
   const rvol = tf1d ? tf1d.relVolume : (quote.volume / (quote.avgVolume || 1));
   
-  score += Math.min(floatRotation, 3) * 15; // Float Rot Weight
-  score += Math.min(rvol / 5, 1) * 35;      // Whale Intensity
-  score += Math.min(Math.abs(quote.changePct || 0) / 20, 1) * 25; // Velocity
-  if (news && news.some(n => n.ageH < 2)) score += 25; // Catalyst
+  // Weighting: Rot(30) + RVOL(30) + Velocity(20) + Catalyst(20)
+  score += Math.min(floatRotation, 3) * 10;
+  score += Math.min(rvol / 5, 1) * 30;
+  score += Math.min(Math.abs(quote.changePct || 0) / 20, 1) * 20;
+  
+  const hasNews = news && news.some(n => n.ageH < 2);
+  if (hasNews) score += 20;
 
   return {
     total: Math.round(score),
     rotation: floatRotation.toFixed(2),
     rvol: rvol.toFixed(2),
-    isSupernova: score > 75 && floatRotation > 1.2
+    isSupernova: score > 75 && floatRotation > 1.2,
+    isWhaleAccum: score > 55 && floatRotation < 0.6
   };
 }
 
-// ── LUXALGO SIGNAL ENGINE (RESTORED) ─────────────────────────────────────────
-function luxAlgoSignal(candles) {
-  if(!candles||candles.candleCount<20)return null;
-  const{last:price,high,low,ema9,rsi,atr,relVolume,trend,pctChange}=candles;
-  const atrVal=atr||(high-low)*0.5;
-  const ema21=ema9*(trend==='UP'?0.985:1.015);
-  const bullishPts=[price>ema21,rsi>45&&rsi<70,relVolume>1.5,trend==='UP'].filter(Boolean).length;
-  return {
-    signalType: bullishPts >= 3 ? 'BUY' : 'NEUTRAL',
-    strength: Math.round((bullishPts/4)*100),
-    tp: +(price + atrVal*2).toFixed(2),
-    sl: +(price - atrVal*1.5).toFixed(2),
-    confluence: bullishPts+'/4'
-  };
+// ── GROQ AI INTERFACE ────────────────────────────────────────────────────────
+async function groqCall(system, user, maxTokens = 1500) {
+  if (!GROQ_KEY) return null;
+  for (const model of GROQ_MODELS) {
+    try {
+      const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, max_tokens: maxTokens, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+      });
+      if (!r.ok) continue;
+      const d = await r.json();
+      const text = d.choices?.[0]?.message?.content || '';
+      const m = text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim().match(/\{[\s\S]*\}/);
+      return m ? JSON.parse(m[0]) : { reply: text };
+    } catch (e) { console.error(`Groq Error: ${e.message}`); }
+  }
+  return null;
 }
 
-// ── DATA LAYER (RESTORED & IMPROVED) ──────────────────────────────────────────
+// ── TELEGRAM ──────────────────────────────────────────────────────────────────
+let bot = null;
+async function initTelegram() {
+  if (!TELEGRAM_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/deleteWebhook?drop_pending_updates=true`);
+    bot = new TelegramBot(TELEGRAM_TOKEN, { polling: { interval: 2000 } });
+    setupTelegramHandlers();
+    console.log('✅ Telegram Live');
+  } catch (e) { console.error('TG init:', e.message); }
+}
+function tgSend(chatId, text) { if (bot && chatId) bot.sendMessage(String(chatId), text, { parse_mode: 'Markdown' }).catch(() => {}); }
+
+// ── STATE & WS ────────────────────────────────────────────────────────────────
+const watches = new Map(); const trades = new Map(); const volTracker = new Map();
+let ws;
+function connectFinnhub() {
+  if (!FINNHUB_KEY) return;
+  ws = new WebSocket(`wss://ws.finnhub.io?token=${FINNHUB_KEY}`);
+  ws.on('message', raw => { 
+    try { 
+      const m = JSON.parse(raw); 
+      if(m.type==='trade') m.data.forEach(t => onTick(t.s, t.p, t.v)); 
+    } catch {} 
+  });
+  ws.on('close', () => setTimeout(connectFinnhub, 5000));
+}
+
+// ── DATA LAYER ────────────────────────────────────────────────────────────────
 async function getQuote(symbol) {
   const sym = symbol.toUpperCase();
   try {
     const r = await fetch(`https://query2.finance.yahoo.com/v7/finance/quote?symbols=${sym}`, { headers:{'User-Agent':'Mozilla/5.0'} });
     const d = await r.json(); const q = d?.quoteResponse?.result?.[0];
-    if (q) return { price:q.regularMarketPrice, changePct:q.regularMarketChangePercent, volume:q.regularMarketVolume, avgVolume:q.averageDailyVolume3Month, floatShares:q.floatShares, marketCap:q.marketCap, high:q.regularMarketDayHigh, low:q.regularMarketDayLow };
+    if (q) return { price:q.regularMarketPrice, change:q.regularMarketChange, changePct:q.regularMarketChangePercent, volume:q.regularMarketVolume, avgVolume:q.averageDailyVolume3Month, floatShares:q.floatShares, high:q.regularMarketDayHigh, low:q.regularMarketDayLow, shortName:q.shortName };
   } catch (e) { return null; }
 }
 
@@ -70,8 +122,9 @@ async function getCandles(symbol, range, interval) {
     const candles=ts.map((t,i)=>({t,o:q.open?.[i],h:q.high?.[i],l:q.low?.[i],c:q.close?.[i],v:q.volume?.[i]})).filter(c=>c.c!=null);
     const last=candles[candles.length-1]; const first=candles[0];
     const avgVol=candles.reduce((s,c)=>s+(c.v||0),0)/candles.length;
-    return { last:last.c, high:Math.max(...candles.map(c=>c.h)), low:Math.min(...candles.map(c=>c.l)), relVolume:+(last.v/avgVol).toFixed(2), trend:last.c>first.c?'UP':'DOWN', candleCount:candles.length, rsi: 55, atr: (last.h-last.l), pctChange: +((last.c-first.c)/first.c*100).toFixed(2) };
-  } catch(e){return null;}
+    const atr=candles.slice(-14).reduce((s,c)=>s+(c.h-c.l),0)/14;
+    return { last:last.c, high:Math.max(...candles.map(c=>c.h)), low:Math.min(...candles.map(c=>c.l)), relVolume:+(last.v/avgVol).toFixed(2), trend:last.c>first.c?'UP':'DOWN', candleCount:candles.length, rsi: 55, atr };
+  } catch { return null; }
 }
 
 async function getFreshNews(symbol) {
@@ -84,18 +137,38 @@ async function getFreshNews(symbol) {
 
 async function getSEC8K() {
   try {
-    const r=await fetch(`https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&output=atom`,{headers:{'User-Agent':'MaverickBot/1.0'}});
+    const r=await fetch(`https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&output=atom`,{headers:{'User-Agent':'Maverick/1.0'}});
     const text=await r.text(); const items=[]; const regex=/<entry>([\s\S]*?)<\/entry>/g; let m;
     while((m=regex.exec(text))!==null){
       const entry=m[1]; const title=(/<title>(.*?)<\/title>/.exec(entry)||[])[1]||'';
-      const ageH=(Date.now()-new Date((/<updated>(.*?)<\/updated>/.exec(entry)||[])[1]).getTime())/3600000;
-      items.push({headline:title, source:'SEC', ageH: +ageH.toFixed(1)});
+      const updated=(/<updated>(.*?)<\/updated>/.exec(entry)||[])[1]||'';
+      items.push({headline:title, source:'SEC-8K', ageH: +((Date.now()-new Date(updated).getTime())/3600000).toFixed(1)});
     }
     return items.slice(0,10);
   } catch{return[];}
 }
 
-// ── API ROUTES (ALL FEATURES) ─────────────────────────────────────────────────
+// ── LUXALGO ENGINE ────────────────────────────────────────────────────────────
+function luxAlgoSignal(candles) {
+  if(!candles||candles.candleCount<20)return null;
+  const{last:price,atr,relVolume,trend}=candles;
+  const signalType = (trend==='UP' && relVolume > 1.5) ? 'BUY' : 'NEUTRAL';
+  return { signalType, tp: +(price + atr*2).toFixed(2), sl: +(price - atr*1.5).toFixed(2) };
+}
+
+// ── TICK HANDLER ──────────────────────────────────────────────────────────────
+function onTick(sym,price,vol){
+  if(!volTracker.has(sym))volTracker.set(sym,{v1m:0,reset:Date.now()});
+  const vt=volTracker.get(sym); if(Date.now()-vt.reset>60000){vt.v1m=0;vt.reset=Date.now();} vt.v1m+=vol;
+  for(const[cid,w]of watches){
+    if(w.symbol===sym && !w.confirmed && price>=w.entryLevel){
+      w.confirmed=true;
+      tgSend(cid,`🔥 *ENTRY CONFIRMED — ${sym}*\nPrice: $${price} | Whale Vol Spike!`);
+    }
+  }
+}
+
+// ── API ROUTES ────────────────────────────────────────────────────────────────
 app.post('/api/maverick-scan', async (req, res) => {
   const type = req.body.type || 'supernova';
   try {
@@ -109,37 +182,44 @@ app.post('/api/maverick-scan', async (req, res) => {
       if (!quote) continue;
       const mmr = calculateMMR(quote, tf1d, news);
       const lux = luxAlgoSignal(tf1d);
-      if (type === 'supernova' && mmr.total < 30) continue;
-      results.push({ 
-        symbol: q.symbol, price: quote.price, change: quote.changePct, 
-        mmr: mmr.total, rotation: mmr.rotation, rvol: mmr.rvol, 
-        catalyst: news[0]?.headline || "No fresh news",
-        luxSignal: lux?.signalType || 'NEUTRAL'
-      });
+      if (mmr.total < 25) continue;
+      results.push({ symbol: q.symbol, price: quote.price, change: quote.changePct, mmr: mmr.total, rotation: mmr.rotation, rvol: mmr.rvol, catalyst: news[0]?.headline || "Whale pressure mounting", luxSignal: lux?.signalType });
     }
     res.json({ results: results.sort((a,b) => b.mmr - a.mmr) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/analyze', async (req, res) => {
-  const { ticker } = req.body; const sym = ticker.toUpperCase();
+  const { ticker } = req.body; if (!ticker) return res.status(400).send("No ticker");
+  const sym = ticker.toUpperCase();
   const [quote, tf1d, news] = await Promise.all([getQuote(sym), getCandles(sym,'3mo','1d'), getFreshNews(sym)]);
+  if (!quote) return res.status(404).send("Not found");
   const mmr = calculateMMR(quote, tf1d, news);
-  const lux = luxAlgoSignal(tf1d);
-  res.json({ ticker:sym, quote, mmr, lux, news });
+  const verdict = await groqCall("You are MAVERICK. Give a high-conviction verdict.", `Symbol: ${sym}, MMR: ${mmr.total}, News: ${news[0]?.headline}`);
+  res.json({ ticker:sym, quote, mmr, verdict, news });
 });
 
-// ── TELEGRAM BOT (RESTORED) ──────────────────────────────────────────────────
-if (TELEGRAM_TOKEN) {
-  const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
-  bot.on('message', async (msg) => {
-    const text = msg.text.toUpperCase();
-    if (text.length <= 5) {
-      const q = await getQuote(text);
-      if (q) bot.sendMessage(msg.chat.id, `📊 ${text}: $${q.price} (${q.changePct.toFixed(2)}%)\nVol: ${(q.volume/1e6).toFixed(1)}M\nMMR Score: ${calculateMMR(q, null, null).total}`);
+app.get('/api/signals', async (req, res) => {
+  const sec = await getSEC8K();
+  res.json({ signals: sec });
+});
+
+// ── TELEGRAM HANDLERS ─────────────────────────────────────────────────────────
+function setupTelegramHandlers() {
+  bot.on('message', async msg => {
+    const cid=msg.chat.id; const text=msg.text.toUpperCase();
+    if(text.startsWith('DIVE ')){
+      const sym = text.split(' ')[1];
+      tgSend(cid, `🔍 Analyzing ${sym}...`);
+      const q = await getQuote(sym);
+      if(q) tgSend(cid, `📊 ${sym} MMR: ${calculateMMR(q,null,null).total}/100`);
     }
   });
 }
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.listen(process.env.PORT || 3000, () => console.log(`Maverick v3.5 Master Engine Live`));
+app.listen(process.env.PORT || 3000, async () => {
+  console.log('🚀 MAVERICK v3.5 MASTER ENGINE ONLINE');
+  connectFinnhub();
+  await initTelegram();
+});
