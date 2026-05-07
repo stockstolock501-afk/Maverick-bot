@@ -109,6 +109,7 @@ footer{margin-top:14px;font-size:8px;color:#1a1a2e;text-align:center;padding-bot
   <button class="tab" data-tab="supernova">🌟 SUPERNOVA</button>
   <button class="tab" data-tab="signals">📡 SIGNALS</button>
   <button class="tab" data-tab="catalyst">⚡ CATALYST</button>
+  <button class="tab" data-tab="chart">📈 CHART</button>
   <button class="tab" data-tab="perfect">🏆 PERFECT</button>
   <button class="tab" data-tab="chat" style="border-color:#cc44ff40;color:#cc44ff">💬 ADVISOR</button>
 </div>
@@ -1116,5 +1117,167 @@ document.addEventListener('DOMContentLoaded', function() {
   const perfectTab = document.querySelector('[data-tab="perfect"]');
   if (perfectTab) perfectTab.addEventListener('click', loadScanStatus);
 });
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- CHART TAB — Add tab button:                                           -->
+<!-- <button class="tab" data-tab="chart">📈 CHART</button>               -->
+<!-- Paste this block BEFORE </body>                                        -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+
+<style>
+.chart-controls{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.chart-ctrl-btn{background:#0a0a18;border:1px solid #1a1a30;color:#888;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:monospace;font-size:10px;font-weight:700}
+.chart-ctrl-btn.active{background:#ffcc0015;border-color:#ffcc00;color:#ffcc00}
+.lux-overlay{background:#06060f;border:1px solid #0e0e22;border-radius:8px;padding:12px;margin-top:8px}
+.lux-tf-row{display:flex;gap:6px;justify-content:space-between;padding:6px 0;border-bottom:1px solid #0a0a18;font-size:11px;align-items:center}
+.lux-tf-row:last-child{border-bottom:none}
+.lux-tf-label{color:#3a3a5a;font-size:10px;width:40px}
+.lux-sig-badge{padding:2px 10px;border-radius:4px;font-size:9px;font-weight:900;letter-spacing:1px}
+.sig-BUY{background:#00cc8820;color:#00cc88;border:1px solid #00cc8840}
+.sig-SELL{background:#ff555520;color:#ff5555;border:1px solid #ff555540}
+.sig-NEUTRAL{background:#33333330;color:#666;border:1px solid #33333360}
+</style>
+
+<div id="tab-chart" class="hidden">
+  <!-- Chart header -->
+  <div class="card card-glow" style="padding:10px 12px;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div class="lbl-sm" style="margin:0">📈 Live Chart</div>
+      <input id="chartSymbol" placeholder="TICKER" style="flex:1;margin:0;padding:7px 10px;font-size:13px;height:36px"/>
+      <button onclick="loadChart()" style="background:linear-gradient(135deg,#ffcc00,#cc9900);border:none;border-radius:6px;color:#000;padding:7px 14px;cursor:pointer;font-family:monospace;font-size:10px;font-weight:900;height:36px">GO</button>
+    </div>
+    <!-- Timeframe buttons -->
+    <div class="chart-controls">
+      <button class="chart-ctrl-btn" onclick="setChartTf('1')">1m</button>
+      <button class="chart-ctrl-btn active" id="tf-btn-5" onclick="setChartTf('5')">5m</button>
+      <button class="chart-ctrl-btn" onclick="setChartTf('15')">15m</button>
+      <button class="chart-ctrl-btn" onclick="setChartTf('60')">1H</button>
+      <button class="chart-ctrl-btn" onclick="setChartTf('D')">Day</button>
+      <button class="chart-ctrl-btn" onclick="setChartTf('W')">Week</button>
+    </div>
+  </div>
+
+  <!-- TradingView chart iframe — free, no auth, no subscription -->
+  <div style="border-radius:8px;overflow:hidden;border:1px solid #0e0e22;margin-bottom:8px">
+    <div id="tv-chart-container" style="width:100%;height:420px;background:#06060f;display:flex;align-items:center;justify-content:center">
+      <div style="color:#3a3a5a;font-size:12px">Enter a ticker above to load chart</div>
+    </div>
+  </div>
+
+  <!-- LuxAlgo Overlay Panel -->
+  <div class="lux-overlay">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="lbl-sm" style="margin:0">💫 LuxAlgo Signal Engine</div>
+      <div id="luxAlignmentBadge" style="font-size:9px;color:#3a3a5a">—</div>
+    </div>
+    <div id="luxChartSignals">
+      <div style="font-size:10px;color:#2a2a4a;text-align:center;padding:10px">Load a ticker to see LuxAlgo signals</div>
+    </div>
+  </div>
+
+  <!-- Quick actions -->
+  <div style="display:flex;gap:6px;margin-top:8px">
+    <button class="btn btn-primary" onclick="analyzeFromChart()" style="flex:1;padding:10px;font-size:10px;margin-bottom:0">🎯 Full AI Analysis</button>
+    <button class="btn" onclick="watchFromChart()" style="flex:1;padding:10px;font-size:10px;margin-bottom:0;background:#229ED9;border:none;color:#fff;border-radius:6px">📲 Watch in Bot</button>
+  </div>
+</div>
+
+<script>
+let currentChartSymbol = '';
+let currentChartTf = '5';
+
+document.getElementById('chartSymbol').addEventListener('keydown', e => {
+  if (e.key === 'Enter') loadChart();
+});
+
+function loadChart() {
+  const sym = document.getElementById('chartSymbol').value.toUpperCase().trim();
+  if (!sym) return;
+  currentChartSymbol = sym;
+  renderChart(sym, currentChartTf);
+  loadLuxChartSignals(sym);
+}
+
+function setChartTf(tf) {
+  currentChartTf = tf;
+  // Update active button
+  document.querySelectorAll('.chart-ctrl-btn').forEach(b => b.classList.remove('active'));
+  // Find and activate the clicked button by checking onclick
+  event.target.classList.add('active');
+  if (currentChartSymbol) renderChart(currentChartSymbol, tf);
+}
+
+function renderChart(symbol, interval) {
+  const container = document.getElementById('tv-chart-container');
+  // TradingView free embeddable widget — works without any subscription
+  const html = `<iframe 
+    src="https://www.tradingview.com/widgetembed/?frameElementId=tv_chart&symbol=${encodeURIComponent(symbol)}&interval=${interval}&hidesidetoolbar=0&hidetoptoolbar=0&symboledit=1&saveimage=0&toolbarbg=000000&studies=%5B%22STD%3BEMA%22%2C%22STD%3BMACD%22%2C%22STD%3BRSI%22%5D&hideideas=1&theme=dark&style=1&timezone=America%2FNew_York&locale=en"
+    style="width:100%;height:420px;border:none;display:block;"
+    frameborder="0"
+    allowtransparency="true"
+    scrolling="no">
+  </iframe>`;
+  container.innerHTML = html;
+}
+
+async function loadLuxChartSignals(symbol) {
+  const panel = document.getElementById('luxChartSignals');
+  const badge = document.getElementById('luxAlignmentBadge');
+  panel.innerHTML = '<div style="font-size:10px;color:#3b9eff;padding:8px">💫 Computing LuxAlgo signals...</div>';
+  try {
+    const r = await fetch('/api/luxalgo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker: symbol })
+    });
+    const data = await r.json();
+    if (data.error) { panel.innerHTML = '<div style="color:#ff5555;font-size:11px">❌ ' + data.error + '</div>'; return; }
+
+    const tfs = [
+      { key: 'daily', label: 'DAILY', sig: data.daily },
+      { key: 'fourhour', label: '4-HOUR', sig: data.fourhour },
+      { key: 'onehour', label: '1-HOUR', sig: data.onehour },
+      { key: 'fifteen', label: '15-MIN', sig: data.fifteen },
+    ];
+
+    const buyCount = tfs.filter(t => t.sig?.signalType === 'BUY').length;
+    const alLabel = buyCount >= 3 ? '🔥 ALL ALIGNED — MAX BUY' : buyCount >= 2 ? '✅ ALIGNED — HIGH CONVICTION' : buyCount === 1 ? '⚡ WEAK SIGNAL' : '⚠️ NO ALIGNMENT';
+    const alColor = buyCount >= 2 ? '#00cc88' : buyCount === 1 ? '#ffcc00' : '#ff5555';
+    badge.textContent = alLabel;
+    badge.style.color = alColor;
+
+    panel.innerHTML = tfs.map(function(tf) {
+      const s = tf.sig;
+      const sc = { BUY: '#00cc88', SELL: '#ff5555', NEUTRAL: '#555' }[s?.signalType || 'NEUTRAL'] || '#555';
+      return '<div class="lux-tf-row">' +
+        '<span class="lux-tf-label">' + tf.label + '</span>' +
+        '<span class="lux-sig-badge sig-' + (s?.signalType || 'NEUTRAL') + '">' + (s?.signalType || 'NO DATA') + '</span>' +
+        (s?.tpLevel ? '<span style="font-size:10px;color:#00cc88;font-family:monospace">TP:$' + s.tpLevel + '</span>' : '') +
+        (s?.slLevel ? '<span style="font-size:10px;color:#ff5555;font-family:monospace">SL:$' + s.slLevel + '</span>' : '') +
+        '<span style="font-size:9px;color:#3a3a5a">' + (s?.confluenceScore || '—') + '</span>' +
+        '<span style="font-size:9px;color:#888">RSI:' + (s?.rsi || '—') + '</span>' +
+        '</div>';
+    }).join('') +
+    '<div style="padding-top:8px">' +
+    (data.daily?.fvgDetected ? '<div style="font-size:10px;color:#ffcc00;padding:2px 0">⚡ Fair Value Gap: $' + data.daily.fvgLevel + '</div>' : '') +
+    (data.daily?.bos && data.daily.bos !== 'NONE' ? '<div style="font-size:10px;color:#cc44ff;padding:2px 0">🔥 Break of Structure: ' + data.daily.bos + '</div>' : '') +
+    (data.daily?.bullishOB ? '<div style="font-size:10px;color:#3b9eff;padding:2px 0">📦 Order Block: $' + data.daily.bullishOB + '</div>' : '') +
+    '</div>';
+  } catch(e) {
+    panel.innerHTML = '<div style="color:#ff5555;font-size:11px">❌ ' + e.message + '</div>';
+  }
+}
+
+function analyzeFromChart() {
+  if (!currentChartSymbol) return;
+  document.querySelector('[data-tab="analyze"]').click();
+  document.getElementById('ticker').value = currentChartSymbol;
+  runAnalysis();
+}
+
+function watchFromChart() {
+  if (!currentChartSymbol || !BOT_USERNAME) return;
+  window.open('https://t.me/' + BOT_USERNAME, '_blank');
+}
 </script>
 </body></html>
