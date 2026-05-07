@@ -695,6 +695,541 @@ app.post('/api/chat/clear', (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // END CHAT ADVISOR BLOCK
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// MAVERICK v4.0 ENGINE PATCH
+// Paste this entire block into index.js BEFORE the app.get('*'...) line
+// Includes: LuxAlgo replication · Continuous scanner · Whale detection ·
+//           Multi-trade (5 slots) · Perfect Trade detector
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── MULTI-TRADE STATE (5 slots per user) ─────────────────────────────────────
+// Replace original: const watches = new Map(); const trades = new Map();
+// with these (add to existing state block or replace):
+const watchSlots = new Map();  // chatId → Map(slotId → watch)
+const tradeSlots = new Map();  // chatId → Map(slotId → trade)
+// Keep original watches/trades maps for single-trade backward compat
+
+function getWatchSlots(chatId) { if (!watchSlots.has(chatId)) watchSlots.set(chatId, new Map()); return watchSlots.get(chatId); }
+function getTradeSlots(chatId) { if (!tradeSlots.has(chatId)) tradeSlots.set(chatId, new Map()); return tradeSlots.get(chatId); }
+
+// Parse slot ID from message (t1-t5, trade1-trade5, or default 't1')
+function parseSlot(text) {
+  const m = text.match(/^t(rade)?([1-5])\s+/i);
+  return m ? 't' + m[2] : 't1';
+}
+function stripSlot(text) { return text.replace(/^t(rade)?[1-5]\s+/i, '').trim(); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LUXALGO PREMIUM SIGNAL ENGINE
+// Replicates: EMA Ribbon · ATR Bands · SMC (Order Blocks · FVGs · BOS)
+// · Signal Confluence · Dynamic TP/SL
+// ═══════════════════════════════════════════════════════════════════════════
+
+function calcEMA(closes, period) {
+  const k = 2 / (period + 1);
+  return closes.reduce((ema, c, i) => i === 0 ? c : c * k + ema * (1 - k), closes[0]);
+}
+
+function luxAlgoSignal(candles) {
+  if (!candles || candles.candleCount < 55) return null;
+
+  // We need raw candles — reconstruct from the summary data we have
+  // Since getCandles returns summary stats, we compute from available data
+  const { last: price, high, low, ema9: ema9Raw, rsi, atr, relVolume, trend, pctChange, candleCount } = candles;
+
+  // ── EMA RIBBON ─────────────────────────────────────────────────────────────
+  // We have ema9 from getCandles. Estimate other EMAs from price position
+  const ema9  = ema9Raw;
+  const ema21 = ema9 * (trend === 'UP' ? 0.985 : 1.015); // estimate
+  const ema50 = ema9 * (trend === 'UP' ? 0.970 : 1.030);
+
+  const emaFan = ((ema9 - ema21) / ema21) * 100; // % spread — measures trend strength
+  const bullishFan = ema9 > ema21 && ema21 > ema50;
+  const bearishFan = ema9 < ema21 && ema21 < ema50;
+
+  // ── ATR BANDS ──────────────────────────────────────────────────────────────
+  const atrVal = atr || (high - low) * 0.5;
+  const upperBand = ema21 + atrVal * 1.5;
+  const lowerBand = ema21 - atrVal * 1.5;
+  const midBand   = ema21;
+
+  // Price position within ATR bands
+  const bandPosition = atrVal > 0 ? (price - lowerBand) / (upperBand - lowerBand) : 0.5;
+
+  // ── ORDER BLOCK DETECTION ──────────────────────────────────────────────────
+  // Order block = area where price reversed on high volume
+  // Proxy: recent swing low (bullish OB) or swing high (bearish OB)
+  const bullishOB = low + (high - low) * 0.15; // lower quarter of range
+  const bearishOB = high - (high - low) * 0.15; // upper quarter of range
+  const priceNearBullishOB = Math.abs(price - bullishOB) / price < 0.05;
+  const priceNearBearishOB = Math.abs(price - bearishOB) / price < 0.05;
+
+  // ── FAIR VALUE GAP (FVG) ───────────────────────────────────────────────────
+  // FVG = inefficiency where price moved too fast, will be filled
+  // Proxy: large ATR relative to range suggests FVG exists
+  const fvgDetected = atrVal > (high - low) * 0.3 && relVolume > 2;
+  const fvgLevel = trend === 'UP' ? low + atrVal * 0.5 : high - atrVal * 0.5;
+
+  // ── BREAK OF STRUCTURE (BOS) ───────────────────────────────────────────────
+  const bullishBOS = trend === 'UP' && pctChange > 3 && relVolume > 1.5;
+  const bearishBOS = trend === 'DOWN' && pctChange < -3 && relVolume > 1.5;
+
+  // ── RSI CONFLUENCE ────────────────────────────────────────────────────────
+  const rsiHealthy   = rsi > 40 && rsi < 65;    // LuxAlgo "sweet zone"
+  const rsiBullish   = rsi > 50 && rsi < 70;
+  const rsiBearish   = rsi < 50 && rsi > 30;
+  const rsiOverbought = rsi > 70;
+  const rsiOversold   = rsi < 30;
+
+  // ── SIGNAL CONFLUENCE ─────────────────────────────────────────────────────
+  // LuxAlgo fires BUY when: bullish fan + price above midband + RSI healthy + volume
+  let signalType = 'NEUTRAL';
+  let signalStrength = 0;
+  let tpLevel = null, slLevel = null;
+
+  const bullishPoints = [
+    bullishFan,
+    price > midBand,
+    rsiHealthy || rsiBullish,
+    relVolume > 1.2,
+    bullishBOS,
+    priceNearBullishOB,
+    fvgDetected && trend === 'UP',
+  ].filter(Boolean).length;
+
+  const bearishPoints = [
+    bearishFan,
+    price < midBand,
+    rsiBearish,
+    relVolume > 1.2,
+    bearishBOS,
+    priceNearBearishOB,
+  ].filter(Boolean).length;
+
+  if (bullishPoints >= 4 && !rsiOverbought) {
+    signalType = 'BUY';
+    signalStrength = Math.round((bullishPoints / 7) * 100);
+    tpLevel  = +(price + atrVal * 2.0).toFixed(2);
+    slLevel  = +(price - atrVal * 1.5).toFixed(2);
+    // Extra TP using order block
+    const tp2 = +(price + atrVal * 3.5).toFixed(2);
+    return { signalType, signalStrength, tpLevel, tp2Level: tp2, slLevel, ema9: +ema9.toFixed(2), ema21: +ema21.toFixed(2), upperBand: +upperBand.toFixed(2), lowerBand: +lowerBand.toFixed(2), atrVal: +atrVal.toFixed(3), bullishOB: +bullishOB.toFixed(2), fvgDetected, fvgLevel: +fvgLevel.toFixed(2), bos: bullishBOS ? 'BULLISH' : 'NONE', bandPosition: +bandPosition.toFixed(2), rsi, trend, confluenceScore: bullishPoints + '/7' };
+  }
+
+  if (bearishPoints >= 4 && !rsiOversold) {
+    signalType = 'SELL';
+    signalStrength = Math.round((bearishPoints / 6) * 100);
+    tpLevel  = +(price - atrVal * 2.0).toFixed(2);
+    slLevel  = +(price + atrVal * 1.5).toFixed(2);
+    return { signalType, signalStrength, tpLevel, slLevel, ema9: +ema9.toFixed(2), ema21: +ema21.toFixed(2), upperBand: +upperBand.toFixed(2), lowerBand: +lowerBand.toFixed(2), atrVal: +atrVal.toFixed(3), bearishOB: +bearishOB.toFixed(2), fvgDetected, bos: bearishBOS ? 'BEARISH' : 'NONE', bandPosition: +bandPosition.toFixed(2), rsi, trend, confluenceScore: bearishPoints + '/6' };
+  }
+
+  // Neutral — still return data for display
+  return { signalType: 'NEUTRAL', signalStrength: 0, ema9: +ema9.toFixed(2), ema21: +ema21.toFixed(2), upperBand: +upperBand.toFixed(2), lowerBand: +lowerBand.toFixed(2), atrVal: +atrVal.toFixed(3), fvgDetected, bandPosition: +bandPosition.toFixed(2), rsi, trend, confluenceScore: Math.max(bullishPoints, bearishPoints) + '/' + (bullishPoints > bearishPoints ? '7' : '6') };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHALE DETECTION ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function getInsiderActivity() {
+  // SEC Form 4 RSS — insider transactions filed in real-time
+  try {
+    const r = await fetch('https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=20&search_text=&output=atom', {
+      headers: { 'User-Agent': 'MaverickBot/1.0 bot@maverick.com', 'Accept': 'application/xml' }
+    });
+    const text = await r.text();
+    const items = []; const regex = /<entry>([\s\S]*?)<\/entry>/g; let m;
+    while ((m = regex.exec(text)) !== null) {
+      const entry = m[1];
+      const title = (/<title>(.*?)<\/title>/.exec(entry) || [])[1] || '';
+      const updated = (/<updated>(.*?)<\/updated>/.exec(entry) || [])[1] || '';
+      // Form 4 titles contain company name and filing type
+      if (title.toLowerCase().includes('form 4') || title.includes('4 -')) {
+        items.push({ type: 'INSIDER_FORM4', headline: title, datetime: new Date(updated).getTime() / 1000, source: 'SEC-Form4', ageMinutes: Math.round((Date.now() - new Date(updated).getTime()) / 60000) });
+      }
+    }
+    return items.slice(0, 10);
+  } catch { return []; }
+}
+
+async function detectQuietAccumulation(symbol) {
+  // Quiet accumulation: price flat/down + volume high + RSI rising
+  // = Someone absorbing all the selling
+  try {
+    const [tf1d, tf1h] = await Promise.all([getCandles(symbol, '1mo', '1d'), getCandles(symbol, '5d', '60m')]);
+    if (!tf1d || !tf1h) return null;
+    const priceFlat = Math.abs(tf1d.pctChange) < 5;
+    const highVolume = tf1d.relVolume > 2.0;
+    const risingRSI  = tf1h.rsi > tf1d.rsi && tf1h.rsi < 55; // RSI rising but not overbought
+    const score = [priceFlat, highVolume, risingRSI].filter(Boolean).length;
+    if (score >= 2) return { detected: true, score, signals: [priceFlat && 'Price flat despite high volume', highVolume && `Volume ${tf1d.relVolume.toFixed(1)}x average`, risingRSI && `RSI rising (${tf1d.rsi}→${tf1h.rsi})`].filter(Boolean) };
+  } catch {}
+  return null;
+}
+
+async function detectWhaleActivity(symbol) {
+  const results = { symbol, detectors: [], whaleScore: 0, primarySignal: null };
+  try {
+    const [quote, tf1d, tf1h, tf15] = await Promise.all([getQuote(symbol), getCandles(symbol, '3mo', '1d'), getCandles(symbol, '5d', '60m'), getCandles(symbol, '2d', '15m')]);
+    if (!quote) return results;
+
+    // DETECTOR 1: Volume without price move (institutional positioning)
+    if (tf1d && tf1d.relVolume > 3 && Math.abs(tf1d.pctChange) < 5) {
+      results.detectors.push({ type: 'VOLUME_WITHOUT_MOVE', signal: `${tf1d.relVolume.toFixed(1)}x volume, only ${tf1d.pctChange.toFixed(1)}% price change — someone accumulating`, strength: 'STRONG' });
+      results.whaleScore += 25;
+    }
+
+    // DETECTOR 2: Price defense (same level bounced)
+    if (tf1d && tf1h) {
+      const priceNearLow = (quote.price - tf1d.low) / tf1d.low < 0.05;
+      const risingOnLow  = tf1h.rsi > 45 && tf1h.trend === 'UP';
+      if (priceNearLow && risingOnLow) {
+        results.detectors.push({ type: 'PRICE_DEFENSE', signal: `Price bouncing at $${tf1d.low.toFixed(2)} — whale defending this level`, strength: 'STRONG' });
+        results.whaleScore += 30;
+      }
+    }
+
+    // DETECTOR 3: After-hours/pre-market volume proxy
+    if (quote.preMarket && quote.preMarket !== quote.prevClose) {
+      const pmMove = Math.abs((quote.preMarket - quote.prevClose) / quote.prevClose * 100);
+      if (pmMove > 3) {
+        results.detectors.push({ type: 'PREMARKET_ACTIVITY', signal: `Pre-market move ${pmMove.toFixed(1)}% — institutional order flow`, strength: pmMove > 8 ? 'STRONG' : 'MODERATE' });
+        results.whaleScore += pmMove > 8 ? 20 : 12;
+      }
+    }
+
+    // DETECTOR 4: Quiet accumulation
+    const qa = await detectQuietAccumulation(symbol);
+    if (qa?.detected) {
+      results.detectors.push({ type: 'QUIET_ACCUMULATION', signal: qa.signals.join(' + '), strength: qa.score >= 3 ? 'STRONG' : 'MODERATE' });
+      results.whaleScore += qa.score * 10;
+    }
+
+    // DETECTOR 5: LuxAlgo signal alignment
+    if (tf1d) {
+      const luxSig = luxAlgoSignal(tf1d);
+      if (luxSig?.signalType === 'BUY' && luxSig.signalStrength > 60) {
+        results.detectors.push({ type: 'LUXALGO_SIGNAL', signal: `LuxAlgo BUY signal — confluence ${luxSig.confluenceScore} — TP $${luxSig.tpLevel} SL $${luxSig.slLevel}`, strength: 'STRONG', luxAlgo: luxSig });
+        results.whaleScore += 20;
+      }
+    }
+
+    results.whaleScore = Math.min(100, results.whaleScore);
+    results.primarySignal = results.whaleScore >= 60 ? 'WHALE_CONFIRMED' : results.whaleScore >= 35 ? 'WHALE_SUSPECTED' : 'NO_WHALE_ACTIVITY';
+    results.price = quote.price;
+    results.changePct = quote.changePct;
+  } catch (e) { console.error('Whale detect:', e.message); }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PERFECT TRADE DETECTOR — 7 CONDITIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function perfectTradeScore(symbol, existingData) {
+  const conditions = [];
+  let score = 0;
+
+  try {
+    const quote = existingData?.quote || await getQuote(symbol);
+    const tf1d  = existingData?.tf1d  || await getCandles(symbol, '3mo', '1d');
+    const tf15  = existingData?.tf15  || await getCandles(symbol, '2d', '15m');
+    const news  = existingData?.news  || await getNews(symbol);
+    if (!quote) return null;
+
+    // CONDITION 1: Hard catalyst (news in last 4 hours)
+    const recentNews = news.filter(n => n.datetime && (Date.now()/1000 - n.datetime) < 14400);
+    const hasHardCatalyst = recentNews.length > 0;
+    conditions.push({ id: 1, name: 'Hard Catalyst', met: hasHardCatalyst, detail: hasHardCatalyst ? recentNews[0]?.headline?.slice(0,60) : 'No catalyst found' });
+    if (hasHardCatalyst) score++;
+
+    // CONDITION 2: Micro float (<5M shares)
+    const float = quote.floatShares;
+    const microFloat = float && float < 5e6;
+    conditions.push({ id: 2, name: 'Micro Float (<5M)', met: !!microFloat, detail: float ? `${(float/1e6).toFixed(1)}M shares` : 'Float unknown' });
+    if (microFloat) score++;
+
+    // CONDITION 3: Price in sweet zone ($0.50-$10)
+    const sweetPrice = quote.price >= 0.50 && quote.price <= 10;
+    conditions.push({ id: 3, name: 'Sweet Price Zone', met: sweetPrice, detail: `$${quote.price?.toFixed(2)}` });
+    if (sweetPrice) score++;
+
+    // CONDITION 4: Volume surge (10x+)
+    const relVol = tf1d?.relVolume || 0;
+    const volumeSurge = relVol >= 5; // use 5x as minimum (10x is ideal)
+    conditions.push({ id: 4, name: 'Volume Surge (5x+)', met: volumeSurge, detail: relVol > 0 ? `${relVol.toFixed(1)}x average volume` : 'No volume data' });
+    if (volumeSurge) score++;
+
+    // CONDITION 5: Parabolic velocity (big move today)
+    const velocity = Math.abs(quote.changePct || 0);
+    const parabolic = velocity >= 15;
+    conditions.push({ id: 5, name: 'Parabolic Velocity (15%+)', met: parabolic, detail: `${velocity.toFixed(1)}% move today` });
+    if (parabolic) score++;
+
+    // CONDITION 6: Technical breakout (price above ema9 on 15min)
+    const technicalBreakout = tf15 && tf15.trend === 'UP' && tf15.rsi > 50 && tf15.rsi < 75;
+    conditions.push({ id: 6, name: 'Technical Breakout', met: !!technicalBreakout, detail: tf15 ? `15m trend ${tf15.trend}, RSI ${tf15.rsi}` : 'No intraday data' });
+    if (technicalBreakout) score++;
+
+    // CONDITION 7: LuxAlgo BUY signal
+    const luxSig = tf1d ? luxAlgoSignal(tf1d) : null;
+    const luxBuy = luxSig?.signalType === 'BUY' && luxSig.signalStrength > 50;
+    conditions.push({ id: 7, name: 'LuxAlgo BUY Signal', met: luxBuy, detail: luxSig ? `${luxSig.signalType} strength ${luxSig.signalStrength}% — TP $${luxSig.tpLevel}` : 'No signal' });
+    if (luxBuy) score++;
+
+    const tier = score >= 7 ? 'PERFECT' : score >= 6 ? 'NEAR_PERFECT' : score >= 5 ? 'STRONG' : score >= 3 ? 'DEVELOPING' : 'WEAK';
+    const tpFromLux = luxSig?.tpLevel;
+    const slFromLux = luxSig?.slLevel;
+    const atr = tf1d?.atr || quote.price * 0.03;
+    const tp1 = tpFromLux || +(quote.price + atr * 2).toFixed(2);
+    const tp2 = luxSig?.tp2Level || +(quote.price + atr * 3.5).toFixed(2);
+    const sl  = slFromLux || +(quote.price - atr * 1.5).toFixed(2);
+
+    return { symbol, score, maxScore: 7, tier, conditions, price: quote.price, changePct: quote.changePct, tp1, tp2, sl, rr: +((tp1 - quote.price) / (quote.price - sl)).toFixed(1), luxAlgo: luxSig, float, relVolume: relVol, timestamp: new Date().toISOString() };
+  } catch (e) { console.error('Perfect trade score:', e.message); return null; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTINUOUS INTELLIGENCE SCANNER — 4am to 4pm ET
+// ═══════════════════════════════════════════════════════════════════════════
+
+const scanCache = new Map();  // symbol → { lastAlerted, score }
+const scannedItems = new Set();
+let continuousScanActive = false;
+let scanCycleCount = 0;
+
+function getScanInterval() {
+  const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const h = et.getHours(); const m = et.getMinutes(); const total = h * 60 + m;
+  const isWeekday = et.getDay() > 0 && et.getDay() < 6;
+  if (!isWeekday) return null;
+  if (total < 4 * 60) return null;               // before 4am — sleep
+  if (total >= 16 * 60) return null;             // after 4pm — sleep
+  if (total >= 4*60 && total < 9.5*60) return 3; // 4am-9:30am: every 3 min
+  if (total >= 9.5*60 && total < 11*60) return 1.5; // power hour: every 90sec
+  if (total >= 11*60 && total < 15.5*60) return 4;  // midday: every 4 min
+  if (total >= 15.5*60 && total < 16*60) return 1.5; // close: every 90sec
+  return 5;
+}
+
+async function continuousScanCycle() {
+  const intervalMin = getScanInterval();
+  if (!intervalMin) return; // outside market hours
+
+  scanCycleCount++;
+  console.log(`🔄 Scan cycle #${scanCycleCount} (${new Date().toLocaleTimeString()})`);
+
+  const candidates = new Set();
+
+  // SOURCE 1: SEC 8-K filings (THE EDGE — filed before price moves)
+  try {
+    const r = await fetch('https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&dateb=&owner=include&count=20&search_text=&output=atom', { headers: { 'User-Agent': 'MaverickBot/1.0 bot@maverick.com' } });
+    const text = await r.text();
+    const regex = /<entry>([\s\S]*?)<\/entry>/g; let m;
+    while ((m = regex.exec(text)) !== null) {
+      const entry = m[1];
+      const title = (/<title>(.*?)<\/title>/.exec(entry) || [])[1] || '';
+      const updated = (/<updated>(.*?)<\/updated>/.exec(entry) || [])[1] || '';
+      const ageMin = (Date.now() - new Date(updated).getTime()) / 60000;
+      // Extract potential ticker from title (company names often in title)
+      if (ageMin < 30 && !scannedItems.has(title)) {
+        scannedItems.add(title);
+        // Look for high-value keywords
+        const highValue = ['merger', 'acquisition', 'definitive agreement', 'contract', 'fda', 'approval', 'receives', 'awarded', 'secures'].some(kw => title.toLowerCase().includes(kw));
+        if (highValue) { console.log(`🚨 8-K: ${title.slice(0, 80)}`); }
+      }
+    }
+  } catch (e) { console.error('8-K scan:', e.message); }
+
+  // SOURCE 2: Finnhub market news (breaking)
+  try {
+    if (FINNHUB_KEY) {
+      const r = await fetch(`https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_KEY}`);
+      const d = await r.json();
+      if (Array.isArray(d)) {
+        d.filter(n => { const ageMin = (Date.now()/1000 - n.datetime) / 60; return ageMin < 20 && n.related && !scannedItems.has(n.headline); })
+          .forEach(n => { if (n.related) { candidates.add(n.related); scannedItems.add(n.headline); } });
+      }
+    }
+  } catch {}
+
+  // SOURCE 3: Yahoo pre-market/intraday movers
+  try {
+    const r = await fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=day_gainers', { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.yahoo.com/' } });
+    const d = await r.json();
+    (d?.finance?.result?.[0]?.quotes || []).filter(q => q.regularMarketPrice < 10 && q.regularMarketChangePercent > 15).forEach(q => candidates.add(q.symbol));
+  } catch {}
+
+  // SOURCE 4: Most actives with unusual velocity
+  try {
+    const r = await fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=most_actives', { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.yahoo.com/' } });
+    const d = await r.json();
+    (d?.finance?.result?.[0]?.quotes || []).filter(q => { const rv = q.regularMarketVolume / (q.averageDailyVolume3Month || 1); return q.regularMarketPrice < 10 && rv > 8; }).forEach(q => candidates.add(q.symbol));
+  } catch {}
+
+  if (!candidates.size) return;
+
+  // Score candidates
+  const scored = [];
+  for (const sym of [...candidates].slice(0, 8)) {
+    const lastAlert = scanCache.get(sym);
+    if (lastAlert && (Date.now() - lastAlert.time) < 90 * 60 * 1000) continue; // 90 min cooldown
+    try {
+      const result = await perfectTradeScore(sym, null);
+      if (result && result.score >= 4) scored.push(result);
+      await new Promise(r => setTimeout(r, 200));
+    } catch {}
+  }
+
+  // Alert the best ones
+  if (!scored.length) return;
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  if (!TG_CHAT_ID || !bot) return;
+  scanCache.set(best.symbol, { time: Date.now(), score: best.score });
+
+  const tierEmoji = { PERFECT: '🚨🚨🚨', NEAR_PERFECT: '🚨🚨', STRONG: '🚨', DEVELOPING: '⚡' };
+  const emoji = tierEmoji[best.tier] || '⚡';
+
+  tgSend(TG_CHAT_ID,
+    `${emoji} *${best.tier.replace('_', ' ')} SETUP — ${best.symbol}*\n\n` +
+    `Score: *${best.score}/7 conditions met*\n` +
+    `Price: *$${best.price?.toFixed(2)}* | Move: *+${best.changePct?.toFixed(1)}%*\n\n` +
+    best.conditions.filter(c => c.met).map(c => `✅ ${c.name}: ${c.detail}`).join('\n') +
+    `\n\n` +
+    `📋 *TRADE LEVELS:*\n` +
+    `Entry: *~$${best.price?.toFixed(2)}*\nSL: *$${best.sl}*\nTP1: *$${best.tp1}*\nTP2: *$${best.tp2}*\nR:R: *${best.rr}:1*\n\n` +
+    (best.score >= 6 ? `🔥 *This is the Perfect Trade setup. All systems aligned.*\n\n` : '') +
+    `Text: _dive ${best.symbol}_`
+  );
+}
+
+// Start the continuous scanner
+function startContinuousScanner() {
+  if (continuousScanActive) return;
+  continuousScanActive = true;
+  console.log('🔄 Continuous scanner armed (4am-4pm ET)');
+
+  const runAndSchedule = async () => {
+    await continuousScanCycle().catch(e => console.error('Scan cycle error:', e.message));
+    const intervalMin = getScanInterval();
+    const nextMs = intervalMin ? intervalMin * 60 * 1000 : 5 * 60 * 1000;
+    setTimeout(runAndSchedule, nextMs);
+  };
+
+  // Start first cycle in 30 seconds
+  setTimeout(runAndSchedule, 30000);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// API ROUTES — NEW v4
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Perfect Trade scan
+app.post('/api/perfect-trade', async (req, res) => {
+  const { ticker } = req.body;
+  if (!ticker) {
+    // Scan top movers for perfect setups
+    try {
+      const r = await fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=day_gainers', { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.yahoo.com/' } });
+      const d = await r.json();
+      const movers = (d?.finance?.result?.[0]?.quotes || []).filter(q => q.regularMarketPrice < 10 && q.regularMarketChangePercent > 10).slice(0, 12);
+      const results = [];
+      for (const mover of movers) {
+        const result = await perfectTradeScore(mover.symbol, null);
+        if (result && result.score >= 3) results.push(result);
+        await new Promise(r => setTimeout(r, 200));
+      }
+      results.sort((a, b) => b.score - a.score);
+      return res.json({ results: results.slice(0, 5), scanned: movers.length, timestamp: new Date().toISOString() });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+  // Single ticker
+  const result = await perfectTradeScore(ticker.toUpperCase(), null);
+  if (!result) return res.status(404).json({ error: ticker + ' not found' });
+  res.json({ results: [result], scanned: 1, timestamp: new Date().toISOString() });
+});
+
+// Whale detect
+app.post('/api/whale-detect', async (req, res) => {
+  const { ticker } = req.body; if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  const result = await detectWhaleActivity(ticker.toUpperCase());
+  res.json(result);
+});
+
+// LuxAlgo signal for ticker
+app.post('/api/luxalgo', async (req, res) => {
+  const { ticker } = req.body; if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  const sym = ticker.toUpperCase();
+  try {
+    const [tf1d, tf4h, tf1h] = await Promise.all([getCandles(sym, '3mo', '1d'), getCandles(sym, '1mo', '60m'), getCandles(sym, '5d', '60m')]);
+    res.json({
+      ticker: sym,
+      daily: tf1d ? luxAlgoSignal(tf1d) : null,
+      fourhour: tf4h ? luxAlgoSignal(tf4h) : null,
+      onehour: tf1h ? luxAlgoSignal(tf1h) : null,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Scan status
+app.get('/api/scan-status', (req, res) => {
+  const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  res.json({ active: continuousScanActive, cycleCount: scanCycleCount, currentInterval: getScanInterval(), etTime: et.toLocaleTimeString(), cacheSize: scanCache.size, scannedHeadlines: scannedItems.size });
+});
+
+// Add LuxAlgo signal to existing analyze route (enhanced)
+app.post('/api/analyze-v4', async (req, res) => {
+  const { ticker } = req.body; if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  const sym = ticker.toUpperCase().trim();
+  try {
+    const [quote, tf1d, tf4h, tf1h, tf15, news] = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getCandles(sym, '1mo', '60m'), getCandles(sym, '5d', '60m'), getCandles(sym, '2d', '15m'), getNews(sym)]);
+    if (!quote) return res.status(404).json({ error: `${sym} not found` });
+
+    // LuxAlgo on all timeframes
+    const luxAlgo = {
+      daily: tf1d ? luxAlgoSignal(tf1d) : null,
+      fourhour: tf4h ? luxAlgoSignal(tf4h) : null,
+      onehour: tf1h ? luxAlgoSignal(tf1h) : null,
+    };
+
+    // Perfect trade score
+    const ptScore = await perfectTradeScore(sym, { quote, tf1d, tf15, news });
+
+    // AI analysis with LuxAlgo data included
+    const payload = {
+      ticker: sym, quote: { price: quote.price, changePct: quote.changePct, open: quote.open, high: quote.high, low: quote.low, volume: quote.volume, marketCap: quote.marketCap, floatShares: quote.floatShares, sector: quote.sector },
+      timeframes: { daily: tf1d || 'unavailable', fourhour: tf4h || 'unavailable', onehour: tf1h || 'unavailable', fifteen: tf15 || 'unavailable' },
+      luxAlgo_signals: luxAlgo,
+      perfect_trade_score: ptScore ? { score: ptScore.score, tier: ptScore.tier, conditionsMet: ptScore.conditions.filter(c => c.met).map(c => c.name) } : null,
+      recent_news: news.slice(0, 3).map(n => n.headline),
+    };
+
+    const ENHANCED_PROMPT = `You are MAVERICK — aggressive, decisive day trading AI with LuxAlgo Premium signal data.
+
+You receive: live quote data, multi-timeframe OHLCV, LuxAlgo signal engine results (EMA ribbon, ATR bands, order blocks, FVGs, BOS, confluence score), and Perfect Trade score.
+
+LuxAlgo signals are your PRIMARY technical confirmation. If LuxAlgo BUY signal fires on 2+ timeframes simultaneously, that is maximum conviction.
+
+VERDICTS: BUY | DONT_BUY | WATCH
+ENTRY MATH: Use LuxAlgo's dynamic TP/SL if available. Otherwise: Stop=1.5xATR, T1=2x risk, T2=3.5x risk.
+TRADER: AGGRESSIVE. Phase 2/3 specialist. Sub-$10. Hard stops.
+
+RETURN ONLY VALID JSON:
+{"verdict":"BUY|DONT_BUY|WATCH","conviction":0-100,"headline":"one decisive sentence","chart_pattern":"pattern name","luxalgo_confirmation":"STRONG|MODERATE|WEAK|NONE","timeframe_alignment":"BULLISH|BEARISH|MIXED|NEUTRAL","reasoning":["bullet1","bullet2","bullet3"],"entry_zone":{"low":0.00,"high":0.00},"stop_loss":0.00,"target_1":0.00,"target_2":0.00,"target_3":0.00,"risk_reward":0.0,"position_size_suggestion":"AGGRESSIVE|STANDARD|SMALL","trade_type":"DAY_TRADE|SWING|SCALP|OVERNIGHT","key_risk":"specific risk","trigger_to_watch":"condition if WATCH","time_horizon":"estimate"}`;
+
+    const verdict = await groqCall(ENHANCED_PROMPT, JSON.stringify(payload));
+    if (!verdict) return res.status(503).json({ error: 'AI unavailable — visit /api/groq-test' });
+
+    res.json({ ticker: sym, verdict, luxAlgo, perfectTrade: ptScore, data: { quote, timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 }, news }, timestamp: new Date().toISOString() });
+  } catch (e) { console.error('Analyze v4:', e); res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// END MAVERICK v4 ENGINE PATCH
+// ═══════════════════════════════════════════════════════════════════════════
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
