@@ -622,7 +622,7 @@ RESPONSE STYLE:
 LIVE DATA: When the user mentions a ticker, live data will be provided if available.`;
 
 // Chat history per session (in-memory, resets on server restart)
-const chatSessions = new Map(); // sessionId → [messages]
+
 
 app.post('/api/chat', async (req, res) => {
   if (!GROQ_KEY) return res.status(503).json({ error: 'GROQ_KEY not set in Render environment variables' });
