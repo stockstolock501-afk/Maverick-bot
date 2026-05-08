@@ -202,6 +202,7 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
   <button class="tab" data-tab="perfect">PERFECT</button>
   <button class="tab" data-tab="supernova">SUPERNOVA</button>
   <button class="tab" data-tab="signals">SIGNALS</button>
+  <button class="tab" data-tab="prob">PROBABILITY</button>
   <button class="tab" data-tab="catalyst">CATALYST</button>
   <button class="tab" data-tab="advisor">ADVISOR</button>
 </div>
@@ -1091,6 +1092,461 @@ function clearChat(){
   chatSessionId='session_'+Date.now();
   fetch('/api/chat/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:chatSessionId})}).catch(function(){});
   showWelcome();
+}
+</script>
+  <!-- ================================================================ -->
+<!-- MAVERICK PROBABILITY ENSEMBLE TAB                              -->
+<!-- 1. Add tab button:                                             -->
+<!--    <button class="tab" data-tab="prob">PROBABILITY</button>   -->
+<!--    (add to .tabs div after SIGNALS tab)                        -->
+<!-- 2. Paste this entire block BEFORE </body>                      -->
+<!-- 3. The Chart.js script tag below loads automatically           -->
+<!-- ================================================================ -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+
+<style>
+/* ── Probability tab styles ── */
+.prob-hero{background:linear-gradient(135deg,#0a0f1e,#0f1830,#0a1020);border:1px solid rgba(167,139,250,.2);border-radius:12px;padding:14px;margin-bottom:10px;position:relative;overflow:hidden}
+.prob-hero::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse at 20% 50%,rgba(167,139,250,.06) 0%,transparent 60%),radial-gradient(ellipse at 80% 50%,rgba(96,165,250,.04) 0%,transparent 60%);pointer-events:none}
+
+.engine-section{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px}
+.engine-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.engine-badge{font-size:8px;padding:2px 8px;border-radius:4px;font-weight:800;letter-spacing:1px}
+.badge-mc{background:rgba(240,180,41,.15);color:#f0b429;border:1px solid rgba(240,180,41,.3)}
+.badge-lr{background:rgba(34,211,238,.15);color:#22d3ee;border:1px solid rgba(34,211,238,.3)}
+.badge-atr{background:rgba(167,139,250,.15);color:#a78bfa;border:1px solid rgba(167,139,250,.3)}
+
+.chart-wrap{position:relative;height:200px;margin-bottom:8px}
+canvas{border-radius:6px}
+
+/* Strike zone */
+.strike-zone{border-radius:9px;padding:12px 14px;margin-bottom:10px;position:relative;overflow:hidden}
+.sz-active{background:linear-gradient(135deg,rgba(34,197,94,.08),rgba(96,165,250,.06));border:1px solid rgba(34,197,94,.35)}
+.sz-inactive{background:var(--bg2);border:1px solid var(--border)}
+.sz-pulse{animation:szPulse 2s ease-in-out infinite}
+@keyframes szPulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 20px rgba(34,197,94,.2)}}
+
+/* Hit gauges */
+.gauges-row{display:flex;gap:8px;margin-bottom:10px}
+.gauge-card{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:10px;text-align:center;position:relative}
+.gauge-ring{position:relative;width:72px;height:72px;margin:0 auto 6px}
+.gauge-ring svg{position:absolute;top:0;left:0}
+.gauge-pct{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:16px;font-weight:900;font-family:monospace;line-height:1}
+.gauge-lbl{font-size:8px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px}
+.gauge-sub{font-size:9px;color:var(--muted)}
+
+/* Regime badge */
+.regime-pill{display:inline-block;font-size:8px;padding:2px 8px;border-radius:4px;font-weight:800;letter-spacing:.5px;margin-top:4px}
+
+/* Histogram bars */
+.hist-bar{display:inline-block;background:rgba(167,139,250,.4);border-radius:2px 2px 0 0;min-width:3px;vertical-align:bottom}
+.hist-wrap{display:flex;align-items:flex-end;gap:1px;height:40px;margin-top:6px;padding:4px;background:var(--bg);border-radius:5px}
+
+/* Stat rows */
+.stat-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--bg3);font-size:11px}
+.stat-row:last-child{border-bottom:none}
+.stat-lbl{color:var(--muted)}
+.stat-val{font-family:monospace;font-weight:700;color:var(--text)}
+</style>
+
+<!-- PROBABILITY TAB -->
+<div id="tab-prob" class="hidden">
+
+  <!-- Input card -->
+  <div class="prob-hero">
+    <div style="font-size:9px;color:rgba(167,139,250,.7);font-weight:800;letter-spacing:2px;margin-bottom:8px">PROBABILITY ENSEMBLE v3.6</div>
+    <div style="font-size:11px;color:rgba(167,139,250,.5);margin-bottom:12px;line-height:1.5">Monte Carlo · Linear Regression · ATR Zones — three engines, one verdict</div>
+
+    <input id="probTicker" placeholder="Enter ticker — e.g. LFVN, PN, CIFR" style="margin-bottom:7px;border-color:rgba(167,139,250,.3)"/>
+
+    <div style="display:flex;gap:6px;margin-bottom:7px">
+      <div style="flex:1">
+        <div style="font-size:8px;color:var(--muted);margin-bottom:3px">Target 1 (optional)</div>
+        <input id="probT1" placeholder="Auto from ATR" type="number" step="0.01" style="margin:0;padding:8px;font-size:12px;border-color:rgba(34,197,94,.3)"/>
+      </div>
+      <div style="flex:1">
+        <div style="font-size:8px;color:var(--muted);margin-bottom:3px">Target 2 (optional)</div>
+        <input id="probT2" placeholder="Auto from ATR" type="number" step="0.01" style="margin:0;padding:8px;font-size:12px;border-color:rgba(96,165,250,.3)"/>
+      </div>
+      <div style="flex:1">
+        <div style="font-size:8px;color:var(--muted);margin-bottom:3px">Horizon (min)</div>
+        <select id="probHorizon" style="margin:0;padding:8px;font-size:12px;border-color:rgba(167,139,250,.3)">
+          <option value="15">15 min</option>
+          <option value="30">30 min</option>
+          <option value="60" selected>60 min</option>
+        </select>
+      </div>
+    </div>
+
+    <button onclick="runProbability()" style="background:linear-gradient(135deg,#7c3aed,#4c1d95);border:none;border-radius:7px;color:#fff;padding:13px;width:100%;cursor:pointer;font-family:monospace;font-size:11px;font-weight:900;letter-spacing:2px">RUN PROBABILITY ENSEMBLE</button>
+  </div>
+
+  <div id="probResult"></div>
+</div>
+
+<script>
+document.getElementById('probTicker').addEventListener('keydown', function(e){ if(e.key==='Enter') runProbability(); });
+
+// Chart.js instances — kept for destroy on re-run
+var probCharts = {};
+
+function destroyProbCharts() {
+  Object.keys(probCharts).forEach(function(k) {
+    if (probCharts[k]) { try { probCharts[k].destroy(); } catch(e){} probCharts[k] = null; }
+  });
+}
+
+async function runProbability() {
+  var ticker  = document.getElementById('probTicker').value.toUpperCase().trim();
+  if (!ticker) return;
+  var t1      = parseFloat(document.getElementById('probT1').value) || 0;
+  var t2      = parseFloat(document.getElementById('probT2').value) || 0;
+  var horizon = parseInt(document.getElementById('probHorizon').value) || 60;
+  var out     = document.getElementById('probResult');
+
+  destroyProbCharts();
+  out.innerHTML = '<div class="card" style="border-color:rgba(167,139,250,.2)"><div class="loading-box">RUNNING ' +
+    '<span style="color:#a78bfa">3,000 MONTE CARLO PATHS</span>...<br><br>' +
+    '<span style="font-size:10px;color:var(--muted)">Linear regression · ATR probability zones · Strike zone detection</span></div>' +
+    '<div class="loader"><div></div><div></div><div></div></div></div>';
+
+  try {
+    var r = await fetch('/api/probability', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker: ticker, t1: t1, t2: t2, horizon: horizon })
+    });
+    var data = await r.json();
+    if (data.error) { out.innerHTML = '<div class="card"><div style="color:var(--red);font-size:12px">Error: ' + data.error + '</div></div>'; return; }
+    renderProbability(data, out);
+  } catch(e) {
+    out.innerHTML = '<div class="card"><div style="color:var(--red);font-size:12px">Error: ' + e.message + '</div></div>';
+  }
+}
+
+function renderProbability(data, out) {
+  var mc  = data.monteCarlo;
+  var lr  = data.regression;
+  var atr = data.atrZones;
+  var sz  = data.strikeZone;
+  var price = data.price;
+  var t1    = data.t1;
+  var t2    = data.t2;
+  var steps = data.steps;
+
+  // Build step labels (every 5 minutes)
+  var labels = [];
+  for (var i = 0; i <= steps; i++) {
+    if (i === 0) labels.push('Now');
+    else if (i % 5 === 0) labels.push('+' + i + 'm');
+    else labels.push('');
+  }
+
+  // ── HTML structure ──────────────────────────────────────────────
+  var html = '';
+
+  // Strike Zone
+  if (sz && sz.exists) {
+    html += '<div class="strike-zone sz-active sz-pulse">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+      '<div><div style="font-size:9px;color:#22c55e;font-weight:800;letter-spacing:2px">STRIKE ZONE DETECTED</div>' +
+      '<div style="font-size:13px;color:#fff;font-weight:900;margin-top:3px">$' + sz.low + ' — $' + sz.high + '</div>' +
+      '<div style="font-size:10px;color:#22c55e;margin-top:2px">All 3 engines converge at $' + sz.center + '</div></div>' +
+      '<div style="text-align:right"><div style="font-size:9px;color:var(--muted)">Consensus</div>' +
+      '<div style="font-size:22px;font-weight:900;color:#22c55e">' + sz.confidence + '%</div></div>' +
+      '</div>' +
+      '<div style="font-size:10px;color:rgba(34,197,94,.6)">Monte Carlo cloud + Regression channel + ATR zone overlap — highest conviction level</div>' +
+      '</div>';
+  } else {
+    html += '<div class="strike-zone sz-inactive">' +
+      '<div style="font-size:9px;color:var(--muted);font-weight:800;letter-spacing:1px;margin-bottom:3px">STRIKE ZONE</div>' +
+      '<div style="font-size:11px;color:var(--muted)">' + (sz ? sz.reason : 'Insufficient data') + '</div>' +
+      '</div>';
+  }
+
+  // Hit gauges
+  var t1Prob  = mc ? mc.t1Probability : null;
+  var t2Prob  = mc ? mc.t2Probability : null;
+  var atr1P   = atr && atr.t1 ? atr.t1.probability : null;
+  var varPct  = mc ? mc.varPct : null;
+  var varPrc  = mc ? mc.valueAtRisk : null;
+
+  // Combined probability (average of MC and ATR methods)
+  var combinedT1 = (t1Prob !== null && atr1P !== null) ? Math.round((t1Prob + atr1P) / 2) : (t1Prob || atr1P || 0);
+  var combinedT2 = t2Prob !== null ? t2Prob : 0;
+  var varDisplay = Math.max(0, Math.min(99, Math.abs(varPct || 0)));
+
+  html += '<div class="gauges-row">' +
+    buildGauge('T1 HIT', combinedT1, t1 ? '$' + t1 : 'n/a', '#22c55e') +
+    buildGauge('T2 HIT', combinedT2, t2 ? '$' + t2 : 'n/a', '#60a5fa') +
+    buildGauge('VALUE AT RISK', varDisplay, varPrc ? '$' + varPrc : 'n/a', '#ef4444', true) +
+    '</div>';
+
+  // Regime info row
+  if (lr || (atr && atr.t1)) {
+    html += '<div class="card" style="padding:10px 12px;margin-bottom:10px">' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+    if (lr) html += '<div><div style="font-size:8px;color:var(--muted)">REGRESSION</div>' +
+      '<span class="regime-pill" style="background:rgba(34,211,238,.15);color:#22d3ee;border:1px solid rgba(34,211,238,.3)">' + lr.regime + '</span></div>';
+    if (atr && atr.t1) html += '<div><div style="font-size:8px;color:var(--muted)">ATR STATUS (T1)</div>' +
+      '<span class="regime-pill" style="background:rgba(167,139,250,.15);color:#a78bfa;border:1px solid rgba(167,139,250,.3)">' + atr.t1.regime + '</span></div>';
+    if (mc) html += '<div><div style="font-size:8px;color:var(--muted)">ANNUALIZED VOL</div>' +
+      '<span class="regime-pill" style="background:rgba(240,180,41,.15);color:#f0b429;border:1px solid rgba(240,180,41,.3)">' + mc.annualizedVol + '%</span></div>';
+    html += '</div></div>';
+  }
+
+  // Chart 1: Monte Carlo
+  html += '<div class="engine-section">' +
+    '<div class="engine-header">' +
+    '<div><div class="lbl" style="margin:0">Engine 1 — Monte Carlo Path Cloud</div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:2px">' + (mc ? mc.simCount.toLocaleString() : '0') + ' simulations · Gold = likely path · Band = 5th–95th percentile</div></div>' +
+    '<span class="engine-badge badge-mc">MONTE CARLO</span></div>' +
+    '<div class="chart-wrap"><canvas id="chartMC"></canvas></div>' +
+    (mc ? '<div class="stat-row"><span class="stat-lbl">Drift (μ per min)</span><span class="stat-val" style="color:' + (mc.mu>=0?'var(--green)':'var(--red)') + '">' + (mc.mu>=0?'+':'') + mc.mu + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Volatility (σ per min)</span><span class="stat-val">' + mc.sigma + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Median projected price (60m)</span><span class="stat-val">$' + mc.p50[steps] + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">5th pct (worst case)</span><span class="stat-val red">$' + mc.p5[steps] + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">95th pct (best case)</span><span class="stat-val green">$' + mc.p95[steps] + '</span></div>' : '') +
+    '</div>';
+
+  // Chart 2: Linear Regression
+  html += '<div class="engine-section">' +
+    '<div class="engine-header">' +
+    '<div><div class="lbl" style="margin:0">Engine 2 — Linear Regression Channel</div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:2px">50-bar regression · Cyan = trend · Bands = 1σ / 2σ</div></div>' +
+    '<span class="engine-badge badge-lr">REGRESSION</span></div>' +
+    '<div class="chart-wrap"><canvas id="chartLR"></canvas></div>' +
+    (lr ? '<div class="stat-row"><span class="stat-lbl">Trend direction</span><span class="stat-val">' + lr.trendDir + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Channel std dev (σ)</span><span class="stat-val">$' + lr.stdDev + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Price deviation from trend</span><span class="stat-val">' + lr.deviation + 'σ</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Projected price (60m)</span><span class="stat-val">$' + lr.projectedEnd + '</span></div>' : '<div style="font-size:11px;color:var(--muted)">Insufficient candle data for regression</div>') +
+    '</div>';
+
+  // Chart 3: ATR Probability Zones + Histogram
+  html += '<div class="engine-section">' +
+    '<div class="engine-header">' +
+    '<div><div class="lbl" style="margin:0">Engine 3 — ATR Probability Zones</div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:2px">Price distribution at ' + data.horizon + 'min · Purple = 1σ · Outer = 2σ</div></div>' +
+    '<span class="engine-badge badge-atr">ATR ZONES</span></div>' +
+    '<div class="chart-wrap"><canvas id="chartATR"></canvas></div>';
+
+  // Histogram
+  if (mc && mc.histogram) {
+    var maxCount = Math.max.apply(null, mc.histogram.map(function(b){return b.count;}));
+    html += '<div style="margin-top:8px"><div style="font-size:9px;color:var(--muted);margin-bottom:4px">Monte Carlo end-price distribution (' + data.horizon + 'min)</div>' +
+      '<div class="hist-wrap">' +
+      mc.histogram.map(function(b) {
+        var h = Math.round((b.count / maxCount) * 36);
+        var isCurrent = b.low <= price && b.high > price;
+        var isT1 = t1 > 0 && b.low <= t1 && b.high > t1;
+        var color = isT1 ? 'rgba(34,197,94,.7)' : isCurrent ? 'rgba(240,180,41,.7)' : 'rgba(167,139,250,.35)';
+        return '<div class="hist-bar" style="height:' + Math.max(2,h) + 'px;background:' + color + ';flex:1" title="$' + b.midpoint + ': ' + b.count + ' paths"></div>';
+      }).join('') + '</div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--muted);margin-top:2px"><span>$' + mc.p5[steps] + '</span><span style="color:#f0b429">NOW $' + price + '</span><span>$' + mc.p95[steps] + '</span></div>' +
+      '</div>';
+  }
+
+  if (atr && atr.t1) {
+    html += '<div class="stat-row" style="margin-top:8px"><span class="stat-lbl">T1 expected move (reflection)</span><span class="stat-val green">' + atr.t1.probability + '% probability</span></div>' +
+      '<div class="stat-row"><span class="stat-lbl">Z-score to T1</span><span class="stat-val">' + atr.t1.zScore + 'σ</span></div>' +
+      '<div class="stat-row"><span class="stat-lbl">ATR expected 1hr range</span><span class="stat-val">±$' + atr.t1.expectedMove + '</span></div>';
+  }
+  html += '</div>';
+
+  // Summary conviction card
+  var overallProb = Math.round((combinedT1 + (atr && atr.t1 ? atr.t1.probability : combinedT1)) / 2);
+  var convColor = overallProb >= 70 ? '#22c55e' : overallProb >= 50 ? '#f0b429' : '#ef4444';
+  var convText  = overallProb >= 70 ? 'HIGH PROBABILITY — Execute with conviction' : overallProb >= 50 ? 'MODERATE — Manage position carefully' : 'LOW — Reduce size or skip';
+
+  html += '<div class="card" style="border-color:rgba(167,139,250,.25);background:linear-gradient(135deg,rgba(167,139,250,.04),transparent)">' +
+    '<div class="lbl" style="margin-bottom:8px;color:var(--purple)">Ensemble Verdict</div>' +
+    '<div style="font-size:20px;font-weight:900;color:' + convColor + '">' + overallProb + '% T1 Hit Probability</div>' +
+    '<div style="font-size:11px;color:' + convColor + ';margin-top:4px">' + convText + '</div>' +
+    (sz && sz.exists ? '<div style="font-size:10px;color:var(--muted);margin-top:6px">Strike Zone: $' + sz.low + ' - $' + sz.high + ' · All 3 models agree at $' + sz.center + '</div>' : '') +
+    '<div style="font-size:9px;color:var(--muted);margin-top:6px;line-height:1.5">Based on ' + (mc ? mc.simCount.toLocaleString() : '0') + ' Monte Carlo simulations + Linear Regression + ATR Reflection Principle · ' + data.timestamp.split('T')[1].slice(0,8) + ' UTC</div>' +
+    '</div>';
+
+  out.innerHTML = html;
+
+  // Render charts after DOM is ready
+  setTimeout(function() {
+    if (mc)  renderMCChart(mc, labels, price, t1, t2, steps);
+    if (lr)  renderLRChart(lr, labels, price, t1, t2, steps);
+    if (atr && atr.t1) renderATRChart(atr, data.atr, price, t1, t2, horizon);
+  }, 50);
+}
+
+function buildGauge(label, pct, sub, color, isRisk) {
+  pct = Math.max(0, Math.min(99, pct || 0));
+  var r = 30, circ = 2 * Math.PI * r;
+  var dash = (pct / 100) * circ;
+  var displayPct = isRisk ? (pct + '%') : (pct + '%');
+  return '<div class="gauge-card">' +
+    '<div class="gauge-lbl">' + label + '</div>' +
+    '<div class="gauge-ring">' +
+    '<svg width="72" height="72" viewBox="0 0 72 72"><circle cx="36" cy="36" r="' + r + '" fill="none" stroke="var(--bg3)" stroke-width="5" transform="rotate(-90 36 36)"/>' +
+    '<circle cx="36" cy="36" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="5" stroke-dasharray="' + dash.toFixed(1) + ' ' + circ.toFixed(1) + '" stroke-linecap="round" transform="rotate(-90 36 36)" style="transition:stroke-dasharray 1s ease"/></svg>' +
+    '<div class="gauge-pct" style="color:' + color + '">' + pct + '<span style="font-size:9px">%</span></div>' +
+    '</div>' +
+    '<div class="gauge-sub">' + sub + '</div>' +
+    '</div>';
+}
+
+// ── CHART 1: MONTE CARLO ────────────────────────────────────────
+
+function renderMCChart(mc, labels, price, t1, t2, steps) {
+  var ctx = document.getElementById('chartMC');
+  if (!ctx || !mc) return;
+
+  // Build horizontal target line arrays
+  var t1Line = new Array(steps+1).fill(t1);
+  var t2Line = new Array(steps+1).fill(t2);
+  var priceLine = new Array(steps+1).fill(price);
+
+  probCharts.mc = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        // P95 upper bound (invisible line, used as fill target)
+        { data: mc.p95, fill: '+1', backgroundColor: 'rgba(240,180,41,0.12)', borderColor: 'rgba(240,180,41,0.3)', borderWidth: 1, pointRadius: 0, tension: 0.4, label: '95th pct' },
+        // P5 lower bound
+        { data: mc.p5,  fill: false, borderColor: 'rgba(240,180,41,0.3)', borderWidth: 1, pointRadius: 0, tension: 0.4, label: '5th pct' },
+        // Median path (main gold line)
+        { data: mc.p50, fill: false, borderColor: '#f0b429', borderWidth: 2.5, pointRadius: 0, tension: 0.4, label: 'Median path', borderDash: [6,3] },
+        // P25-P75 inner band
+        { data: mc.p75, fill: '+1', backgroundColor: 'rgba(240,180,41,0.08)', borderColor: 'transparent', borderWidth: 0, pointRadius: 0, tension: 0.4, label: '75th pct' },
+        { data: mc.p25, fill: false, borderColor: 'transparent', borderWidth: 0, pointRadius: 0, tension: 0.4, label: '25th pct' },
+        // Current price
+        { data: priceLine, fill: false, borderColor: 'rgba(255,255,255,0.25)', borderWidth: 1, pointRadius: 0, borderDash: [2,4], label: 'Entry price' },
+        // T1 line
+        { data: t1Line, fill: false, borderColor: 'rgba(34,197,94,0.6)', borderWidth: 1.5, pointRadius: 0, borderDash: [5,3], label: 'T1 $' + t1 },
+        // T2 line
+        { data: t2Line, fill: false, borderColor: 'rgba(96,165,250,0.6)', borderWidth: 1.5, pointRadius: 0, borderDash: [5,3], label: 'T2 $' + t2 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 800 },
+      interaction: { intersect: false, mode: 'index' },
+      plugins: { legend: { display: false }, tooltip: {
+        backgroundColor: 'rgba(15,25,35,.95)', borderColor: 'rgba(167,139,250,.3)', borderWidth: 1,
+        titleColor: '#a78bfa', bodyColor: '#d4e0ed', padding: 8,
+        filter: function(item) { return item.datasetIndex === 2; }, // Only show median in tooltip
+        callbacks: { label: function(ctx) { return 'Median: $' + (ctx.raw || 0).toFixed(3); } }
+      }},
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#3a5570', font: { size: 9 }, maxTicksLimit: 8 } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#3a5570', font: { size: 9 }, callback: function(v) { return '$' + v.toFixed(2); } } }
+      }
+    }
+  });
+}
+
+// ── CHART 2: LINEAR REGRESSION ──────────────────────────────────
+
+function renderLRChart(lr, labels, price, t1, t2, steps) {
+  var ctx = document.getElementById('chartLR');
+  if (!ctx || !lr) return;
+
+  // Historical data points
+  var histLen  = lr.historical.length;
+  var projLen  = lr.proj.length;
+  var allLen   = histLen + projLen;
+  var allLabels = [];
+  for (var i = 0; i < allLen; i++) {
+    if (i < histLen) allLabels.push(i === histLen-1 ? 'Now' : '');
+    else allLabels.push('+' + ((i - histLen + 1) * Math.max(1, Math.round(steps/projLen))) + 'm');
+  }
+
+  // Price path (historical = actual closes proxy, proj = null)
+  var priceData = lr.historical.concat(new Array(projLen).fill(null));
+  var regData   = lr.historical.concat(lr.proj);
+  var s1UpData  = new Array(histLen).fill(null).concat(lr.s1Up);
+  var s1DnData  = new Array(histLen).fill(null).concat(lr.s1Dn);
+  var s2UpData  = new Array(histLen).fill(null).concat(lr.s2Up);
+  var s2DnData  = new Array(histLen).fill(null).concat(lr.s2Dn);
+  var t1Data    = new Array(allLen).fill(t1);
+  var priceRef  = new Array(allLen).fill(price);
+
+  probCharts.lr = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: allLabels,
+      datasets: [
+        // 2σ upper band fill
+        { data: s2UpData, fill: '+1', backgroundColor: 'rgba(167,139,250,0.06)', borderColor: 'rgba(167,139,250,0.2)', borderWidth: 1, pointRadius: 0, tension: 0.3, borderDash: [3,4], label: '+2σ', spanGaps: false },
+        // 2σ lower band
+        { data: s2DnData, fill: false, borderColor: 'rgba(167,139,250,0.2)', borderWidth: 1, pointRadius: 0, tension: 0.3, borderDash: [3,4], label: '-2σ', spanGaps: false },
+        // 1σ upper band fill
+        { data: s1UpData, fill: '+1', backgroundColor: 'rgba(34,211,238,0.08)', borderColor: 'rgba(34,211,238,0.35)', borderWidth: 1, pointRadius: 0, tension: 0.3, borderDash: [5,3], label: '+1σ', spanGaps: false },
+        // 1σ lower band
+        { data: s1DnData, fill: false, borderColor: 'rgba(34,211,238,0.35)', borderWidth: 1, pointRadius: 0, tension: 0.3, borderDash: [5,3], label: '-1σ', spanGaps: false },
+        // Regression line (projected)
+        { data: regData, fill: false, borderColor: '#22d3ee', borderWidth: 2, pointRadius: 0, tension: 0.3, label: 'Regression', spanGaps: false },
+        // Historical price path
+        { data: priceData, fill: false, borderColor: 'rgba(255,255,255,0.5)', borderWidth: 1.5, pointRadius: 0, tension: 0.3, label: 'Price', spanGaps: false },
+        // T1 line
+        { data: t1Data, fill: false, borderColor: 'rgba(34,197,94,0.5)', borderWidth: 1, pointRadius: 0, borderDash: [5,3], label: 'T1' },
+        // Current price ref
+        { data: priceRef, fill: false, borderColor: 'rgba(255,255,255,0.15)', borderWidth: 1, pointRadius: 0, borderDash: [2,4], label: 'Entry' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 800 },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#3a5570', font: { size: 9 }, maxTicksLimit: 8 } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#3a5570', font: { size: 9 }, callback: function(v) { return '$' + v.toFixed(2); } } }
+      }
+    }
+  });
+}
+
+// ── CHART 3: ATR PROBABILITY ZONES ─────────────────────────────
+
+function renderATRChart(atr, atrValue, price, t1, t2, horizon) {
+  var ctx = document.getElementById('chartATR');
+  if (!ctx) return;
+
+  var zones = atr.t1 && atr.t1.zones ? atr.t1.zones : [];
+  var labels = zones.map(function(z){ return '+' + z.minute + 'm'; });
+
+  var priceRef  = zones.map(function(){ return price; });
+  var t1Line    = zones.map(function(){ return t1; });
+  var t2Line    = zones.map(function(){ return t2; });
+  var u1 = zones.map(function(z){ return z.upper1; });
+  var d1 = zones.map(function(z){ return z.lower1; });
+  var u2 = zones.map(function(z){ return z.upper2; });
+  var d2 = zones.map(function(z){ return z.lower2; });
+
+  probCharts.atr = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        // 2σ outer band
+        { data: u2, fill: '+1', backgroundColor: 'rgba(167,139,250,0.06)', borderColor: 'rgba(167,139,250,0.2)', borderWidth: 1, pointRadius: 0, tension: 0.4, borderDash: [3,4], label: '+2σ' },
+        { data: d2, fill: false, borderColor: 'rgba(167,139,250,0.2)', borderWidth: 1, pointRadius: 0, tension: 0.4, borderDash: [3,4], label: '-2σ' },
+        // 1σ inner band
+        { data: u1, fill: '+1', backgroundColor: 'rgba(167,139,250,0.12)', borderColor: 'rgba(167,139,250,0.5)', borderWidth: 1.5, pointRadius: 0, tension: 0.4, label: '+1σ ATR' },
+        { data: d1, fill: false, borderColor: 'rgba(167,139,250,0.5)', borderWidth: 1.5, pointRadius: 0, tension: 0.4, label: '-1σ ATR' },
+        // Current price anchor
+        { data: priceRef, fill: false, borderColor: 'rgba(255,255,255,0.3)', borderWidth: 2, pointRadius: 0, label: 'Entry $' + price },
+        // T1 line
+        { data: t1Line, fill: false, borderColor: 'rgba(34,197,94,0.7)', borderWidth: 1.5, pointRadius: 0, borderDash: [5,3], label: 'T1 $' + t1 },
+        // T2 line
+        { data: t2Line, fill: false, borderColor: 'rgba(96,165,250,0.7)', borderWidth: 1.5, pointRadius: 0, borderDash: [5,3], label: 'T2 $' + t2 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 800 },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#3a5570', font: { size: 9 }, maxTicksLimit: 8 } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#3a5570', font: { size: 9 }, callback: function(v) { return '$' + v.toFixed(2); } } }
+      }
+    }
+  });
 }
 </script>
 </body>
