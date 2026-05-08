@@ -1038,7 +1038,7 @@ app.post('/api/whale-scan', async function(req, res) {
         });
         await new Promise(function(r){setTimeout(r,200);});
       } catch(e) {}
-    }
+    
     var top = scored.sort(function(a,b){return b.footprintScore-a.footprintScore;}).slice(0,5);
     if (top.length && TG_CHAT_ID && bot && req.body.alertTelegram) {
       var tgMsg = 'WHALE SCAN COMPLETE\nScanned: ' + syms.length + ' | Phase 2/3: ' + scored.length + '\n\n' +
