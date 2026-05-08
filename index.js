@@ -2259,7 +2259,6 @@ function setupTelegramHandlers() {
 // START
 // =========================================================
 connectFinnhub();
-scheduleCatalystScans();
 startContinuousScanner();
 startCatalystFeed();
 
