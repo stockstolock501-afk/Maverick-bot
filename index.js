@@ -2036,6 +2036,345 @@ app.post('/api/catalyst-scan', function(req, res) {
 // ================================================================
 // END CATALYST v2 BACKEND
 // ================================================================
+// ================================================================
+// MAVERICK SHORT SQUEEZE + PREMIUM PULSE ENGINE v3.7
+// Paste this entire block into index.js BEFORE app.get('*'...)
+// Add startSqueezeScanner() to server start block
+// ================================================================
+
+// ── Short data from Yahoo Finance quoteSummary (free) ─────────────
+async function getShortData(symbol) {
+  try {
+    var r = await fetch(
+      'https://query2.finance.yahoo.com/v10/finance/quoteSummary/' + symbol +
+      '?modules=defaultKeyStatistics&_=' + Date.now(),
+      { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.yahoo.com/', 'Cache-Control': 'no-cache' } }
+    );
+    var d = await r.json();
+    var ks = d && d.quoteSummary && d.quoteSummary.result && d.quoteSummary.result[0] && d.quoteSummary.result[0].defaultKeyStatistics;
+    if (!ks) return { siPercent: 0, dtc: 0, sharesShort: 0, available: false };
+    var siPercent = ks.shortPercentOfFloat && ks.shortPercentOfFloat.raw ? +(ks.shortPercentOfFloat.raw * 100).toFixed(2) : 0;
+    var dtc       = ks.shortRatio && ks.shortRatio.raw ? +ks.shortRatio.raw.toFixed(2) : 0;
+    var shares    = ks.sharesShort && ks.sharesShort.raw ? ks.sharesShort.raw : 0;
+    var yearHigh  = ks.fiftyTwoWeekHigh && ks.fiftyTwoWeekHigh.raw ? ks.fiftyTwoWeekHigh.raw : 0;
+    var yearLow   = ks.fiftyTwoWeekLow  && ks.fiftyTwoWeekLow.raw  ? ks.fiftyTwoWeekLow.raw  : 0;
+    return { siPercent: siPercent, dtc: dtc, sharesShort: shares, yearHigh: yearHigh, yearLow: yearLow, available: true };
+  } catch(e) { return { siPercent: 0, dtc: 0, sharesShort: 0, available: false }; }
+}
+
+// ── Squeeze Phase Detection Engine ────────────────────────────────
+// Phase 1: COILED SPRING  — SI high, DTC high, price near HOD, volume building
+// Phase 2: VERTICAL ASCENT — price already breaking, float rotating, RVOL extreme
+// Phase 3: MOMENTUM CLIMAX — RSI overbought, volume climax, regression extended
+// Phase 0.5: BUILDING PRESSURE — early signs, watch list
+
+function detectSqueezePhase(quote, shortData, candles) {
+  var si          = shortData.siPercent || 0;
+  var dtc         = shortData.dtc || 0;
+  var price       = quote.price || 0;
+  var hod         = quote.high || price;
+  var yearHigh    = shortData.yearHigh || quote.yearHigh || price * 1.5;
+  var yearLow     = shortData.yearLow  || quote.yearLow  || price * 0.5;
+  var changePct   = quote.changePct || 0;
+  var floatShares = quote.floatShares || 10e6;
+  var volume      = quote.volume || 0;
+  var rsi         = candles ? candles.rsi : 50;
+  var rvol        = candles ? candles.relVolume : 1;
+  var atr         = candles ? candles.atr : price * 0.03;
+
+  var floatRotation = floatShares > 0 ? volume / floatShares : 0;
+  var nearHOD       = hod > 0 ? (price / hod) >= 0.97 : false;
+
+  // CTB proxy: SI% x normalized RVOL x 10 — correlates with actual borrow rates
+  var ctbProxy  = si * Math.min(rvol / 5, 2) * 10;
+
+  // Pain gauge: where did shorts enter? They pile on near highs.
+  // Avg short entry ~ 90% of 52-week high (they short into strength)
+  var avgShortEntry = yearHigh > 0 ? yearHigh * 0.90 : price * 1.15;
+  var painPct = avgShortEntry > 0 ? +((price - avgShortEntry) / avgShortEntry * 100).toFixed(1) : 0;
+  // Positive painPct = shorts are losing money = pain is building
+
+  // Stop loss cluster: just above HOD (shorts' stops cluster above resistance)
+  var stopCluster = +(hod * 1.02).toFixed(3);
+
+  // ── PHASE 2: VERTICAL ASCENT — catch the ongoing squeeze first ──
+  if (changePct >= 20 && floatRotation >= 0.5 && rvol >= 5) {
+    var c2 = Math.min(99, 75 + Math.min(20, (rvol - 5) * 2) + Math.min(5, floatRotation * 5));
+    return {
+      phase: 2, label: 'VERTICAL ASCENT', conviction: Math.round(c2),
+      si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
+      painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
+      detail: 'Squeeze is executing. Float rotating ' + floatRotation.toFixed(2) + 'x. RVOL ' + rvol.toFixed(1) + 'x. Exit discipline required.'
+    };
+  }
+
+  // ── PHASE 3: MOMENTUM CLIMAX ─────────────────────────────────────
+  if (rsi >= 78 && changePct >= 30) {
+    return {
+      phase: 3, label: 'MOMENTUM CLIMAX', conviction: 45,
+      si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
+      painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
+      detail: 'RSI ' + rsi + ' — extended. New sellers entering. Distribution beginning. Reduce or exit.'
+    };
+  }
+
+  // ── PHASE 1: COILED SPRING ────────────────────────────────────────
+  if (si >= 15 && dtc >= 3 && nearHOD && rvol >= 2) {
+    var c1 = Math.min(95, 50 + (si - 15) * 1.5 + Math.min(15, dtc * 2) + (rvol >= 4 ? 10 : 5));
+    return {
+      phase: 1, label: 'COILED SPRING', conviction: Math.round(c1),
+      si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
+      painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
+      detail: 'Shorts trapped. ' + si + '% float short. ' + dtc + ' days to cover. Price coiling near HOD $' + hod.toFixed(2) + '. Stop cluster at $' + stopCluster + '.'
+    };
+  }
+
+  // ── BUILDING PRESSURE (watch list) ───────────────────────────────
+  if (si >= 10 && dtc >= 2 && rvol >= 1.5) {
+    return {
+      phase: 0.5, label: 'BUILDING PRESSURE', conviction: 30,
+      si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
+      painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
+      detail: 'Early signals. SI ' + si + '%. Watch for price to approach HOD $' + hod.toFixed(2) + ' with volume acceleration.'
+    };
+  }
+
+  return {
+    phase: 0, label: 'NO SQUEEZE DETECTED', conviction: 0,
+    si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
+    painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
+    detail: 'Short interest insufficient or price not under pressure.'
+  };
+}
+
+// ── Squeeze store ─────────────────────────────────────────────────
+var squeezeStore     = [];
+var squeezeScanCount = 0;
+var squeezeAlerted   = new Set(); // prevent repeat TG spam
+
+async function runSqueezeScan() {
+  squeezeScanCount++;
+  var candidates = new Set();
+
+  // Pull from day gainers and most actives
+  var screeners = ['day_gainers', 'most_actives'];
+  for (var s = 0; s < screeners.length; s++) {
+    try {
+      var r = await fetch(
+        'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=' + screeners[s] + '&_=' + Date.now(),
+        { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
+      );
+      var d = await r.json();
+      var quotes = (d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [];
+      quotes.filter(function(q) {
+        return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15;
+      }).forEach(function(q) { candidates.add(q.symbol); });
+    } catch(e) {}
+  }
+
+  var results = [];
+  var syms = Array.from(candidates).slice(0, 15);
+
+  for (var i = 0; i < syms.length; i++) {
+    var sym = syms[i];
+    try {
+      var fetchResults = await Promise.all([
+        getQuote(sym),
+        getCandles(sym, '3mo', '1d'),
+        getShortData(sym)
+      ]);
+      var quote     = fetchResults[0];
+      var candles   = fetchResults[1];
+      var shortData = fetchResults[2];
+      if (!quote || quote.price < 0.5 || quote.price > 15) continue;
+
+      var phase  = detectSqueezePhase(quote, shortData, candles);
+      var mmr    = calculateMMR(quote, candles, []);
+
+      var result = {
+        symbol:        sym,
+        price:         quote.price,
+        changePct:     quote.changePct,
+        high:          quote.high,
+        floatShares:   quote.floatShares,
+        marketCap:     quote.marketCap,
+        shortName:     quote.shortName,
+        phase:         phase,
+        mmr:           mmr,
+        scannedAt:     new Date().toISOString()
+      };
+      results.push(result);
+
+      // Telegram alert for Phase 1 or 2 squeeze
+      var alertKey = sym + ':phase:' + phase.phase + ':' + new Date().toDateString();
+      if ((phase.phase === 1 || phase.phase === 2) && !squeezeAlerted.has(alertKey) && TG_CHAT_ID && bot) {
+        squeezeAlerted.add(alertKey);
+        var phaseLabel = phase.phase === 1 ? 'PHASE 1 - COILED SPRING' : 'PHASE 2 - VERTICAL ASCENT';
+        var msg =
+          phaseLabel + '\n' +
+          '*' + sym + '* @ $' + quote.price.toFixed(2) + '\n\n' +
+          'Conviction: ' + phase.conviction + '/100\n' +
+          'Short Interest: ' + phase.si + '% of float\n' +
+          'Days to Cover: ' + phase.dtc + '\n' +
+          'RVOL: ' + phase.rvol + 'x\n' +
+          'MMR Score: ' + mmr.total + '/100\n' +
+          'Stop Cluster: $' + phase.stopCluster + '\n' +
+          'Short Pain: ' + (phase.painPct > 0 ? '+' : '') + phase.painPct + '%\n\n' +
+          phase.detail + '\n\n' +
+          'Reply: dive ' + sym;
+        tgSend(TG_CHAT_ID, msg);
+      }
+      await new Promise(function(r) { setTimeout(r, 400); });
+    } catch(e) {}
+  }
+
+  // Sort: Phase 2 first, then Phase 1, then by conviction
+  results.sort(function(a, b) {
+    var pa = a.phase.phase || 0, pb = b.phase.phase || 0;
+    if (pa === 2 && pb !== 2) return -1;
+    if (pb === 2 && pa !== 2) return 1;
+    if (pa === 1 && pb !== 1) return -1;
+    if (pb === 1 && pa !== 1) return 1;
+    return (b.phase.conviction || 0) - (a.phase.conviction || 0);
+  });
+
+  squeezeStore = results;
+  console.log('[Squeeze v3.7] Scan #' + squeezeScanCount + ' done. ' + results.length + ' tickers. P1:' +
+    results.filter(function(r){return r.phase.phase===1;}).length + ' P2:' +
+    results.filter(function(r){return r.phase.phase===2;}).length);
+}
+
+function startSqueezeScanner() {
+  console.log('[Squeeze v3.7] Scanner armed (4am-4pm ET, every 5min)');
+  var run = async function() {
+    var et    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    var total = et.getHours() * 60 + et.getMinutes();
+    var isWeekday = et.getDay() > 0 && et.getDay() < 6;
+    if (isWeekday && total >= 4*60 && total < 16*60) {
+      await runSqueezeScan().catch(function(e) { console.error('[Squeeze] ' + e.message); });
+    }
+    setTimeout(run, 5 * 60 * 1000);
+  };
+  setTimeout(run, 15000);
+}
+
+// ── API: Individual squeeze check ─────────────────────────────────
+app.post('/api/squeeze-check', async function(req, res) {
+  var ticker = req.body.ticker;
+  if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  var sym = ticker.toUpperCase().trim();
+  try {
+    var fetchResults = await Promise.all([
+      getQuote(sym),
+      getCandles(sym, '3mo', '1d'),
+      getCandles(sym, '5d', '60m'),
+      getShortData(sym)
+    ]);
+    var quote     = fetchResults[0];
+    var tf1d      = fetchResults[1];
+    var tf1h      = fetchResults[2];
+    var shortData = fetchResults[3];
+    if (!quote) return res.status(404).json({ error: sym + ' not found' });
+    var phase  = detectSqueezePhase(quote, shortData, tf1d);
+    var mmr    = calculateMMR(quote, tf1d, []);
+    var dilute = await checkDilutionRisk(sym);
+    var lux    = tf1d ? luxAlgoSignal(tf1d) : null;
+    res.json({
+      symbol: sym, price: quote.price, changePct: quote.changePct,
+      high: quote.high, low: quote.low,
+      floatShares: quote.floatShares, marketCap: quote.marketCap,
+      shortName: quote.shortName, shortData: shortData,
+      phase: phase, mmr: mmr, dilution: dilute, lux: lux,
+      timestamp: new Date().toISOString()
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── API: Latest squeeze scan results ─────────────────────────────
+app.get('/api/squeeze-scan', function(req, res) {
+  res.json({
+    results: squeezeStore,
+    scanCount: squeezeScanCount,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ── API: Premium Pulse hub ────────────────────────────────────────
+app.get('/api/premium-pulse', async function(req, res) {
+  try {
+    var allQuotes = [];
+    var seen = new Set();
+    var screeners = ['day_gainers', 'most_actives'];
+    for (var s = 0; s < screeners.length; s++) {
+      try {
+        var r = await fetch(
+          'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=' + screeners[s] + '&_=' + Date.now(),
+          { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
+        );
+        var d = await r.json();
+        var quotes = (d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [];
+        quotes.filter(function(q) {
+          return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15 && !seen.has(q.symbol);
+        }).forEach(function(q) {
+          seen.add(q.symbol);
+          allQuotes.push(q);
+        });
+      } catch(e) {}
+    }
+
+    // Score each with MMR
+    var tiles = [];
+    var radarItems = [];
+
+    for (var i = 0; i < Math.min(allQuotes.length, 20); i++) {
+      var q = allQuotes[i];
+      try {
+        var tf = await getCandles(q.symbol, '3mo', '1d');
+        var rv = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
+        var quoteObj = {
+          price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
+          floatShares: q.floatShares, volume: q.regularMarketVolume,
+          avgVolume: q.averageDailyVolume3Month, high: q.regularMarketDayHigh,
+          low: q.regularMarketDayLow, marketCap: q.marketCap,
+          shortName: q.shortName
+        };
+        var mmr = calculateMMR(quoteObj, tf, []);
+
+        // Squeeze phase from store if available, else quick proxy
+        var sqPhase = squeezeStore.find(function(s) { return s.symbol === q.symbol; });
+        var phaseNum = sqPhase ? sqPhase.phase.phase : 0;
+
+        tiles.push({
+          symbol: q.symbol, name: q.shortName, price: q.regularMarketPrice,
+          changePct: q.regularMarketChangePercent, rvol: +rv.toFixed(2),
+          floatShares: q.floatShares, mmr: mmr,
+          phase: phaseNum, conviction: sqPhase ? sqPhase.phase.conviction : 0
+        });
+
+        // Radar: RVOL > 5x in premium range
+        if (rv >= 5) {
+          radarItems.push({
+            symbol: q.symbol, price: q.regularMarketPrice,
+            changePct: q.regularMarketChangePercent, rvol: +rv.toFixed(1),
+            phase: phaseNum
+          });
+        }
+        await new Promise(function(r) { setTimeout(r, 120); });
+      } catch(e) {}
+    }
+
+    // Sort by MMR descending
+    tiles.sort(function(a, b) { return (b.mmr.total || 0) - (a.mmr.total || 0); });
+    // Radar: most extreme RVOL first
+    radarItems.sort(function(a, b) { return b.rvol - a.rvol; });
+
+    res.json({ tiles: tiles, radar: radarItems, timestamp: new Date().toISOString() });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ================================================================
+// END SQUEEZE + PULSE BACKEND v3.7
+// ================================================================
 
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
@@ -2261,6 +2600,7 @@ function setupTelegramHandlers() {
 connectFinnhub();
 startContinuousScanner();
 startCatalystFeed();
+startSqueezeScanner();
 
 app.listen(PORT, '0.0.0.0', async function() {
   console.log('\nMAVERICK TERMINAL v3.5 - Port ' + PORT);
