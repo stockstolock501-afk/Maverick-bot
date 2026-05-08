@@ -1506,6 +1506,536 @@ app.post('/api/probability', async function(req, res) {
 // ================================================================
 // END PROBABILITY ENSEMBLE BACKEND
 // ================================================================
+// ================================================================
+// MAVERICK CATALYST INTELLIGENCE ENGINE v2.0
+// Paste this entire block into index.js BEFORE app.get('*'...)
+// Tiered Catalyst System: T1(Red) T2(Orange) T3(Blue)
+// Sources: SEC 8-K, SEC Form 4, Finnhub, GlobeNewswire, Yahoo
+// Math-first conviction scoring. Groq only on user demand.
+// ================================================================
+
+// ── Tier keyword libraries ────────────────────────────────────────
+
+var TIER1_PHRASES = [
+  'fda approv', 'fda clear', 'approved by the fda', 'breakthrough therapy',
+  'fast track designation', 'priority review', 'complete response letter',
+  'merger agreement', 'acquisition agreement', 'definitive agreement',
+  'will be acquired', 'acquires ', 'agrees to acquire', 'takeover bid',
+  'going private', 'management buyout', 'all-cash offer', 'buyout offer',
+  'earnings beat', 'raised guidance', 'raised full-year', 'raised full year',
+  'record revenue', 'revenue guidance raised', 'blowout quarter',
+  'share repurchase program', 'special dividend', 'reverse split eliminated',
+  'nasdaq compliance', 'nyse compliance', 'listing compliance regained',
+  'phase 3 positive', 'phase iii positive', 'pivotal trial met',
+  'acquired by', 'to be acquired', 'merger with', 'to merge with'
+];
+
+var TIER2_PHRASES = [
+  'contract award', 'contract win', 'awarded contract', 'government contract',
+  'department of defense', 'dod contract', 'army contract', 'navy contract',
+  'nasa contract', 'energy contract', 'power purchase agreement',
+  'analyst upgrade', 'price target raised', 'initiated with buy',
+  'initiated with overweight', 'initiated coverage', 'reiterated buy',
+  'patent grant', 'patent approved', 'receives patent', 'issued patent',
+  'first patient enrolled', 'phase 2 results', 'positive data',
+  'strategic partnership', 'collaboration agreement', 'licensing agreement',
+  'exclusive agreement', 'distribution agreement', 'supply agreement',
+  'new product launch', 'commercial launch', 'product approval',
+  'key opinion leader', 'fda submission', 'nda submission', 'bla submission',
+  'revenue milestone', 'commercial milestone'
+];
+
+var HOT_SECTORS = ['biotech', 'pharma', 'pharmaceutical', 'cannabis', 'marijuana',
+  'artificial intelligence', 'ai company', 'electric vehicle', 'ev ',
+  'semiconductor', 'space ', 'defense tech', 'cybersecurity'];
+
+// ── Utilities ─────────────────────────────────────────────────────
+
+function extractTickerFromText(headline, summary) {
+  var text = headline + ' ' + (summary || '');
+  // Pattern 1: (TICKER) — most common in press releases
+  var m1 = headline.match(/\(([A-Z]{1,5})\)/);
+  if (m1 && m1[1].length >= 2) return m1[1];
+  // Pattern 2: NYSE:TICKER or NASDAQ:TICKER
+  var m2 = text.match(/(?:NYSE|NASDAQ|AMEX|OTC)[:\s]+([A-Z]{1,5})/i);
+  if (m2) return m2[1].toUpperCase();
+  // Pattern 3: "Ticker Symbol: XXXX"
+  var m3 = text.match(/[Tt]icker[:\s]+([A-Z]{1,5})/);
+  if (m3) return m3[1].toUpperCase();
+  // Pattern 4: Symbol: XXXX
+  var m4 = text.match(/[Ss]ymbol[:\s]+([A-Z]{1,5})/);
+  if (m4) return m4[1].toUpperCase();
+  return null;
+}
+
+function classifyHeadline(headline, summary) {
+  var text = (headline + ' ' + (summary || '')).toLowerCase();
+  for (var i = 0; i < TIER1_PHRASES.length; i++) {
+    if (text.indexOf(TIER1_PHRASES[i]) !== -1) {
+      return { tier: 1, trigger: TIER1_PHRASES[i] };
+    }
+  }
+  for (var i = 0; i < TIER2_PHRASES.length; i++) {
+    if (text.indexOf(TIER2_PHRASES[i]) !== -1) {
+      return { tier: 2, trigger: TIER2_PHRASES[i] };
+    }
+  }
+  return null;
+}
+
+function parseRSSFeed(xmlText) {
+  var items = [];
+  var seen  = new Set();
+  // RSS <item> format
+  var itemRx = /<item>([\s\S]*?)<\/item>/g;
+  var m;
+  while ((m = itemRx.exec(xmlText)) !== null) {
+    var block = m[1];
+    var titleM  = /<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/.exec(block);
+    var linkM   = /<link>([\s\S]*?)<\/link>/.exec(block);
+    var dateM   = /<pubDate>([\s\S]*?)<\/pubDate>/.exec(block);
+    var descM   = /<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/.exec(block);
+    var title   = titleM  ? titleM[1].replace(/<[^>]+>/g,'').trim()  : '';
+    var url     = linkM   ? linkM[1].trim()   : '';
+    var dateStr = dateM   ? dateM[1].trim()   : '';
+    var desc    = descM   ? descM[1].replace(/<[^>]+>/g,'').slice(0,300).trim() : '';
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    var dt = dateStr ? new Date(dateStr).getTime() : Date.now();
+    if (isNaN(dt)) dt = Date.now();
+    items.push({ headline: title, summary: desc, url: url,
+      datetime: Math.floor(dt/1000), ageH: +((Date.now()-dt)/3600000).toFixed(1) });
+  }
+  // Atom <entry> format (SEC uses this)
+  var entryRx = /<entry>([\s\S]*?)<\/entry>/g;
+  while ((m = entryRx.exec(xmlText)) !== null) {
+    var block = m[1];
+    var titleM  = /<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/.exec(block);
+    var linkM   = /<link[^>]*href="([^"]+)"/.exec(block);
+    var dateM   = /<updated>([\s\S]*?)<\/updated>/.exec(block);
+    var summM   = /<summary[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/summary>/.exec(block);
+    var title   = titleM ? titleM[1].replace(/<[^>]+>/g,'').trim() : '';
+    var url     = linkM  ? linkM[1].trim() : '';
+    var dateStr = dateM  ? dateM[1].trim() : '';
+    var summ    = summM  ? summM[1].replace(/<[^>]+>/g,'').slice(0,300).trim() : '';
+    if (!title || seen.has(title)) continue;
+    seen.add(title);
+    var dt = dateStr ? new Date(dateStr).getTime() : Date.now();
+    if (isNaN(dt)) dt = Date.now();
+    items.push({ headline: title, summary: summ, url: url,
+      datetime: Math.floor(dt/1000), ageH: +((Date.now()-dt)/3600000).toFixed(1) });
+  }
+  return items;
+}
+
+// ── Conviction Score: pure math, no Groq ──────────────────────────
+// CS = (0.35 * tierScore) + (0.25 * freshnessScore) + (0.20 * floatScore) + (0.20 * momentumScore)
+
+async function calcConvictionScore(item) {
+  var cs = { total: 0, pillars: [], quote: null, tf: null };
+  // Tier score
+  if (item.tier === 1)      { cs.total += 0.35; cs.pillars.push('T1 catalyst'); }
+  else if (item.tier === 2) { cs.total += 0.18; cs.pillars.push('T2 catalyst'); }
+  else                      { cs.total += 0.08; }
+  // Freshness
+  if      (item.ageH < 1) { cs.total += 0.25; cs.pillars.push('Hot (<1h)'); }
+  else if (item.ageH < 4) { cs.total += 0.15; cs.pillars.push('Fresh (<4h)'); }
+  else if (item.ageH < 8) { cs.total += 0.07; }
+  if (!item.ticker) { cs.total = Math.min(1, cs.total); return cs; }
+  try {
+    var q = await getQuote(item.ticker);
+    if (!q) { cs.total = Math.min(1, cs.total); return cs; }
+    cs.quote = { price: q.price, changePct: q.changePct, floatShares: q.floatShares,
+      marketCap: q.marketCap, sector: q.sector, shortName: q.shortName };
+    // Price filter $1-$20
+    if (q.price >= 1 && q.price <= 20) { cs.total += 0.10; cs.pillars.push('Price $' + q.price.toFixed(2)); }
+    else { cs.total -= 0.10; } // penalize out-of-range price
+    // Float filter <100M
+    if (q.floatShares && q.floatShares < 100e6) {
+      cs.total += 0.10;
+      cs.pillars.push('Float ' + (q.floatShares/1e6).toFixed(1) + 'M');
+      if (q.floatShares < 10e6) { cs.total += 0.05; } // micro float bonus
+    }
+    // RVOL from daily candles
+    var tf = await getCandles(item.ticker, '3mo', '1d');
+    if (tf) {
+      cs.tf = { rvol: tf.relVolume, rsi: tf.rsi, trend: tf.trend, atr: tf.atr };
+      if      (tf.relVolume >= 5)   { cs.total += 0.15; cs.pillars.push('RVOL ' + tf.relVolume.toFixed(1) + 'x'); }
+      else if (tf.relVolume >= 2.5) { cs.total += 0.08; cs.pillars.push('RVOL ' + tf.relVolume.toFixed(1) + 'x'); }
+      else if (tf.relVolume >= 1.5) { cs.total += 0.03; }
+      if (tf.trend === 'UP' && tf.rsi > 45 && tf.rsi < 75) { cs.total += 0.05; cs.pillars.push('Tech bullish'); }
+    }
+  } catch(e) { console.error('CS calc: ' + e.message); }
+  cs.total = Math.min(1.0, Math.max(0, cs.total));
+  return cs;
+}
+
+// Tier 3: Pressure Score (volume anomaly, no news = whale footprint)
+function calcPressureScore(volume, floatShares, priceChange, atr) {
+  if (!floatShares || floatShares <= 0 || !atr || atr <= 0) return 0;
+  var floatRotation = volume / floatShares;
+  var velocityRatio = Math.abs(priceChange || 0) / (atr * 100);
+  return +(floatRotation * velocityRatio).toFixed(3);
+}
+
+// ── Catalyst Store ────────────────────────────────────────────────
+
+var catalystStore      = [];   // in-memory feed, last 150 items
+var catalystSeenIds    = new Set();
+var catalystScanActive = false;
+var catalystScanCount  = 0;
+var lastCatalystHB     = 0;
+var tier1TodayCount    = 0;
+var tier2TodayCount    = 0;
+var tier3TodayCount    = 0;
+
+function addToCatalystStore(item) {
+  var id = (item.ticker || '') + ':' + item.headline.slice(0, 40);
+  if (catalystSeenIds.has(id)) return false;
+  catalystSeenIds.add(id);
+  item.id = id;
+  item.addedAt = Date.now();
+  catalystStore.unshift(item); // newest first
+  if (catalystStore.length > 150) catalystStore = catalystStore.slice(0, 150);
+  return true;
+}
+
+// ── Multi-source scan ─────────────────────────────────────────────
+
+async function runCatalystFeedScan() {
+  if (catalystScanActive) return;
+  catalystScanActive = true;
+  catalystScanCount++;
+  var newHighConviction = [];
+
+  try {
+    // ── SOURCE 1: SEC 8-K filings (real-time, best edge) ──────────
+    var secItems = await getSEC8K();
+    for (var i = 0; i < secItems.length; i++) {
+      var n = secItems[i];
+      if (n.ageH > 12) continue;
+      var cls = classifyHeadline(n.headline, n.summary || '');
+      if (!cls) continue;
+      var ticker = extractTickerFromText(n.headline, n.summary || '');
+      var item = { source: 'SEC-8K', tier: cls.tier, trigger: cls.trigger,
+        headline: n.headline, summary: n.summary, url: n.url,
+        datetime: n.datetime, ageH: n.ageH, ticker: ticker };
+      var isNew = addToCatalystStore(item);
+      if (isNew && item.tier <= 2) newHighConviction.push(item);
+    }
+
+    // ── SOURCE 2: Finnhub general news ────────────────────────────
+    if (FINNHUB_KEY) {
+      try {
+        var r1 = await fetch('https://finnhub.io/api/v1/news?category=general&token=' + FINNHUB_KEY + '&_=' + Date.now());
+        var d1 = await r1.json();
+        if (Array.isArray(d1)) {
+          var fresh1 = d1.filter(function(n) { return (Date.now()/1000 - n.datetime) < 8*3600; });
+          for (var i = 0; i < fresh1.length; i++) {
+            var n = fresh1[i];
+            var cls = classifyHeadline(n.headline || '', n.summary || '');
+            if (!cls) continue;
+            var ticker = extractTickerFromText(n.headline || '', n.summary || '') || n.related || null;
+            var item = { source: 'Finnhub', tier: cls.tier, trigger: cls.trigger,
+              headline: n.headline, summary: (n.summary || '').slice(0,200), url: n.url,
+              datetime: n.datetime, ageH: +((Date.now()/1000 - n.datetime)/3600).toFixed(1),
+              ticker: ticker };
+            var isNew = addToCatalystStore(item);
+            if (isNew && item.tier <= 2) newHighConviction.push(item);
+          }
+        }
+      } catch(e) {}
+      // Finnhub merger news
+      try {
+        var r2 = await fetch('https://finnhub.io/api/v1/news?category=merger&token=' + FINNHUB_KEY + '&_=' + Date.now());
+        var d2 = await r2.json();
+        if (Array.isArray(d2)) {
+          var fresh2 = d2.filter(function(n) { return (Date.now()/1000 - n.datetime) < 8*3600; });
+          for (var i = 0; i < fresh2.length; i++) {
+            var n = fresh2[i];
+            var cls = classifyHeadline(n.headline || '', '');
+            if (!cls) cls = { tier: 1, trigger: 'merger category' }; // merger feed = auto T1
+            var ticker = extractTickerFromText(n.headline || '', '') || n.related || null;
+            var item = { source: 'Finnhub-M&A', tier: cls.tier, trigger: cls.trigger,
+              headline: n.headline, summary: '', url: n.url,
+              datetime: n.datetime, ageH: +((Date.now()/1000 - n.datetime)/3600).toFixed(1),
+              ticker: ticker };
+            var isNew = addToCatalystStore(item);
+            if (isNew) newHighConviction.push(item);
+          }
+        }
+      } catch(e) {}
+    }
+
+    // ── SOURCE 3: GlobeNewswire M&A RSS ───────────────────────────
+    try {
+      var rGNW = await fetch(
+        'https://www.globenewswire.com/RssFeed/subjectcode/17-Mergers%20Acquisitions%20Transactions',
+        { headers: { 'User-Agent': 'MaverickBot/1.0', 'Accept': 'application/rss+xml,application/xml' } }
+      );
+      if (rGNW.ok) {
+        var xmlGNW = await rGNW.text();
+        var gnwItems = parseRSSFeed(xmlGNW);
+        for (var i = 0; i < gnwItems.length; i++) {
+          var n = gnwItems[i];
+          if (n.ageH > 12) continue;
+          var cls = classifyHeadline(n.headline, n.summary);
+          if (!cls) cls = { tier: 2, trigger: 'corporate announcement' };
+          var ticker = extractTickerFromText(n.headline, n.summary);
+          var item = { source: 'GlobeNewswire', tier: cls.tier, trigger: cls.trigger,
+            headline: n.headline, summary: n.summary, url: n.url,
+            datetime: n.datetime, ageH: n.ageH, ticker: ticker };
+          var isNew = addToCatalystStore(item);
+          if (isNew && item.tier <= 2) newHighConviction.push(item);
+        }
+      }
+    } catch(e) {}
+
+    // ── SOURCE 4: BusinessWire RSS ────────────────────────────────
+    try {
+      var rBW = await fetch(
+        'https://www.businesswire.com/rss/home/?rss=G1',
+        { headers: { 'User-Agent': 'MaverickBot/1.0', 'Accept': 'application/rss+xml,application/xml' } }
+      );
+      if (rBW.ok) {
+        var xmlBW = await rBW.text();
+        var bwItems = parseRSSFeed(xmlBW);
+        for (var i = 0; i < Math.min(bwItems.length, 20); i++) {
+          var n = bwItems[i];
+          if (n.ageH > 8) continue;
+          var cls = classifyHeadline(n.headline, n.summary);
+          if (!cls) continue; // BusinessWire has a lot of noise — only take classified items
+          var ticker = extractTickerFromText(n.headline, n.summary);
+          var item = { source: 'BusinessWire', tier: cls.tier, trigger: cls.trigger,
+            headline: n.headline, summary: n.summary.slice(0,200), url: n.url,
+            datetime: n.datetime, ageH: n.ageH, ticker: ticker };
+          var isNew = addToCatalystStore(item);
+          if (isNew && item.tier <= 2) newHighConviction.push(item);
+        }
+      }
+    } catch(e) {}
+
+    // ── SOURCE 5: PR Newswire RSS ─────────────────────────────────
+    try {
+      var rPR = await fetch(
+        'https://www.prnewswire.com/rss/news-releases-list.rss',
+        { headers: { 'User-Agent': 'MaverickBot/1.0', 'Accept': 'application/rss+xml,application/xml' } }
+      );
+      if (rPR.ok) {
+        var xmlPR = await rPR.text();
+        var prItems = parseRSSFeed(xmlPR);
+        for (var i = 0; i < Math.min(prItems.length, 20); i++) {
+          var n = prItems[i];
+          if (n.ageH > 8) continue;
+          var cls = classifyHeadline(n.headline, n.summary);
+          if (!cls) continue;
+          var ticker = extractTickerFromText(n.headline, n.summary);
+          var item = { source: 'PRNewswire', tier: cls.tier, trigger: cls.trigger,
+            headline: n.headline, summary: n.summary.slice(0,200), url: n.url,
+            datetime: n.datetime, ageH: n.ageH, ticker: ticker };
+          var isNew = addToCatalystStore(item);
+          if (isNew && item.tier <= 2) newHighConviction.push(item);
+        }
+      }
+    } catch(e) {}
+
+    // ── SOURCE 6: SEC Form 4 (insider buying) → auto Tier 3 ───────
+    try {
+      var rF4 = await fetch(
+        'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=20&search_text=&output=atom&_=' + Date.now(),
+        { headers: { 'User-Agent': 'MaverickBot/1.0 bot@maverick.com' } }
+      );
+      if (rF4.ok) {
+        var xmlF4 = await rF4.text();
+        var f4Items = parseRSSFeed(xmlF4);
+        for (var i = 0; i < f4Items.length; i++) {
+          var n = f4Items[i];
+          if (n.ageH > 4) continue;
+          // Form 4 = insider filing = Tier 3 whale footprint
+          var ticker = extractTickerFromText(n.headline, '');
+          var item = { source: 'SEC-Form4', tier: 3, trigger: 'insider filing',
+            headline: n.headline, summary: 'Insider transaction filing', url: n.url,
+            datetime: n.datetime, ageH: n.ageH, ticker: ticker };
+          addToCatalystStore(item);
+        }
+      }
+    } catch(e) {}
+
+    // ── TIER 3 VOLUME SCAN: Pressure Score sweep ──────────────────
+    try {
+      var r3 = await fetch(
+        'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=most_actives&_=' + Date.now(),
+        { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
+      );
+      var d3 = await r3.json();
+      var quotes3 = (d3 && d3.finance && d3.finance.result && d3.finance.result[0] && d3.finance.result[0].quotes) || [];
+      for (var i = 0; i < quotes3.length; i++) {
+        var q = quotes3[i];
+        if (!q.regularMarketPrice || q.regularMarketPrice < 1 || q.regularMarketPrice > 20) continue;
+        var rv = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
+        if (rv < 3) continue;
+        // Check for recent news — if NO news, this is a silent whale move
+        var hasNews = catalystStore.some(function(c) {
+          return c.ticker === q.symbol && c.ageH < 4 && c.tier <= 2;
+        });
+        if (hasNews) continue; // already covered by T1/T2
+        var pScore = calcPressureScore(
+          q.regularMarketVolume, q.floatShares,
+          q.regularMarketChangePercent, q.regularMarketPrice * 0.03
+        );
+        if (pScore < 0.5) continue;
+        var id3 = 'T3:' + q.symbol + ':' + new Date().toDateString();
+        if (catalystSeenIds.has(id3)) continue;
+        var item3 = {
+          source: 'Pressure Scan', tier: 3, trigger: 'pressure score ' + pScore,
+          headline: q.symbol + ' — Volume surge with no public news. Pressure Score: ' + pScore + '. Possible whale accumulation.',
+          summary: 'RVOL: ' + rv.toFixed(1) + 'x | Change: +' + (q.regularMarketChangePercent||0).toFixed(1) + '% | Float: ' + (q.floatShares ? (q.floatShares/1e6).toFixed(1) + 'M' : 'n/a'),
+          url: 'https://finance.yahoo.com/quote/' + q.symbol,
+          datetime: Math.floor(Date.now()/1000), ageH: 0,
+          ticker: q.symbol, pressureScore: pScore,
+          quote: { price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
+            floatShares: q.floatShares, marketCap: q.marketCap }
+        };
+        catalystSeenIds.add(id3);
+        catalystStore.unshift(item3);
+        if (catalystStore.length > 150) catalystStore = catalystStore.slice(0, 150);
+      }
+    } catch(e) {}
+
+    // ── Calculate conviction scores for new T1/T2 items ──────────
+    for (var i = 0; i < Math.min(newHighConviction.length, 5); i++) {
+      var item = newHighConviction[i];
+      try {
+        var cs = await calcConvictionScore(item);
+        item.csScore = cs.total;
+        item.csPillars = cs.pillars;
+        if (cs.quote) item.quote = cs.quote;
+        if (cs.tf)    item.tf    = cs.tf;
+        // Fire Telegram for high conviction
+        if (cs.total >= 0.65 && TG_CHAT_ID && bot) {
+          var tierLabel = item.tier === 1 ? 'T1 HARD CATALYST' : 'T2 MOMENTUM';
+          var msg = tierLabel + ' - CS: ' + (cs.total * 100).toFixed(0) + '/100\n\n' +
+            (item.ticker ? '*' + item.ticker + '* - ' : '') + item.headline + '\n\n' +
+            (item.quote ? 'Price: $' + item.quote.price.toFixed(2) +
+              ' | Float: ' + (item.quote.floatShares ? (item.quote.floatShares/1e6).toFixed(1) + 'M' : 'n/a') + '\n' : '') +
+            (item.tf ? 'RVOL: ' + item.tf.rvol.toFixed(1) + 'x | RSI: ' + item.tf.rsi + '\n' : '') +
+            'Trigger: ' + item.trigger + '\n' +
+            'Pillars: ' + (item.csPillars || []).join(' | ') + '\n' +
+            'Source: ' + item.source + '\n\n' +
+            (item.ticker ? 'Reply: dive ' + item.ticker : 'No ticker identified');
+          tgSend(TG_CHAT_ID, msg);
+        }
+        await new Promise(function(r){ setTimeout(r, 300); });
+      } catch(e) {}
+    }
+
+    // Update tier counts
+    tier1TodayCount = catalystStore.filter(function(c){ return c.tier===1; }).length;
+    tier2TodayCount = catalystStore.filter(function(c){ return c.tier===2; }).length;
+    tier3TodayCount = catalystStore.filter(function(c){ return c.tier===3; }).length;
+
+    console.log('[Catalyst v2] Scan #' + catalystScanCount + ' complete. T1:' + tier1TodayCount + ' T2:' + tier2TodayCount + ' T3:' + tier3TodayCount + ' | Total: ' + catalystStore.length);
+
+  } catch(e) {
+    console.error('[Catalyst v2] Scan error: ' + e.message);
+  }
+  catalystScanActive = false;
+}
+
+// ── Heartbeat: 8am ET daily ───────────────────────────────────────
+
+function checkCatalystHeartbeat() {
+  if (!TG_CHAT_ID || !bot) return;
+  var et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  var h = et.getHours(); var m = et.getMinutes();
+  if (h === 8 && m < 2) {
+    if (Date.now() - lastCatalystHB > 6 * 3600 * 1000) {
+      lastCatalystHB = Date.now();
+      var msg = 'MAVERICK ONLINE - ' + et.toDateString() + '\n\n' +
+        'Catalyst Feed: ' + catalystStore.length + ' items\n' +
+        'T1 (Hard): ' + tier1TodayCount + '\n' +
+        'T2 (Momentum): ' + tier2TodayCount + '\n' +
+        'T3 (Whale): ' + tier3TodayCount + '\n' +
+        'Scan cycles: ' + catalystScanCount + '\n\n' +
+        'All systems nominal. Scanner active.';
+      tgSend(TG_CHAT_ID, msg);
+    }
+  }
+}
+
+// ── Tier 4 debug: fire a test for any $1-20 with 1.5x volume ─────
+// Only runs for first 48h after server start, then disables itself
+var serverStartTime = Date.now();
+async function runTier4Debug() {
+  if (Date.now() - serverStartTime > 48 * 3600 * 1000) return; // disable after 48h
+  if (!TG_CHAT_ID || !bot) return;
+  try {
+    var r = await fetch(
+      'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=5&scrIds=day_gainers&_=' + Date.now(),
+      { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
+    );
+    var d = await r.json();
+    var q1 = (d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes && d.finance.result[0].quotes[0]);
+    if (q1 && q1.regularMarketPrice >= 1 && q1.regularMarketPrice <= 20) {
+      var rv = q1.regularMarketVolume / (q1.averageDailyVolume3Month || 1);
+      if (rv >= 1.5) {
+        tgSend(TG_CHAT_ID,
+          'T4 DEBUG TEST - Telegram pipe confirmed working\n\n' +
+          'Test ticker: ' + q1.symbol + ' @ $' + q1.regularMarketPrice.toFixed(2) +
+          ' | RVOL: ' + rv.toFixed(1) + 'x\n\n' +
+          'If you see this but no T1/T2 alerts, filtering is too strict.\n' +
+          'T4 debug disables after 48h.');
+      }
+    }
+  } catch(e) {}
+}
+
+// ── Start catalyst feed ───────────────────────────────────────────
+
+function startCatalystFeed() {
+  console.log('[Catalyst v2] Starting intelligence feed...');
+  // Initial scan after 5 seconds
+  setTimeout(runCatalystFeedScan, 5000);
+  // Tier 4 debug after 30 seconds
+  setTimeout(runTier4Debug, 30000);
+  // Continuous scan every 90 seconds
+  setInterval(runCatalystFeedScan, 90 * 1000);
+  // Heartbeat check every minute
+  setInterval(checkCatalystHeartbeat, 60 * 1000);
+}
+
+// ── API: get catalyst feed ────────────────────────────────────────
+
+app.get('/api/catalyst-feed', function(req, res) {
+  var tier   = parseInt(req.query.tier) || 0;
+  var limit  = parseInt(req.query.limit) || 50;
+  var since  = parseInt(req.query.since) || 0; // timestamp filter
+  var items  = catalystStore;
+  if (tier > 0) items = items.filter(function(c){ return c.tier === tier; });
+  if (since > 0) items = items.filter(function(c){ return (c.addedAt || 0) > since; });
+  res.json({
+    items: items.slice(0, limit),
+    total: catalystStore.length,
+    tier1: tier1TodayCount, tier2: tier2TodayCount, tier3: tier3TodayCount,
+    scanCount: catalystScanCount, active: !catalystScanActive,
+    lastScan: catalystScanCount > 0 ? new Date().toISOString() : null,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ── API: manual catalyst scan trigger ────────────────────────────
+app.post('/api/catalyst-scan', function(req, res) {
+  runCatalystFeedScan();
+  res.json({ ok: true, message: 'Catalyst scan triggered. Feed updates in ~10 seconds.' });
+});
+
+// ── Override old catalyst scan scheduler ─────────────────────────
+// (replaces scheduleCatalystScans from v3.5 if present)
+// startCatalystFeed() is called at server start below
+
+// ================================================================
+// END CATALYST v2 BACKEND
+// ================================================================
 
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
@@ -1731,6 +2261,7 @@ function setupTelegramHandlers() {
 connectFinnhub();
 scheduleCatalystScans();
 startContinuousScanner();
+startCatalystFeed();
 
 app.listen(PORT, '0.0.0.0', async function() {
   console.log('\nMAVERICK TERMINAL v3.5 - Port ' + PORT);
