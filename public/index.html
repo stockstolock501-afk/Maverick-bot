@@ -1549,5 +1549,377 @@ function renderATRChart(atr, atrValue, price, t1, t2, horizon) {
   });
 }
 </script>
+  <!-- ================================================================ -->
+<!-- MAVERICK CATALYST INTELLIGENCE FEED v2                          -->
+<!-- Add tab button: <button class="tab" data-tab="catalyst">       -->
+<!--                 CATALYST</button>                               -->
+<!-- Paste this ENTIRE block BEFORE </body>                          -->
+<!-- ================================================================ -->
+
+<style>
+/* ── Catalyst window styles ── */
+.cat-window{background:#080f18;border:1px solid #1a2d42;border-radius:10px;overflow:hidden;margin-bottom:10px}
+.cat-window-header{background:linear-gradient(135deg,#0d1f33,#0a1828);padding:10px 14px;border-bottom:1px solid #1a2d42;display:flex;align-items:center;gap:10px}
+.cat-live-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 8px #22c55e;animation:livePulse 1.5s ease-in-out infinite;flex-shrink:0}
+@keyframes livePulse{0%,100%{opacity:.5;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}
+.cat-title{font-size:10px;font-weight:900;letter-spacing:2px;color:#d4e0ed}
+.cat-stats{display:flex;gap:6px;margin-left:auto;flex-shrink:0}
+.cat-stat{font-size:8px;padding:2px 7px;border-radius:4px;font-weight:800;letter-spacing:.5px}
+.cs-t1{background:rgba(239,68,68,.2);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+.cs-t2{background:rgba(251,146,60,.2);color:#fb923c;border:1px solid rgba(251,146,60,.3)}
+.cs-t3{background:rgba(96,165,250,.2);color:#60a5fa;border:1px solid rgba(96,165,250,.3)}
+.cs-total{background:rgba(255,255,255,.08);color:#6b87a0;border:1px solid rgba(255,255,255,.1)}
+
+/* Ticker tape */
+.cat-ticker{background:#050d15;border-bottom:1px solid #1a2d42;padding:6px 0;overflow:hidden;position:relative}
+.cat-ticker-inner{display:flex;gap:0;animation:tickerScroll 40s linear infinite;white-space:nowrap;width:max-content}
+.cat-ticker-inner:hover{animation-play-state:paused}
+.cat-tick-item{display:inline-flex;align-items:center;gap:8px;padding:0 20px;font-size:9px;font-family:monospace;font-weight:700;letter-spacing:.5px;border-right:1px solid #1a2d42}
+.cat-tick-t1{color:#ef4444}
+.cat-tick-t2{color:#fb923c}
+.cat-tick-t3{color:#60a5fa}
+@keyframes tickerScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+
+/* Main feed window */
+.cat-feed{height:62vh;overflow-y:auto;padding:8px;scroll-behavior:smooth}
+.cat-feed::-webkit-scrollbar{width:3px}
+.cat-feed::-webkit-scrollbar-thumb{background:#1a2d42;border-radius:2px}
+
+/* Catalyst cards */
+.cat-card{border-radius:8px;padding:10px 12px;margin-bottom:6px;border-left:3px solid;cursor:pointer;transition:background .2s;position:relative}
+.cat-card:active{opacity:.85}
+.cat-card-t1{background:linear-gradient(135deg,rgba(239,68,68,.07),rgba(239,68,68,.03));border-color:#ef4444}
+.cat-card-t2{background:linear-gradient(135deg,rgba(251,146,60,.07),rgba(251,146,60,.03));border-color:#fb923c}
+.cat-card-t3{background:linear-gradient(135deg,rgba(96,165,250,.06),rgba(96,165,250,.02));border-color:#60a5fa}
+.cat-card-new{animation:newFlash .8s ease-out}
+@keyframes newFlash{0%{background:rgba(240,180,41,.15)}100%{background:inherit}}
+
+.cat-card-top{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px}
+.cat-tier-badge{font-size:8px;padding:2px 6px;border-radius:3px;font-weight:900;letter-spacing:1px;flex-shrink:0;margin-top:1px}
+.ctb-t1{background:rgba(239,68,68,.25);color:#ef4444;border:1px solid rgba(239,68,68,.4)}
+.ctb-t2{background:rgba(251,146,60,.25);color:#fb923c;border:1px solid rgba(251,146,60,.4)}
+.ctb-t3{background:rgba(96,165,250,.25);color:#60a5fa;border:1px solid rgba(96,165,250,.4)}
+.cat-headline{font-size:11px;color:#d4e0ed;line-height:1.5;font-weight:600}
+.cat-ticker-sym{font-size:15px;font-weight:900;font-family:monospace;margin-right:6px}
+.cat-ticker-t1{color:#ef4444}.cat-ticker-t2{color:#fb923c}.cat-ticker-t3{color:#60a5fa}
+.cat-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;align-items:center}
+.cat-tag{font-size:8px;padding:2px 6px;border-radius:3px;font-weight:700}
+.cat-actions{display:flex;gap:5px;margin-top:7px}
+.cat-btn{font-size:9px;padding:4px 10px;border-radius:5px;cursor:pointer;font-family:monospace;font-weight:800;border:none;letter-spacing:.5px}
+.cb-analyze{background:rgba(240,180,41,.15);color:#f0b429;border:1px solid rgba(240,180,41,.3)!important;border:1px solid}
+.cb-watch{background:#229ED9;color:#fff}
+.cb-source{background:transparent;border:1px solid #1a2d42!important;border:1px solid;color:#3a5570}
+
+/* CS bar */
+.cs-bar-wrap{height:3px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden;margin-top:6px}
+.cs-bar-fill{height:100%;border-radius:2px;transition:width .5s ease}
+
+/* Filter bar */
+.cat-filter-bar{display:flex;gap:5px;padding:8px;background:#050d15;border-bottom:1px solid #1a2d42;flex-wrap:wrap}
+.cat-filter-btn{font-size:8px;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:monospace;font-weight:800;letter-spacing:.5px;border:1px solid #1a2d42;background:transparent;color:#3a5570}
+.cat-filter-btn.active{background:rgba(240,180,41,.12);border-color:rgba(240,180,41,.4);color:#f0b429}
+.cat-scan-time{margin-left:auto;font-size:8px;color:#1a3050;font-family:monospace}
+
+/* Empty state */
+.cat-empty{text-align:center;padding:50px 20px;color:#1a3050}
+.cat-empty-icon{font-size:32px;margin-bottom:10px;opacity:.4}
+
+/* Scoring legend */
+.cs-legend{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;padding:8px;background:#050d15;border-top:1px solid #1a2d42}
+.cs-leg-item{text-align:center;padding:5px}
+.cs-leg-dot{width:8px;height:8px;border-radius:50%;margin:0 auto 4px}
+</style>
+
+<div id="tab-catalyst" class="hidden">
+
+  <!-- Top controls -->
+  <div style="display:flex;gap:6px;margin-bottom:8px">
+    <button class="btn btn-gold" onclick="manualCatalystScan()" style="flex:1;padding:10px;font-size:9px;margin-bottom:0">SCAN NOW</button>
+    <button class="btn btn-dark" onclick="toggleAutoRefresh()" id="autoRefreshBtn" style="flex:1;padding:10px;font-size:9px;margin-bottom:0">AUTO: ON</button>
+  </div>
+
+  <!-- The intelligence window -->
+  <div class="cat-window">
+
+    <!-- Window header -->
+    <div class="cat-window-header">
+      <div class="cat-live-dot" id="catLiveDot"></div>
+      <div class="cat-title">CATALYST INTELLIGENCE FEED</div>
+      <div class="cat-stats">
+        <span class="cat-stat cs-t1" id="statT1">T1: 0</span>
+        <span class="cat-stat cs-t2" id="statT2">T2: 0</span>
+        <span class="cat-stat cs-t3" id="statT3">T3: 0</span>
+        <span class="cat-stat cs-total" id="statTotal">0 items</span>
+      </div>
+    </div>
+
+    <!-- Scrolling ticker tape -->
+    <div class="cat-ticker">
+      <div class="cat-ticker-inner" id="tickerTape">
+        <span class="cat-tick-item" style="color:#1a3050">SCANNING NEWS WIRES — SEC FILINGS — FINNHUB — GLOBENEWSWIRE — BUSINESSWIRE — PRNEWSWIRE</span>
+        <span class="cat-tick-item" style="color:#1a3050">SCANNING NEWS WIRES — SEC FILINGS — FINNHUB — GLOBENEWSWIRE — BUSINESSWIRE — PRNEWSWIRE</span>
+      </div>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="cat-filter-bar">
+      <button class="cat-filter-btn active" data-tier="0" onclick="filterCatalysts(0, this)">ALL</button>
+      <button class="cat-filter-btn" data-tier="1" onclick="filterCatalysts(1, this)" style="color:#ef4444;border-color:rgba(239,68,68,.25)">T1 HARD</button>
+      <button class="cat-filter-btn" data-tier="2" onclick="filterCatalysts(2, this)" style="color:#fb923c;border-color:rgba(251,146,60,.25)">T2 MOMENTUM</button>
+      <button class="cat-filter-btn" data-tier="3" onclick="filterCatalysts(3, this)" style="color:#60a5fa;border-color:rgba(96,165,250,.25)">T3 WHALE</button>
+      <span class="cat-scan-time" id="scanTimeLabel">Initializing...</span>
+    </div>
+
+    <!-- Main feed -->
+    <div class="cat-feed" id="catalystFeed">
+      <div class="cat-empty">
+        <div class="cat-empty-icon">📡</div>
+        <div style="font-size:12px;color:#1a3050;margin-bottom:4px">Intelligence feed initializing...</div>
+        <div style="font-size:10px;color:#0d1f2e">Connecting to SEC Edgar · Finnhub · GlobeNewswire · BusinessWire · PRNewswire</div>
+      </div>
+    </div>
+
+    <!-- Scoring legend -->
+    <div class="cs-legend">
+      <div class="cs-leg-item">
+        <div class="cs-leg-dot" style="background:#ef4444"></div>
+        <div style="font-size:8px;color:#ef4444;font-weight:700">TIER 1</div>
+        <div style="font-size:8px;color:#1a3050">Hard Catalyst</div>
+        <div style="font-size:8px;color:#3a5570">FDA · M&A · Earnings</div>
+      </div>
+      <div class="cs-leg-item">
+        <div class="cs-leg-dot" style="background:#fb923c"></div>
+        <div style="font-size:8px;color:#fb923c;font-weight:700">TIER 2</div>
+        <div style="font-size:8px;color:#1a3050">Momentum</div>
+        <div style="font-size:8px;color:#3a5570">Contract · Upgrade · Patent</div>
+      </div>
+      <div class="cs-leg-item">
+        <div class="cs-leg-dot" style="background:#60a5fa"></div>
+        <div style="font-size:8px;color:#60a5fa;font-weight:700">TIER 3</div>
+        <div style="font-size:8px;color:#1a3050">Whale Footprint</div>
+        <div style="font-size:8px;color:#3a5570">Volume · Insider · Pressure</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scoring explanation -->
+  <div class="card" style="border-color:rgba(240,180,41,.15);padding:10px 12px">
+    <div class="lbl" style="margin-bottom:7px">Conviction Score Logic</div>
+    <div style="font-size:10px;color:var(--muted);line-height:1.8">
+      CS = Tier weight (0.35 T1 / 0.18 T2) + Freshness (0.25 max) + Float score (0.15 max) + RVOL score (0.15 max) + Tech health (0.05)<br>
+      <strong style="color:var(--gold)">CS above 0.65</strong> = Telegram alert fires immediately<br>
+      <strong style="color:var(--muted)">CS below 0.65</strong> = Logged silently, visible in feed
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Catalyst feed state ──────────────────────────────────────────
+var catAutoRefresh  = true;
+var catRefreshTimer = null;
+var catCurrentTier  = 0;
+var catLastUpdate   = 0;
+var catKnownIds     = new Set();
+var catAllItems     = [];
+
+// ── Tab activation ───────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  var catTab = document.querySelector('[data-tab="catalyst"]');
+  if (catTab) {
+    catTab.addEventListener('click', function() {
+      loadCatalystFeed(false);
+      startCatAutoRefresh();
+    });
+  }
+});
+
+function startCatAutoRefresh() {
+  if (catRefreshTimer) clearInterval(catRefreshTimer);
+  catRefreshTimer = setInterval(function() {
+    if (catAutoRefresh) loadCatalystFeed(false);
+  }, 60000); // refresh every 60 seconds
+}
+
+function toggleAutoRefresh() {
+  catAutoRefresh = !catAutoRefresh;
+  var btn = document.getElementById('autoRefreshBtn');
+  if (btn) {
+    btn.textContent = 'AUTO: ' + (catAutoRefresh ? 'ON' : 'OFF');
+    btn.style.color = catAutoRefresh ? 'var(--green)' : 'var(--muted)';
+  }
+}
+
+async function manualCatalystScan() {
+  document.getElementById('scanTimeLabel').textContent = 'Scanning...';
+  try {
+    await fetch('/api/catalyst-scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    setTimeout(function() { loadCatalystFeed(false); }, 8000);
+  } catch(e) {}
+}
+
+// ── Main feed loader ─────────────────────────────────────────────
+async function loadCatalystFeed(showLoader) {
+  var feed = document.getElementById('catalystFeed');
+  if (!feed) return;
+  if (showLoader && catAllItems.length === 0) {
+    feed.innerHTML = '<div class="cat-empty"><div class="cat-empty-icon">📡</div>' +
+      '<div style="font-size:12px;color:#1a3050">Loading catalyst intelligence...</div></div>';
+  }
+  try {
+    var url = '/api/catalyst-feed?limit=80' + (catCurrentTier > 0 ? '&tier=' + catCurrentTier : '');
+    var r = await fetch(url);
+    var data = await r.json();
+    var items = data.items || [];
+    catAllItems = items;
+    // Update stats
+    updateCatStats(data);
+    // Update ticker tape
+    updateTickerTape(items);
+    // Render feed
+    renderCatalystFeed(items, feed);
+    // Update scan time
+    var tLabel = document.getElementById('scanTimeLabel');
+    if (tLabel) tLabel.textContent = 'Updated: ' + new Date().toLocaleTimeString() + ' · ' + data.scanCount + ' scans';
+    catLastUpdate = Date.now();
+  } catch(e) {
+    if (catAllItems.length === 0) {
+      var feed2 = document.getElementById('catalystFeed');
+      if (feed2) feed2.innerHTML = '<div class="cat-empty"><div style="color:var(--red);font-size:11px">Feed error: ' + e.message + '</div></div>';
+    }
+  }
+}
+
+function updateCatStats(data) {
+  var s1 = document.getElementById('statT1'); if (s1) s1.textContent = 'T1: ' + (data.tier1 || 0);
+  var s2 = document.getElementById('statT2'); if (s2) s2.textContent = 'T2: ' + (data.tier2 || 0);
+  var s3 = document.getElementById('statT3'); if (s3) s3.textContent = 'T3: ' + (data.tier3 || 0);
+  var st = document.getElementById('statTotal'); if (st) st.textContent = (data.total || 0) + ' items';
+  var dot = document.getElementById('catLiveDot');
+  if (dot) { dot.style.background = data.active ? '#22c55e' : '#f0b429'; dot.style.boxShadow = '0 0 8px ' + (data.active ? '#22c55e' : '#f0b429'); }
+}
+
+function updateTickerTape(items) {
+  var tape = document.getElementById('tickerTape');
+  if (!tape || !items.length) return;
+  var tickItems = items.filter(function(i){ return i.ticker && i.tier <= 2; }).slice(0, 20);
+  if (!tickItems.length) return;
+  var tickerHTML = '';
+  var doubled = tickItems.concat(tickItems); // double for seamless loop
+  doubled.forEach(function(item) {
+    var cls = item.tier === 1 ? 'cat-tick-t1' : item.tier === 2 ? 'cat-tick-t2' : 'cat-tick-t3';
+    var label = item.tier === 1 ? 'T1' : item.tier === 2 ? 'T2' : 'T3';
+    tickerHTML += '<span class="cat-tick-item ' + cls + '">' +
+      '[' + label + '] ' + (item.ticker || '') + ' — ' +
+      item.headline.slice(0, 60) + (item.headline.length > 60 ? '...' : '') +
+      (item.quote ? ' $' + item.quote.price.toFixed(2) : '') +
+      '</span>';
+  });
+  tape.innerHTML = tickerHTML;
+}
+
+function renderCatalystFeed(items, feed) {
+  if (!items.length) {
+    feed.innerHTML = '<div class="cat-empty">' +
+      '<div class="cat-empty-icon">🔍</div>' +
+      '<div style="font-size:12px;color:#1a3050;margin-bottom:6px">No catalysts found' + (catCurrentTier > 0 ? ' for Tier ' + catCurrentTier : '') + '</div>' +
+      '<div style="font-size:10px;color:#0d1f2e">Scanner runs every 90 seconds · Sources: SEC · Finnhub · GlobeNewswire · BusinessWire · PRNewswire</div>' +
+      '</div>';
+    return;
+  }
+  var newItemIds = new Set(items.map(function(i){ return i.id; }));
+  var feedTop = feed.scrollTop;
+  var html = '';
+  items.forEach(function(item) {
+    var isNew = !catKnownIds.has(item.id);
+    var tierClass = 'cat-card-t' + item.tier;
+    var badgeClass = 'ctb-t' + item.tier;
+    var tierLabel = item.tier === 1 ? 'T1 HARD' : item.tier === 2 ? 'T2 MOMENTUM' : 'T3 WHALE';
+    var tickerColor = 'cat-ticker-t' + item.tier;
+    var ageText = item.ageH < 0.1 ? 'JUST NOW' : item.ageH < 1 ? Math.round(item.ageH * 60) + 'm ago' : item.ageH.toFixed(1) + 'h ago';
+    var csColor = item.csScore >= 0.8 ? '#22c55e' : item.csScore >= 0.65 ? '#f0b429' : '#3a5570';
+    var csWidth = item.csScore ? Math.round(item.csScore * 100) : 0;
+
+    html += '<div class="cat-card ' + tierClass + (isNew ? ' cat-card-new' : '') + '" ' +
+      (item.ticker ? 'onclick="goAnalyze(\'' + item.ticker + '\')"' : '') + '>';
+
+    // Top row: tier badge + ticker + headline
+    html += '<div class="cat-card-top">' +
+      '<span class="cat-tier-badge ' + badgeClass + '">' + tierLabel + '</span>' +
+      '<div style="flex:1">';
+    if (item.ticker) html += '<span class="cat-ticker-sym ' + tickerColor + '">' + item.ticker + '</span>';
+    html += '<span class="cat-headline">' + item.headline + '</span>';
+    html += '</div></div>';
+
+    // Meta tags row
+    html += '<div class="cat-meta">';
+    // Age
+    html += '<span class="cat-tag" style="background:rgba(255,255,255,.06);color:#3a5570">' + ageText + '</span>';
+    // Source
+    html += '<span class="cat-tag" style="background:rgba(255,255,255,.06);color:#1a3050">' + item.source + '</span>';
+    // Trigger keyword
+    if (item.trigger) html += '<span class="cat-tag" style="background:rgba(240,180,41,.1);color:#8a6010">' + item.trigger.slice(0,25) + '</span>';
+    // Price + float if available
+    if (item.quote) {
+      if (item.quote.price) html += '<span class="cat-tag" style="background:rgba(255,255,255,.06);color:#6b87a0">$' + item.quote.price.toFixed(2) + '</span>';
+      if (item.quote.floatShares) html += '<span class="cat-tag" style="background:rgba(255,255,255,.06);color:#6b87a0">Float ' + (item.quote.floatShares/1e6).toFixed(1) + 'M</span>';
+    }
+    // RVOL if available
+    if (item.tf && item.tf.rvol) html += '<span class="cat-tag" style="background:rgba(240,180,41,.1);color:#8a7000">' + item.tf.rvol.toFixed(1) + 'x RVOL</span>';
+    // Pressure score for T3
+    if (item.pressureScore) html += '<span class="cat-tag" style="background:rgba(96,165,250,.15);color:#3060a0">P=' + item.pressureScore + '</span>';
+    // CS score
+    if (item.csScore) {
+      var csLabel = item.csScore >= 0.8 ? 'HIGH CONV' : item.csScore >= 0.65 ? 'MED CONV' : 'LOW CONV';
+      html += '<span class="cat-tag" style="background:' + csColor + '20;color:' + csColor + ';border:1px solid ' + csColor + '30">CS ' + Math.round(item.csScore*100) + ' - ' + csLabel + '</span>';
+    }
+    // Telegram alert indicator
+    if (item.csScore && item.csScore >= 0.65) html += '<span class="cat-tag" style="background:rgba(34,158,217,.2);color:#229ED9">TG ALERTED</span>';
+    html += '</div>';
+
+    // CS conviction bar
+    if (item.csScore) {
+      html += '<div class="cs-bar-wrap"><div class="cs-bar-fill" style="width:' + csWidth + '%;background:' + csColor + '"></div></div>';
+    }
+
+    // Action buttons (only if not inside onclick already)
+    html += '<div class="cat-actions" onclick="event.stopPropagation()">';
+    if (item.ticker) {
+      html += '<button class="cat-btn cb-analyze" onclick="goAnalyze(\'' + item.ticker + '\')">Analyze ' + item.ticker + '</button>';
+      if (typeof BOT_USERNAME !== 'undefined' && BOT_USERNAME) {
+        html += '<button class="cat-btn cb-watch" onclick="window.open(\'https://t.me/' + BOT_USERNAME + '\',\'_blank\')">Bot</button>';
+      }
+    }
+    if (item.url) html += '<button class="cat-btn cb-source" onclick="window.open(\'' + item.url + '\',\'_blank\')">Source</button>';
+    html += '</div>';
+
+    html += '</div>'; // end cat-card
+  });
+
+  // Preserve scroll if user is reading below the fold
+  var wasAtTop = feedTop < 50;
+  feed.innerHTML = html;
+  if (wasAtTop) feed.scrollTop = 0;
+
+  // Update known IDs
+  catKnownIds = newItemIds;
+}
+
+function filterCatalysts(tier, btn) {
+  catCurrentTier = tier;
+  document.querySelectorAll('.cat-filter-btn').forEach(function(b) { b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  loadCatalystFeed(false);
+}
+
+// Initial load when page first opens (not tab-specific)
+setTimeout(function() {
+  var catEl = document.getElementById('tab-catalyst');
+  if (catEl && !catEl.classList.contains('hidden')) {
+    loadCatalystFeed(true);
+    startCatAutoRefresh();
+  }
+}, 2000);
+</script>
 </body>
 </html>
