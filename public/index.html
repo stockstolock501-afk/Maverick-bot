@@ -1664,6 +1664,40 @@ function buildSqueezeCard(data, isDeep) {
     '<div class="stop-box">Stop-loss cluster at <strong>$'+data.stopCluster+'</strong>. ' +
     'Price clearing this level on volume triggers forced short covering. This is the ignition point.</div>' : '';
 
+  // Squeeze probability
+  var sqProb = data.squeezeProb || 0;
+  var sqProbColor = sqProb >= 70 ? '#22c55e' : sqProb >= 50 ? '#f0b429' : '#3a5570';
+  var sqProbNote = '<div style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.2);border-radius:6px;padding:9px;margin-top:8px">' +
+    '<div style="text-align:center;flex-shrink:0"><div style="font-size:22px;font-weight:900;font-family:monospace;color:'+sqProbColor+'">'+sqProb+'%</div>' +
+    '<div style="font-size:7px;color:var(--muted);letter-spacing:1px">T1 PROB</div></div>' +
+    '<div style="flex:1"><div style="font-size:9px;font-weight:700;color:'+sqProbColor+';margin-bottom:3px">' + (sqProb >= 70 ? 'HIGH PROBABILITY' : sqProb >= 50 ? 'MODERATE PROBABILITY' : 'LOW PROBABILITY') + '</div>' +
+    '<div style="height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden">' +
+    '<div style="height:100%;width:'+sqProb+'%;background:'+sqProbColor+';border-radius:3px;transition:width 1s ease"></div></div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:3px">T1: $'+(data.t1Target||'n/a')+' - ATR + Phase + MMR ensemble</div>' +
+    '</div></div>';
+
+  // Coiled spring display
+  var coilNote = '';
+  var c = data.coil;
+  if (c && c.isCoiled) {
+    coilNote = '<div style="background:linear-gradient(135deg,rgba(240,180,41,.12),rgba(240,180,41,.04));border:1px solid rgba(240,180,41,.4);border-radius:8px;padding:10px;margin-top:8px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<div style="font-size:10px;font-weight:900;color:#f0b429;letter-spacing:1px">COILED SPRING DETECTED</div>' +
+      '<div style="font-size:9px;color:#f0b429">Compression: '+c.compression+'%</div></div>' +
+      '<div class="spring-meter-wrap"><div class="spring-bar" style="width:'+c.compression+'%"></div>' +
+      '<div class="spring-text">ATR TIGHTNESS '+c.atrTightness+'% - RVOL '+c.rvol+'x</div></div>' +
+      '<div style="font-size:10px;color:#c0a050;margin-top:8px;line-height:1.7">' +
+      'Order Block: $'+c.orderBlockLow+' to $'+c.orderBlockHigh+'<br>' +
+      '<strong style="color:#fff">Trigger: Wait for 1-min close above $'+c.triggerPrice+' on RVOL spike above 2x</strong><br>' +
+      c.advice + '<br><span style="color:#ef4444">Exit if below $'+c.orderBlockLow+' — spring broken</span></div></div>';
+  } else if (c && !c.isCoiled && c.compression > 30) {
+    coilNote = '<div style="background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.2);border-radius:7px;padding:8px;margin-top:8px">' +
+      '<div style="font-size:9px;color:#60a5fa;font-weight:700;margin-bottom:3px">COIL BUILDING - Not yet triggered</div>' +
+      '<div class="spring-meter-wrap"><div class="spring-bar" style="width:'+c.compression+'%;background:linear-gradient(90deg,#60a5fa,#3b82f6)"></div>' +
+      '<div class="spring-text">COMPRESSION '+c.compression+'%</div></div>' +
+      '<div style="font-size:9px;color:var(--muted);margin-top:5px">Watch for RVOL below 0.6x and ATR to compress further.</div></div>';
+  }
+
   var luxNote = '';
   if (data.lux && data.lux.signalType==='BUY' && phase===1) {
     luxNote = '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:6px;padding:8px;margin-top:7px;font-size:10px;color:#22c55e">LuxAlgo BUY signal aligned with Phase 1 coil — maximum conviction setup. TP: $'+(data.lux.tpLevel||'n/a')+' SL: $'+(data.lux.slLevel||'n/a')+'</div>';
@@ -1703,6 +1737,8 @@ function buildSqueezeCard(data, isDeep) {
     (data.painPct > 0?'+':'')+data.painPct+'% — ' +
     (data.painPct > 20?'Maximum Pain — cascade risk HIGH':data.painPct > 10?'Significant Pain building':data.painPct > 0?'Moderate discomfort':'Shorts profitable — low risk')+
     '</div>' +
+
+    sqProbNote + coilNote +
 
     // Stat grid
     '<div class="sq-stats">' +
