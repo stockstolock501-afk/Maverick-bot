@@ -225,6 +225,25 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
 .mover-chg{font-size:11px;font-family:monospace;font-weight:900;width:52px;text-align:right}
 .mover-vol{font-size:9px;color:var(--muted);width:38px;text-align:right}
 
+/* ALT-DATA SHADOW PROXY */
+.alt-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+.alt-stat{background:#0a111a;border:1px solid var(--border);padding:9px;border-radius:7px;text-align:center}
+.alt-lbl{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.alt-val{font-size:11px;font-weight:900;line-height:1.2}
+.glow-green{color:var(--green);text-shadow:0 0 10px rgba(34,197,94,.3)}
+.glow-red{color:var(--red);text-shadow:0 0 10px rgba(239,68,68,.3)}
+.glow-blue{color:var(--blue);text-shadow:0 0 8px rgba(96,165,250,.3)}
+.alt-verdict{font-size:10px;font-style:italic;margin-top:9px;padding:7px 9px;border-radius:5px}
+.av-accumulation{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);color:#22c55e}
+.av-trap{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);color:#ef4444}
+.av-neutral{background:var(--bg);border:1px solid var(--border);color:var(--muted)}
+/* SOR PANEL */
+.sor-panel{background:var(--bg2);border:1px solid rgba(96,165,250,.25);border-radius:9px;padding:11px 13px;margin-bottom:8px}
+.sor-progress-wrap{background:#050a10;height:5px;border-radius:3px;margin-top:8px;overflow:hidden}
+.sor-bar{height:100%;background:var(--blue);width:0%;transition:width .5s;border-radius:3px}
+.sor-piece{display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--bg3);font-size:10px}
+.sor-piece:last-child{border-bottom:none}
+
 </style>
 </head>
 <body>
@@ -599,6 +618,66 @@ function drawBPICanvas(canvasId) {
   delete window._bpiData[canvasId]; // cleanup
 }
 
+
+// ── Alt-Data Shadow Proxy Card ────────────────────────────────────
+function buildAltDataCard(alt, sym) {
+  if (!alt) return '';
+  var verdictCls = alt.verdict.indexOf('ACCUMULATION') !== -1 ? 'av-accumulation' :
+                   alt.verdict.indexOf('TRAP') !== -1 ? 'av-trap' : 'av-neutral';
+  var cColor = alt.curiosity === 'SPIKING' ? 'glow-green' : alt.curiosity === 'ELEVATED' ? 'glow-blue' : '';
+  var crColor = alt.crowdRisk === 'OVERCROWDED' ? 'glow-red' : alt.crowdRisk === 'ELEVATED' ? '' : 'glow-green';
+  var vColor  = alt.velocity === 'ACCELERATING' ? 'glow-green' : alt.velocity === 'DETERIORATING' ? 'glow-red' : '';
+  return '<div class="card" style="border-top:2px solid var(--blue);padding:11px 13px;margin-bottom:8px">' +
+    '<div class="lbl" style="margin-bottom:4px;color:var(--blue)">Shadow Proxy Audit — Alternative Data</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-bottom:8px;line-height:1.5">SEC density · News velocity · Crowd entropy — 3 free institutional proxies</div>' +
+    '<div class="alt-grid">' +
+    '<div class="alt-stat"><div class="alt-lbl">Inst. Curiosity</div><div class="alt-val ' + cColor + '">' + alt.curiosity + '</div>' +
+    '<div style="font-size:8px;color:var(--muted);margin-top:3px;line-height:1.3">' + (alt.curiosityDetail||'').slice(0,50) + '</div></div>' +
+    '<div class="alt-stat"><div class="alt-lbl">Crowd Risk</div><div class="alt-val ' + crColor + '">' + alt.crowdRisk + '</div>' +
+    '<div style="font-size:8px;color:var(--muted);margin-top:3px;line-height:1.3">' + (alt.crowdDetail||'').slice(0,50) + '</div></div>' +
+    '<div class="alt-stat"><div class="alt-lbl">Alt-MMR Bonus</div><div class="alt-val glow-blue">' + (alt.total >= 0 ? '+' : '') + (alt.total||0) + '</div>' +
+    '<div style="font-size:8px;color:var(--muted);margin-top:3px">' + alt.velocity + '</div></div>' +
+    '</div>' +
+    '<div class="alt-verdict ' + verdictCls + '"><strong>Shadow Verdict:</strong> ' + alt.verdict + '</div>' +
+    (alt.curiosityDetail ? '<div style="font-size:9px;color:var(--muted);margin-top:6px;line-height:1.5">' + alt.curiosityDetail + '</div>' : '') +
+    '</div>';
+}
+
+// ── SOR Advisory Panel ────────────────────────────────────────────
+function buildSORPanel(price, levels, sym) {
+  if (!price || !levels) return '';
+  var stop = levels.stop || 0;
+  var risk = price - stop;
+  var shares = risk > 0 ? Math.floor((348 * 0.03) / risk) : 100;
+  var isLoud = shares > 100;
+  var pieces = isLoud ? 4 : shares > 50 ? 2 : 1;
+  var perPiece = Math.floor(shares / pieces);
+  var intervalSec = pieces > 1 ? 45 : 0;
+  var vwapPause = +(price * 1.005).toFixed(2);
+  var tgLink = (typeof BOT_USERNAME !== 'undefined' && BOT_USERNAME) ? 'https://t.me/' + BOT_USERNAME : 'https://t.me';
+  var strategy = isLoud ? 'SHADOW ICEBERG — ' + pieces + ' pieces' : pieces > 1 ? 'SPLIT — ' + pieces + ' pieces' : 'DIRECT STRIKE';
+  return '<div class="sor-panel">' +
+    '<div class="lbl" style="margin-bottom:7px;color:var(--blue)">Smart Order Router (SOR) Advisory</div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+    '<div><div style="font-size:12px;font-weight:900;color:var(--blue)">' + strategy + '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:2px">' + shares + ' shares total · ' + perPiece + '/piece · every ' + intervalSec + 's</div></div>' +
+    '<div style="text-align:right"><div style="font-size:9px;color:var(--muted)">VWAP Pause</div><div style="font-size:11px;font-weight:700;color:var(--gold)">$' + vwapPause + '</div></div>' +
+    '</div>' +
+    '<div style="display:flex;gap:4px;margin-bottom:7px">' +
+    Array.from({length: pieces}, function(_, i) {
+      return '<div style="flex:1;background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.2);border-radius:4px;padding:4px;text-align:center;font-size:9px">' +
+        '<div style="color:var(--muted);font-size:7px">PIECE ' + (i+1) + '</div>' +
+        '<div style="color:var(--blue);font-weight:700">' + perPiece + ' sh</div>' +
+        (i > 0 ? '<div style="color:var(--muted);font-size:7px">+' + (i * intervalSec) + 's</div>' : '<div style="color:var(--green);font-size:7px">NOW</div>') +
+        '</div>';
+    }).join('') +
+    '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-bottom:7px">Pause execution if price drifts above $' + vwapPause + ' (0.5% above VWAP anchor)</div>' +
+    '<a href="' + tgLink + '" target="_blank" style="text-decoration:none">' +
+    '<button class="btn" style="background:rgba(96,165,250,.15);border:1px solid rgba(96,165,250,.3);color:var(--blue);padding:8px;font-size:9px;margin-bottom:0;font-family:monospace">Open Bot — type: buy ' + sym + ' ' + shares + '</button></a>' +
+    '</div>';
+}
+
 // ── BPI Card Renderer ─────────────────────────────────────────────
 function buildBPICard(bpi, sym) {
   if (!bpi || bpi.score === 0) return '';
@@ -747,6 +826,8 @@ function renderAnalysis(data, out){
     '</div>' +
     planHtml +
     buildStressCard(data.stress, data.macro, data.levels) +
+    buildAltDataCard(data.altData, data.ticker) +
+    buildSORPanel(data.data && data.data.quote ? data.data.quote.price : 0, data.levels, data.ticker) +
     buildBPICard(data.bpi, data.ticker) +
     '<div class="card"><div class="lbl">Live Data <span style="color:var(--muted);font-size:8px">· ' + (q.source||'live').toUpperCase() + '</span></div>' +
     '<div class="g3">' +
@@ -1889,17 +1970,21 @@ document.getElementById('sqTicker').addEventListener('keydown', function(e){ if(
 
 // Hook squeeze + pulse into the EXISTING tab onclick system
 // DOMContentLoaded has already fired by the time bottom scripts run — hook directly
-(function() {
-  var sqTab = document.querySelector('[data-tab="squeeze"]');
-  var pTab  = document.querySelector('[data-tab="pulse"]');
-  if (sqTab) {
-    var origSq = sqTab.onclick;
-    sqTab.onclick = function() { if (origSq) origSq.call(this); loadSqueezeScan(); };
-  }
-  if (pTab) {
-    var origP = pTab.onclick;
-    pTab.onclick = function() { if (origP) origP.call(this); loadPulse(); startPulseTimer(); };
-  }
+// Inject squeeze+pulse calls into the global tab onclick
+// This runs after the tab system is set up — safe approach
+(function hookTabs() {
+  var tabs = document.querySelectorAll('.tab');
+  tabs.forEach(function(t) {
+    var tab = t.dataset.tab;
+    if (tab === 'squeeze' || tab === 'pulse') {
+      var prev = t.onclick;
+      t.onclick = function() {
+        if (prev) prev.call(this);
+        if (tab === 'squeeze') { setTimeout(loadSqueezeScan, 50); }
+        if (tab === 'pulse')   { setTimeout(function(){ loadPulse(); startPulseTimer(); }, 50); }
+      };
+    }
+  });
 })();
 
 async function runSqueezeCheck() {
