@@ -2375,6 +2375,250 @@ app.get('/api/premium-pulse', async function(req, res) {
 // ================================================================
 // END SQUEEZE + PULSE BACKEND v3.7
 // ================================================================
+// ================================================================
+// MAVERICK SQUEEZE + PREMIUM PULSE ENGINE v3.7
+// PASTE THIS ENTIRE BLOCK INTO index.js
+// Find the line:  app.get('*', function(req, res)
+// Paste this block DIRECTLY ABOVE that line
+// Then add startSqueezeScanner(); to your server start block
+// ================================================================
+
+// ── Yahoo Finance short data (free, no paid API) ─────────────────
+async function getShortData(symbol) {
+  try {
+    var r = await fetch(
+      'https://query2.finance.yahoo.com/v10/finance/quoteSummary/' + symbol +
+      '?modules=defaultKeyStatistics&_=' + Date.now(),
+      { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.yahoo.com/', 'Cache-Control': 'no-cache' } }
+    );
+    var d   = await r.json();
+    var ks  = d && d.quoteSummary && d.quoteSummary.result && d.quoteSummary.result[0] && d.quoteSummary.result[0].defaultKeyStatistics;
+    if (!ks) return { siPercent: 0, dtc: 0, sharesShort: 0, yearHigh: 0, yearLow: 0, available: false };
+    return {
+      siPercent:   ks.shortPercentOfFloat  && ks.shortPercentOfFloat.raw  ? +(ks.shortPercentOfFloat.raw  * 100).toFixed(1) : 0,
+      dtc:         ks.shortRatio           && ks.shortRatio.raw           ? +ks.shortRatio.raw.toFixed(1)                  : 0,
+      sharesShort: ks.sharesShort          && ks.sharesShort.raw          ? ks.sharesShort.raw                             : 0,
+      yearHigh:    ks.fiftyTwoWeekHigh     && ks.fiftyTwoWeekHigh.raw     ? ks.fiftyTwoWeekHigh.raw                        : 0,
+      yearLow:     ks.fiftyTwoWeekLow      && ks.fiftyTwoWeekLow.raw      ? ks.fiftyTwoWeekLow.raw                         : 0,
+      available: true
+    };
+  } catch(e) { return { siPercent: 0, dtc: 0, sharesShort: 0, yearHigh: 0, yearLow: 0, available: false }; }
+}
+
+// ── Squeeze Phase Detection (shared by both tabs) ─────────────────
+function detectSqueezePhase(quote, tf1d) {
+  if (!quote) return { phase: 0, label: 'NO DATA', color: '#243548', intensity: 0, siPercent: 0, dtc: 0 };
+  var price       = quote.price        || 0;
+  var high        = quote.high         || price;
+  var changePct   = quote.changePct    || 0;
+  var volume      = quote.volume       || (tf1d && tf1d.last ? tf1d.last * 1000 : 0);
+  var avgVolume   = quote.avgVolume    || 1;
+  var floatShares = quote.floatShares  || 10000000;
+  var rsi         = tf1d ? tf1d.rsi        : 50;
+  var rvol        = tf1d ? tf1d.relVolume  : (volume / avgVolume);
+  var atr         = tf1d ? tf1d.atr        : price * 0.03;
+
+  var isNearHOD   = high > 0 ? (price / high) >= 0.97 : false;
+  var volMultiple = volume / (avgVolume || 1);
+  var floatRot    = volume / (floatShares || 10000000);
+
+  // PHASE 3: CLIMAX first — catches exhaustion before misidentifying as P2
+  if ((changePct > 40 || rsi > 80) && changePct > 25) {
+    return { phase: 3, label: 'CLIMAX', color: '#ef4444', intensity: 50, rvol: +rvol.toFixed(1), floatRot: +floatRot.toFixed(2), changePct: +changePct.toFixed(1) };
+  }
+  // PHASE 2: VERTICAL ASCENT
+  if (changePct > 15 && floatRot > 0.8 && rvol > 5) {
+    var i2 = Math.min(98, 75 + Math.min(20, (rvol - 5) * 2));
+    return { phase: 2, label: 'VERTICAL ASCENT', color: '#22c55e', intensity: Math.round(i2), rvol: +rvol.toFixed(1), floatRot: +floatRot.toFixed(2), changePct: +changePct.toFixed(1) };
+  }
+  // PHASE 1: COILED SPRING
+  if (isNearHOD && volMultiple > 2 && floatRot < 0.5) {
+    var i1 = Math.min(90, 50 + volMultiple * 8 + (rvol > 3 ? 10 : 0));
+    return { phase: 1, label: 'COILED SPRING', color: '#f0b429', intensity: Math.round(i1), rvol: +rvol.toFixed(1), floatRot: +floatRot.toFixed(2), changePct: +changePct.toFixed(1) };
+  }
+  // BUILDING
+  if (rvol > 2 && changePct > 5 && isNearHOD) {
+    return { phase: 0.5, label: 'BUILDING', color: '#60a5fa', intensity: 25, rvol: +rvol.toFixed(1), floatRot: +floatRot.toFixed(2), changePct: +changePct.toFixed(1) };
+  }
+  return { phase: 0, label: 'NEUTRAL', color: '#243548', intensity: 0, rvol: +rvol.toFixed(1), floatRot: +floatRot.toFixed(2), changePct: +changePct.toFixed(1) };
+}
+
+// ── Squeeze alert store ───────────────────────────────────────────
+var squeezeStore   = [];
+var squeezeAlerted = new Set();
+var sqScanCount    = 0;
+
+// ── Run background squeeze scan ───────────────────────────────────
+async function runSqueezeScan() {
+  sqScanCount++;
+  var candidates = new Set();
+  var screenerIds = ['day_gainers', 'most_actives'];
+  for (var s = 0; s < screenerIds.length; s++) {
+    try {
+      var r = await fetch(
+        'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=' + screenerIds[s] + '&_=' + Date.now(),
+        { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
+      );
+      var d = await r.json();
+      ((d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [])
+        .filter(function(q) { return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15; })
+        .forEach(function(q) { candidates.add(q.symbol); });
+    } catch(e) {}
+  }
+
+  var results = [];
+  var syms = Array.from(candidates).slice(0, 12);
+  for (var i = 0; i < syms.length; i++) {
+    var sym = syms[i];
+    try {
+      var pr = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getShortData(sym)]);
+      var quote2 = pr[0]; var tf = pr[1]; var sd = pr[2];
+      if (!quote2 || quote2.price < 0.5 || quote2.price > 15) continue;
+      var phase  = detectSqueezePhase(quote2, tf);
+      var mmr    = calculateMMR(quote2, tf, []);
+      var stopCluster = +(quote2.high * 1.02).toFixed(2);
+      var avgShortEntry = sd.yearHigh > 0 ? sd.yearHigh * 0.90 : quote2.price * 1.10;
+      var painPct = +((quote2.price - avgShortEntry) / avgShortEntry * 100).toFixed(1);
+      var ctbProxy = sd.siPercent > 0 ? Math.round(sd.siPercent * Math.min(phase.rvol / 5, 2) * 10) : 0;
+
+      var item = {
+        symbol: sym, price: quote2.price, changePct: quote2.changePct,
+        high: quote2.high, floatShares: quote2.floatShares,
+        shortName: quote2.shortName, phase: phase, mmr: mmr,
+        siPercent: sd.siPercent, dtc: sd.dtc, stopCluster: stopCluster,
+        painPct: painPct, ctbProxy: ctbProxy, scannedAt: new Date().toISOString()
+      };
+      results.push(item);
+
+      // Telegram: Phase 1 or 2 only
+      var alertKey = sym + ':P' + phase.phase + ':' + new Date().toDateString();
+      if ((phase.phase === 1 || phase.phase === 2) && !squeezeAlerted.has(alertKey) && TG_CHAT_ID && bot) {
+        squeezeAlerted.add(alertKey);
+        tgSend(TG_CHAT_ID,
+          (phase.phase === 2 ? 'SQUEEZE PHASE 2 — VERTICAL ASCENT' : 'SQUEEZE PHASE 1 — COILED SPRING') + '\n\n' +
+          '*' + sym + '* @ $' + quote2.price.toFixed(2) + ' (+' + (quote2.changePct||0).toFixed(1) + '%)\n\n' +
+          'Phase: ' + phase.label + ' | Conviction: ' + phase.intensity + '\n' +
+          'RVOL: ' + phase.rvol + 'x | Float Rotation: ' + phase.floatRot + 'x\n' +
+          'SI: ' + sd.siPercent + '% | DTC: ' + sd.dtc + 'd\n' +
+          'Stop Cluster: $' + stopCluster + '\n' +
+          'Short Pain: ' + (painPct > 0 ? '+' : '') + painPct + '%\n' +
+          'MMR: ' + mmr.total + '/100\n\n' +
+          'Reply: dive ' + sym
+        );
+      }
+      await new Promise(function(r) { setTimeout(r, 350); });
+    } catch(e) {}
+  }
+
+  results.sort(function(a, b) {
+    var pa = a.phase.phase, pb = b.phase.phase;
+    if (pa === 2 && pb !== 2) return -1; if (pb === 2 && pa !== 2) return 1;
+    if (pa === 1 && pb !== 1) return -1; if (pb === 1 && pa !== 1) return 1;
+    return (b.phase.intensity || 0) - (a.phase.intensity || 0);
+  });
+  squeezeStore = results;
+  console.log('[Squeeze] Scan #' + sqScanCount + ': ' + results.length + ' tickers. P1:' +
+    results.filter(function(r){return r.phase.phase===1;}).length + ' P2:' +
+    results.filter(function(r){return r.phase.phase===2;}).length);
+}
+
+function startSqueezeScanner() {
+  console.log('[Squeeze v3.7] Scanner armed (4am-4pm ET, every 5min)');
+  var run = async function() {
+    var et    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    var total = et.getHours() * 60 + et.getMinutes();
+    var isWD  = et.getDay() > 0 && et.getDay() < 6;
+    if (isWD && total >= 4*60 && total < 16*60) {
+      await runSqueezeScan().catch(function(e) { console.error('[Squeeze] ' + e.message); });
+    }
+    setTimeout(run, 5 * 60 * 1000);
+  };
+  setTimeout(run, 20000);
+}
+
+// ── API: individual squeeze analysis ─────────────────────────────
+app.post('/api/squeeze-check', async function(req, res) {
+  var ticker = req.body.ticker;
+  if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  var sym = ticker.toUpperCase().trim();
+  try {
+    var pr = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getCandles(sym, '5d', '60m'), getShortData(sym)]);
+    var quote3 = pr[0]; var tf1d = pr[1]; var tf1h = pr[2]; var sd = pr[3];
+    if (!quote3) return res.status(404).json({ error: sym + ' not found' });
+    var phase   = detectSqueezePhase(quote3, tf1d);
+    var mmr     = calculateMMR(quote3, tf1d, []);
+    var dilute  = await checkDilutionRisk(sym);
+    var lux     = tf1d ? luxAlgoSignal(tf1d) : null;
+    var stopCluster    = +(quote3.high * 1.02).toFixed(2);
+    var avgShortEntry  = sd.yearHigh > 0 ? sd.yearHigh * 0.90 : quote3.price * 1.10;
+    var painPct        = +((quote3.price - avgShortEntry) / avgShortEntry * 100).toFixed(1);
+    var ctbProxy       = sd.siPercent > 0 ? Math.round(sd.siPercent * Math.min(phase.rvol / 5, 2) * 10) : 0;
+    res.json({ symbol: sym, price: quote3.price, changePct: quote3.changePct, high: quote3.high, low: quote3.low,
+      floatShares: quote3.floatShares, marketCap: quote3.marketCap, shortName: quote3.shortName,
+      shortData: sd, phase: phase, mmr: mmr, dilution: dilute, lux: lux,
+      stopCluster: stopCluster, painPct: painPct, ctbProxy: ctbProxy, timestamp: new Date().toISOString() });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── API: background scan results ──────────────────────────────────
+app.get('/api/squeeze-scan', function(req, res) {
+  res.json({ results: squeezeStore, scanCount: sqScanCount, timestamp: new Date().toISOString() });
+});
+
+// ── API: Premium Pulse hub — POST ─────────────────────────────────
+app.post('/api/premium-pulse', async function(req, res) {
+  try {
+    var allQuotes = [], seen = new Set();
+    var screenerIds = ['day_gainers', 'most_actives'];
+    for (var s = 0; s < screenerIds.length; s++) {
+      try {
+        var r = await fetch(
+          'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=' + screenerIds[s] + '&_=' + Date.now(),
+          { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
+        );
+        var d = await r.json();
+        ((d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [])
+          .filter(function(q) { return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15 && !seen.has(q.symbol); })
+          .forEach(function(q) { seen.add(q.symbol); allQuotes.push(q); });
+      } catch(e) {}
+    }
+    var movers = [], radarItems = [];
+    for (var i = 0; i < Math.min(allQuotes.length, 18); i++) {
+      var q = allQuotes[i];
+      try {
+        var tf = await getCandles(q.symbol, '3mo', '1d');
+        var rv = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
+        var quoteObj = { price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
+          floatShares: q.floatShares, volume: q.regularMarketVolume,
+          avgVolume: q.averageDailyVolume3Month, high: q.regularMarketDayHigh,
+          low: q.regularMarketDayLow, marketCap: q.marketCap, shortName: q.shortName };
+        var mmr    = calculateMMR(quoteObj, tf, []);
+        var phase  = detectSqueezePhase(quoteObj, tf);
+        // Check squeeze store for richer data
+        var sqEntry = squeezeStore.find(function(s) { return s.symbol === q.symbol; });
+
+        var item = { symbol: q.symbol, name: q.shortName,
+          price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
+          rvol: +rv.toFixed(1), floatShares: q.floatShares,
+          mmr: mmr.total, mmrGrade: mmr.grade,
+          phase: phase.phase, phaseLabel: phase.label, phaseColor: phase.color,
+          intensity: phase.intensity, scorePT: mmr.total >= 85 ? 7 : mmr.total >= 70 ? 5 : 3,
+          siPercent: sqEntry ? sqEntry.siPercent : 0 };
+
+        movers.push(item);
+        if (rv >= 5) radarItems.push(item);
+        await new Promise(function(r){ setTimeout(r, 100); });
+      } catch(e) {}
+    }
+    movers.sort(function(a, b) { return (b.mmr||0) - (a.mmr||0); });
+    radarItems.sort(function(a, b) { return (b.rvol||0) - (a.rvol||0); });
+    res.json({ movers: movers, radar: radarItems, timestamp: new Date().toISOString() });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ================================================================
+// END SQUEEZE + PULSE BACKEND v3.7
+// ================================================================
 
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
@@ -2599,8 +2843,8 @@ function setupTelegramHandlers() {
 // =========================================================
 connectFinnhub();
 startContinuousScanner();
-startCatalystFeed();
 startSqueezeScanner();
+startCatalystFeed();
 
 app.listen(PORT, '0.0.0.0', async function() {
   console.log('\nMAVERICK TERMINAL v3.5 - Port ' + PORT);
