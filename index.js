@@ -2306,6 +2306,9 @@ app.post('/api/analyze', async function(req, res) {
     // Stress Test — 1,000 Monte Carlo paths
     var stress = runStressTest(quote.price, levels.stop, levels.t1, levels.t2, atr || quote.price * 0.03, 348, null);
 
+    // Alt-Data Shadow Layer
+    var altData = await getAltPulse(sym, news, tf1d);
+
     var ANALYZE_PROMPT = 'You are MAVERICK aggressive day trading AI v4.0.\n' +
       'You receive: MMR score, LuxAlgo signals, multi-timeframe data, AND a Bottom Probability Index (BPI).\n\n' +
       'VERDICTS: BUY | DONT_BUY | WATCH\n' +
@@ -2354,6 +2357,12 @@ app.post('/api/analyze', async function(req, res) {
       quote: { price: quote.price, changePct: quote.changePct, open: quote.open, high: quote.high, low: quote.low, volume: quote.volume, marketCap: quote.marketCap, floatShares: quote.floatShares, sector: quote.sector },
       timeframes: { daily: tf1d || 'unavailable', fourhour: tf4h || 'unavailable', onehour: tf1h || 'unavailable', fifteen: tf15 || 'unavailable' },
       luxAlgo_signals: luxAlgo,
+      alt_data: {
+        curiosity: altData.curiosity, curiosity_detail: altData.curiosityDetail,
+        velocity: altData.velocity, velocity_detail: altData.velocityDetail,
+        crowd_risk: altData.crowdRisk, crowd_detail: altData.crowdDetail,
+        total_score: altData.total, verdict: altData.verdict
+      },
       recent_news: news.slice(0, 3).map(function(n) { return n.headline; })
     };
 
@@ -2363,7 +2372,7 @@ app.post('/api/analyze', async function(req, res) {
     res.json({
       ticker: sym, verdict: verdict, mmr: mmr, adjustedMMR: adjustedMMR,
       dilution: dilution, levels: levels, bpi: bpi, luxAlgo: luxAlgo,
-      stress: stress, macro: macro,
+      stress: stress, macro: macro, altData: altData,
       data: { quote: quote, timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 }, news: news },
       timestamp: new Date().toISOString()
     });
@@ -2628,6 +2637,205 @@ app.get('/api/health', function(req, res) {
   });
 });
 
+// ================================================================
+// ALT-DATA SHADOW LAYER v4.5
+// Three free proxies: SEC Density · News Velocity · Crowd Entropy
+// ================================================================
+
+async function getAltPulse(symbol, newsItems, tf1d) {
+  var altResult = { curiosityScore: 0, velocityScore: 0, crowdPenalty: 0, total: 0,
+    curiosity: 'STABLE', velocity: 'NEUTRAL', crowdRisk: 'CLEAN', verdict: 'NEUTRAL',
+    curiosityDetail: '', velocityDetail: '', crowdDetail: '' };
+  try {
+    var news = newsItems || [];
+    var rsi = tf1d ? tf1d.rsi : 50;
+    var pctChange = tf1d ? tf1d.pctChange : 0;
+
+    // ── LAYER A: SEC Filing Density (Institutional Curiosity) ─────
+    // Count recent filings for this ticker from our catalyst store
+    var recentFilings = news.filter(function(n){ return n.ageH < 72; }).length;
+    var totalFilings  = news.length;
+    // Compute filing rate ratio: recent 72h vs expected baseline (totalFilings / 30 days * 3)
+    var expectedIn72h = (totalFilings / 30) * 3;
+    var filingRatio   = expectedIn72h > 0 ? recentFilings / expectedIn72h : recentFilings;
+    if (filingRatio >= 3 || recentFilings >= 4) {
+      altResult.curiosityScore = 30;
+      altResult.curiosity = 'SPIKING';
+      altResult.curiosityDetail = recentFilings + ' filings in 72h (' + filingRatio.toFixed(1) + 'x baseline) — Smart money digging';
+    } else if (filingRatio >= 1.5 || recentFilings >= 2) {
+      altResult.curiosityScore = 15;
+      altResult.curiosity = 'ELEVATED';
+      altResult.curiosityDetail = recentFilings + ' filings in 72h — Above normal attention';
+    } else {
+      altResult.curiosityDetail = recentFilings + ' recent filings — Institutional curiosity quiet';
+    }
+
+    // ── LAYER B: News Velocity + Sentiment Polarity ───────────────
+    var posWords = /approv|award|beat|contract|fda|merger|acqui|growth|launch|raised|milestone|partner|record|win|breakthrough|exclusive/i;
+    var negWords = /dilut|offering|secondary|atm|shelf|default|lawsuit|bankruptcy|downgrade|miss|guidance cut|risk|concern|weak/i;
+    var last4h   = news.filter(function(n){ return n.ageH < 4; });
+    var posHits  = last4h.filter(function(n){ return posWords.test(n.headline || ''); }).length;
+    var negHits  = last4h.filter(function(n){ return negWords.test(n.headline || ''); }).length;
+    var netSentiment = posHits - negHits;
+    var velocityScore = Math.max(-20, Math.min(20, netSentiment * 7));
+    altResult.velocityScore = velocityScore;
+    if (velocityScore > 10) {
+      altResult.velocity = 'ACCELERATING';
+      altResult.velocityDetail = posHits + ' bullish headlines in last 4h vs ' + negHits + ' bearish — Positive narrative building';
+    } else if (velocityScore < -5) {
+      altResult.velocity = 'DETERIORATING';
+      altResult.velocityDetail = negHits + ' bearish headlines — Risk narrative emerging';
+    } else {
+      altResult.velocityDetail = posHits + ' positive / ' + negHits + ' negative headlines in last 4h';
+    }
+
+    // ── LAYER C: Crowd Entropy — Retail Trap Detection ────────────
+    // High news volume + extreme RSI + large % gain = retail FOMO, whales likely exiting
+    var newsOverload = news.length > 8;
+    var rsiExtended  = rsi > 72;
+    var priceExtended = pctChange > 25;
+    var crowdSignals  = [newsOverload, rsiExtended, priceExtended].filter(Boolean).length;
+    var crowdPenalty  = crowdSignals >= 3 ? -25 : crowdSignals === 2 ? -12 : 0;
+    altResult.crowdPenalty = crowdPenalty;
+    if (crowdPenalty <= -25) {
+      altResult.crowdRisk = 'OVERCROWDED';
+      altResult.crowdDetail = 'RSI ' + rsi + ' + ' + pctChange.toFixed(1) + '% gain + ' + news.length + ' news items — Retail saturation. Whales likely exiting into FOMO.';
+    } else if (crowdPenalty < 0) {
+      altResult.crowdRisk = 'ELEVATED';
+      altResult.crowdDetail = crowdSignals + '/3 crowd signals present — Monitor for distribution';
+    } else {
+      altResult.crowdDetail = 'Crowd not yet present — Move may still be early';
+    }
+
+    // ── FINAL ALT-DATA SCORE ──────────────────────────────────────
+    altResult.total = altResult.curiosityScore + altResult.velocityScore + altResult.crowdPenalty;
+    if (altResult.total >= 25 && altResult.crowdRisk !== 'OVERCROWDED') {
+      altResult.verdict = 'INSTITUTIONAL ACCUMULATION';
+    } else if (altResult.crowdRisk === 'OVERCROWDED') {
+      altResult.verdict = 'RETAIL TRAP — Whales likely distributing';
+    } else if (altResult.total >= 10) {
+      altResult.verdict = 'FAVORABLE CONDITIONS';
+    } else if (altResult.total < 0) {
+      altResult.verdict = 'ADVERSE CONDITIONS';
+    } else {
+      altResult.verdict = 'NEUTRAL';
+    }
+
+  } catch(e) { console.error('AltPulse: ' + e.message); }
+  return altResult;
+}
+
+// ================================================================
+// SMART ORDER ROUTER (SOR) v4.1 — Advisory Engine
+// Calculates optimal TWAP stagger. You execute manually.
+// Bot coordinates timing, VWAP checks, and fill reminders.
+// ================================================================
+
+function calculateSOR(price, totalShares, atr, avgVolume, portfolio) {
+  // Liquidity density check: per-minute volume proxy
+  var perMinVol = (avgVolume || 500000) / 390;
+  // If order is > 15% of per-minute liquidity — use stagger
+  var isLoudOrder = totalShares > perMinVol * 0.15;
+
+  // Position risk check
+  var stopDist   = atr ? atr * 1.5 : price * 0.03;
+  var maxRisk    = (portfolio || 348) * 0.03;
+  var optShares  = Math.floor(maxRisk / stopDist);
+  var finalShares = Math.min(totalShares, optShares * 2); // allow up to 2x max risk for aggressive
+
+  var pieces    = isLoudOrder ? 4 : totalShares > 100 ? 2 : 1;
+  var perPiece  = Math.floor(finalShares / pieces);
+  var intervalSec = pieces > 1 ? 45 : 0;
+
+  // VWAP reference: entry price is the anchor. Pause if price drifts > 0.5% above.
+  var vwapPauseLevel = +(price * 1.005).toFixed(3);
+
+  return {
+    strategy:       isLoudOrder ? 'SHADOW ICEBERG — ' + pieces + ' pieces' : pieces > 1 ? 'SPLIT — ' + pieces + ' pieces' : 'DIRECT STRIKE',
+    isLoud:         isLoudOrder,
+    totalShares:    finalShares,
+    pieces:         pieces,
+    sharesPerPiece: perPiece,
+    intervalSec:    intervalSec,
+    vwapAnchor:     price,
+    vwapPause:      vwapPauseLevel,
+    stopDist:       +stopDist.toFixed(3),
+    maxRiskDollars: +(stopDist * finalShares).toFixed(2),
+    portfolioPct:   +((stopDist * finalShares / (portfolio || 348)) * 100).toFixed(1)
+  };
+}
+
+var sorSessions = new Map(); // chatId → { sym, sor, piece, startTime }
+
+async function executeSORSession(chatId, symbol, totalShares) {
+  var q  = await getQuote(symbol);
+  var tf = await getCandles(symbol, '3mo', '1d');
+  if (!q) { tgSend(chatId, 'Cannot find ' + symbol + '. Check ticker.'); return; }
+  var atr = tf ? tf.atr : null;
+  var sor = calculateSOR(q.price, totalShares, atr, q.avgVolume, 348);
+
+  sorSessions.set(chatId, { sym: symbol, sor: sor, piece: 0, startTime: Date.now(), price: q.price });
+
+  var msg = 'SMART ORDER ROUTER — ' + symbol + '\n\n' +
+    'Strategy: ' + sor.strategy + '\n' +
+    'Total: ' + sor.totalShares + ' shares\n' +
+    'Pieces: ' + sor.pieces + ' x ' + sor.sharesPerPiece + ' shares\n' +
+    'Interval: every ' + sor.intervalSec + ' seconds\n' +
+    'VWAP Anchor: $' + sor.vwapAnchor + '\n' +
+    'Pause if price > $' + sor.vwapPause + ' (0.5% drift)\n' +
+    'Max Risk: $' + sor.maxRiskDollars + ' (' + sor.portfolioPct + '% portfolio)\n\n' +
+    'Reply: next — to execute piece 1 of ' + sor.pieces + '\n' +
+    'Reply: cancel — to abort SOR session';
+  tgSend(chatId, msg);
+}
+
+async function sorNextPiece(chatId) {
+  var session = sorSessions.get(chatId);
+  if (!session) { tgSend(chatId, 'No active SOR session. Text: buy TICKER SHARES'); return; }
+  session.piece++;
+  var sor = session.sor;
+  var q   = await getQuote(session.sym);
+  if (!q) { tgSend(chatId, 'Cannot get live quote for ' + session.sym); return; }
+
+  // VWAP drift check
+  if (q.price > sor.vwapPause) {
+    tgSend(chatId, 'SOR PAUSE — ' + session.sym + '\nPrice $' + q.price.toFixed(2) + ' is above VWAP anchor $' + sor.vwapAnchor + ' by ' + (((q.price - sor.vwapAnchor)/sor.vwapAnchor)*100).toFixed(2) + '%\nWaiting for price to settle. Reply: next when ready.');
+    return;
+  }
+
+  var msg = 'FILL PIECE ' + session.piece + ' / ' + sor.pieces + ' — ' + session.sym + '\n\n' +
+    'BUY ' + sor.sharesPerPiece + ' shares NOW\n' +
+    'Live Price: $' + q.price.toFixed(2) + ' (within VWAP tolerance)\n' +
+    'Progress: ' + Math.round(session.piece / sor.pieces * 100) + '%\n';
+
+  if (session.piece >= sor.pieces) {
+    msg += '\nPOSITION COMPLETE — ' + sor.totalShares + ' shares established\n' +
+      'Avg VWAP anchor: $' + sor.vwapAnchor + '\n' +
+      'Text: status — to check live P&L';
+    sorSessions.delete(chatId);
+  } else {
+    msg += '\nNext piece in ' + sor.intervalSec + ' seconds\nReply: next — when ready for piece ' + (session.piece + 1);
+  }
+  tgSend(chatId, msg);
+}
+
+app.post('/api/sor', async function(req, res) {
+  var ticker = req.body.ticker, shares = parseInt(req.body.shares) || 100, portfolio = req.body.portfolio || 348;
+  if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  var sym = ticker.toUpperCase();
+  try {
+    var q  = await getQuote(sym);
+    var tf = await getCandles(sym, '3mo', '1d');
+    if (!q) return res.status(404).json({ error: sym + ' not found' });
+    var sor = calculateSOR(q.price, shares, tf ? tf.atr : null, q.avgVolume, portfolio);
+    res.json({ ticker: sym, price: q.price, sor: sor, timestamp: new Date().toISOString() });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ================================================================
+// END v4.5 MODULES
+// ================================================================
+
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
 // =========================================================
@@ -2647,6 +2855,8 @@ function setupTelegramHandlers() {
     if (m) return { cmd: 'alert', symbol: m[1].toUpperCase(), condition: m[2].toUpperCase(), value: +m[3] };
     m = t.match(/^dive\s+([A-Za-z.]{1,6})/i); if (m) return { cmd: 'dive', symbol: m[1].toUpperCase() };
     m = t.match(/^mmr\s+([A-Za-z.]{1,6})/i); if (m) return { cmd: 'mmr', symbol: m[1].toUpperCase() };
+    m = t.match(/^buy\s+([A-Za-z.]{1,6})\s+(\d+)/i); if (m) return { cmd: 'buy', symbol: m[1].toUpperCase(), shares: +m[2] };
+    m = t.match(/^next$/i); if (m) return { cmd: 'sor_next' };
     // Smart quote: $ prefix always = ticker. Bare caps only if not a common word and short (2-5 chars)
     m = t.match(/^\$([A-Z.]{1,5})$/i);
     if (m) return { cmd: 'quote', symbol: m[1].toUpperCase() };
@@ -2773,7 +2983,7 @@ function setupTelegramHandlers() {
         break;
       }
       case 'dive': {
-        tgSend(cid, 'Full analysis on ' + p.symbol + '...');
+        tgSend(cid, 'Shadow Dive — analyzing ' + p.symbol + ' across all intelligence layers...');
         try {
           var dr = await fetch('http://localhost:' + PORT + '/api/analyze', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2781,22 +2991,48 @@ function setupTelegramHandlers() {
           });
           var dd = await dr.json();
           if (dd.error) { tgSend(cid, 'Error: ' + dd.error); return; }
-          var v = dd.verdict;
-          var verdictText = { BUY: 'BUY', DONT_BUY: 'DO NOT BUY', WATCH: 'WATCH' }[v.verdict] || v.verdict;
-          var dMsg = verdictText + ' - ' + p.symbol + '\nConviction: ' + v.conviction + '/100 | MMR: ' + (dd.mmr ? dd.mmr.total : '?') + '/100\n\n' +
-            v.headline + '\n\n' + (v.reasoning || []).map(function(r) { return '- ' + r; }).join('\n');
-          if (v.verdict === 'BUY') {
-            dMsg += '\n\nEntry: $' + v.entry_zone.low + '-$' + v.entry_zone.high +
-              '\nStop: $' + v.stop_loss + ' (ATR-based)' +
-              '\nT1: $' + v.target_1 + ' | T2: $' + v.target_2 +
-              '\nR:R: ' + v.risk_reward + ':1\n\n' +
-              'Text: watching ' + p.symbol + ' at ' + v.entry_zone.low;
+          var v   = dd.verdict;
+          var bpi = dd.bpi || {};
+          var alt = dd.altData || { curiosity:'STABLE', crowdRisk:'CLEAN', velocity:'NEUTRAL', verdict:'NEUTRAL', total:0 };
+          var st  = dd.stress || {};
+          var verdictText = { BUY:'BUY', DONT_BUY:'DO NOT BUY', WATCH:'WATCH' }[v.verdict] || v.verdict;
+          var dMsg = verdictText + ' - ' + p.symbol + ' | Conviction: ' + v.conviction + '/100 | MMR: ' + (dd.mmr?dd.mmr.total:'?') + '\n\n';
+          dMsg += v.headline + '\n\n';
+          dMsg += (v.reasoning||[]).map(function(r){ return '- ' + r; }).join('\n') + '\n\n';
+          // BPI
+          if (bpi.score !== undefined) {
+            dMsg += 'LIQUIDITY AUDIT (BPI): ' + bpi.score + '% — ' + (bpi.label||'') + '\n';
+            dMsg += 'Floor: $' + (bpi.demandZone||'?') + ' | Sweep: ' + (bpi.sweepDetected?'YES':'No') + '\n\n';
           }
-          if (dd.dilution && dd.dilution.detected) {
-            dMsg += '\n\nWARNING: ' + dd.dilution.type + ' - ' + dd.dilution.note;
+          // Alt-Data
+          dMsg += 'SHADOW PROXY AUDIT\n';
+          dMsg += 'Inst. Curiosity: ' + alt.curiosity + '\n';
+          dMsg += 'Crowd Risk: ' + alt.crowdRisk + '\n';
+          dMsg += 'Alt-Verdict: ' + alt.verdict + '\n\n';
+          // Stress
+          if (st.pathEfficiency) {
+            dMsg += 'STRESS TEST: Path Efficiency ' + st.pathEfficiency + '% | Ruin ' + st.riskOfRuin + '%\n';
+            dMsg += 'Expected Value: $' + st.expectedValue + '\n\n';
           }
+          // Strike plan
+          if (v.verdict === 'BUY' && v.entry_zone) {
+            dMsg += 'STRIKE PLAN\n';
+            dMsg += 'Entry: $' + v.entry_zone.low + '-$' + v.entry_zone.high + '\n';
+            dMsg += 'Stop: $' + v.stop_loss + ' | T1: $' + v.target_1 + '\n';
+            dMsg += 'Shadow Execute: buy ' + p.symbol + ' 200';
+          }
+          if (dd.dilution && dd.dilution.detected) dMsg += '\n\nWARNING: ' + dd.dilution.type;
           tgSend(cid, dMsg);
         } catch(e) { tgSend(cid, 'Error: ' + e.message); }
+        break;
+      }
+      case 'buy': {
+        tgSend(cid, 'Calculating SOR for ' + p.symbol + '...');
+        await executeSORSession(cid, p.symbol, p.shares || 100);
+        break;
+      }
+      case 'sor_next': {
+        await sorNextPiece(cid);
         break;
       }
       case 'quote': {
@@ -2846,7 +3082,7 @@ function setupTelegramHandlers() {
         break;
       }
       case 'help': {
-        tgSend(cid, 'MAVERICK v3.5\n\nTRADE:\nwatching LFVN at 5.10\nwatching LFVN at 5.10 stop 4.80\nin at 5.11 with 200 shares\nadded 100 at 5.50\nsl 4.88\nout at 5.85\nstatus | cancel\n\nALERTS:\nalert LFVN above 5.50\nalert LFVN below 4.80\n\nINTELLIGENCE:\nLFVN - quote\ndive LFVN - full AI analysis\nmmr LFVN - MMR math score (new v3.5)\nnews - catalyst scan\n\nREPORTS:\ndaily | weekly\n\nCHAT:\nType naturally - how many shares of Ford should I buy?');
+        tgSend(cid, 'MAVERICK v4.5\n\nTRADE:\nwatching LFVN at 5.10\nin at 5.11 with 200 shares\nadded 100 at 5.50\nsl 4.88\nout at 5.85\nstatus | cancel\n\nSMART EXECUTION:\nbuy LFVN 200 — SOR stagger plan\nnext — execute next SOR piece\n\nALERTS:\nalert LFVN above 5.50\nalert LFVN below 4.80\n\nINTELLIGENCE:\nLFVN — quote\ndive LFVN — Shadow dive (BPI + Alt-Data + Stress)\nmmr LFVN — MMR math score\nnews — catalyst scan\n\nREPORTS:\ndaily | weekly\n\nCHAT:\nType naturally — any question, any topic');
         break;
       }
     }
