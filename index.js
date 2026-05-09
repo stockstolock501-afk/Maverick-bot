@@ -814,7 +814,6 @@ async function runCatalystScan(manual) {
 // ================================================================
 // ================================================================
 // MAVERICK CATALYST INTELLIGENCE ENGINE v2.0
-// Paste this entire block into index.js BEFORE app.get('*'...)
 // Tiered Catalyst System: T1(Red) T2(Orange) T3(Blue)
 // Sources: SEC 8-K, SEC Form 4, Finnhub, GlobeNewswire, Yahoo
 // Math-first conviction scoring. Groq only on user demand.
@@ -1337,7 +1336,6 @@ app.post('/api/catalyst-scan', function(req, res) {
 
 // ── Override old catalyst scan scheduler ─────────────────────────
 // (replaces scheduleCatalystScans from v3.5 if present)
-// startCatalystFeed() is called at server start below
 
 // ================================================================
 // END CATALYST v2 BACKEND
@@ -1348,7 +1346,6 @@ app.post('/api/catalyst-scan', function(req, res) {
 // ================================================================
 // ================================================================
 // MAVERICK PROBABILITY ENSEMBLE — v3.6
-// Paste this entire block into index.js BEFORE app.get('*'...)
 // Three engines: Monte Carlo · Linear Regression · ATR Zones
 // Math-first. No Groq. Pure statistical edge.
 // ================================================================
@@ -1731,12 +1728,6 @@ app.post('/api/probability', async function(req, res) {
 // ================================================================
 // ================================================================
 // MAVERICK SQUEEZE + PREMIUM PULSE ENGINE v3.7
-// PASTE THIS ENTIRE BLOCK INTO index.js
-// Find the line:  app.get('*', function(req, res)
-// Paste this block DIRECTLY ABOVE that line
-// Then add startSqueezeScanner(); to your server start block
-// ================================================================
-
 // ── Raw candle array fetcher (needed for BPI pivot analysis) ─────
 async function getRawCandles(symbol, range, interval) {
   try {
