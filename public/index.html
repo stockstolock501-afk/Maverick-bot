@@ -1963,29 +1963,32 @@ setTimeout(function() {
 
 <script>
 // ════════════════════════════════════════════════════════════
-// SQUEEZE TAB
+// SQUEEZE + PULSE TAB ACTIVATION — v4.6 BULLETPROOF
 // ════════════════════════════════════════════════════════════
 
-document.getElementById('sqTicker').addEventListener('keydown', function(e){ if(e.key==='Enter') runSqueezeCheck(); });
+// Guard: only bind if element exists (prevents script crash)
+var sqTickerEl = document.getElementById('sqTicker');
+if (sqTickerEl) {
+  sqTickerEl.addEventListener('keydown', function(e){ if(e.key==='Enter') runSqueezeCheck(); });
+}
 
-// Hook squeeze + pulse into the EXISTING tab onclick system
-// DOMContentLoaded has already fired by the time bottom scripts run — hook directly
-// Inject squeeze+pulse calls into the global tab onclick
-// This runs after the tab system is set up — safe approach
-(function hookTabs() {
-  var tabs = document.querySelectorAll('.tab');
-  tabs.forEach(function(t) {
-    var tab = t.dataset.tab;
-    if (tab === 'squeeze' || tab === 'pulse') {
-      var prev = t.onclick;
-      t.onclick = function() {
-        if (prev) prev.call(this);
-        if (tab === 'squeeze') { setTimeout(loadSqueezeScan, 50); }
-        if (tab === 'pulse')   { setTimeout(function(){ loadPulse(); startPulseTimer(); }, 50); }
-      };
-    }
+// Use addEventListener — cannot be overwritten by onclick assignments
+// This is additive on top of the tab show/hide system
+var sqTabBtn = document.querySelector('[data-tab="squeeze"]');
+var pTabBtn  = document.querySelector('[data-tab="pulse"]');
+if (sqTabBtn) {
+  sqTabBtn.addEventListener('click', function() {
+    setTimeout(function() { if (typeof loadSqueezeScan === 'function') loadSqueezeScan(); }, 80);
   });
-})();
+}
+if (pTabBtn) {
+  pTabBtn.addEventListener('click', function() {
+    setTimeout(function() {
+      if (typeof loadPulse === 'function') loadPulse();
+      if (typeof startPulseTimer === 'function') startPulseTimer();
+    }, 80);
+  });
+}
 
 async function runSqueezeCheck() {
   var sym = document.getElementById('sqTicker').value.toUpperCase().trim();
