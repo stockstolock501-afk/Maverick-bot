@@ -528,6 +528,77 @@ function buildStressCard(stress, macro, levels) {
     '</div>';
 }
 
+// ── BPI Canvas Draw Engine — global function, safe to call after innerHTML ──
+window._bpiData = {};
+function drawBPICanvas(canvasId) {
+  var data = window._bpiData[canvasId];
+  if (!data) return;
+  var el = document.getElementById(canvasId);
+  if (!el) { setTimeout(function(){ drawBPICanvas(canvasId); }, 80); return; }
+  var ctx = el.getContext('2d');
+  var W = el.width, H = el.height;
+  var price = data.price || 0;
+  var clusters = data.clusters || [];
+  var fibs = data.fibs || [];
+  var sweep = data.sweep || false;
+  // Background
+  ctx.fillStyle = '#080f18'; ctx.fillRect(0, 0, W, H);
+  // Title
+  ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.font = '8px monospace';
+  ctx.fillText('VOLUME PROFILE  ·  DEMAND ZONES  ·  FIB LEVELS', 8, 12);
+  if (!clusters.length) {
+    ctx.fillStyle = '#3a5570'; ctx.font = '11px monospace';
+    ctx.fillText('Insufficient candle data', W/2 - 80, H/2);
+    return;
+  }
+  // Price range for y-axis
+  var allP = [price];
+  clusters.forEach(function(c){ allP.push(c.price); });
+  fibs.forEach(function(f){ allP.push(f.price); });
+  var minP = Math.min.apply(null, allP) * 0.988;
+  var maxP = Math.max.apply(null, allP) * 1.012;
+  var rng  = maxP - minP || 1;
+  function toY(p) { return Math.round(H - ((p - minP) / rng * (H - 28)) - 14); }
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 1;
+  for (var g = 0; g < 5; g++) { var gy = Math.round(H / 5 * g) + 0.5; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+  // Volume cluster bars
+  var maxVol = clusters[0] ? clusters[0].vol : 1;
+  clusters.forEach(function(c, i) {
+    var y = toY(c.price);
+    var bw = Math.max(25, Math.round((c.vol / maxVol) * 110));
+    if (i === 0) { ctx.fillStyle = 'rgba(240,180,41,0.10)'; ctx.fillRect(0, y - 12, W, 24); } // POC highlight
+    ctx.fillStyle = i === 0 ? 'rgba(240,180,41,0.85)' : 'rgba(96,165,250,0.55)';
+    ctx.fillRect(2, y - 5, bw, 10);
+    ctx.fillStyle = i === 0 ? '#f0b429' : '#60a5fa';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText('$' + c.price.toFixed(2), bw + 6, y + 3);
+    if (i === 0) { ctx.fillStyle = 'rgba(240,180,41,0.7)'; ctx.font = '7px monospace'; ctx.fillText('POC', bw + 6, y + 12); }
+  });
+  // Fibonacci levels
+  fibs.forEach(function(f) {
+    var fy = toY(f.price);
+    ctx.strokeStyle = 'rgba(167,139,250,0.4)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(130, fy); ctx.lineTo(W - 44, fy); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(167,139,250,0.75)'; ctx.font = '7px monospace';
+    ctx.fillText('Fib ' + f.label, W - 42, fy + 3);
+  });
+  // Demand zone line
+  var cy = toY(price);
+  var lineColor = sweep ? '#22c55e' : '#f0b429';
+  ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.setLineDash([7, 3]);
+  ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = lineColor; ctx.font = 'bold 9px monospace';
+  var label = 'DEMAND $' + price.toFixed(2) + (sweep ? '  SWEPT ✓' : '');
+  ctx.fillText(label, 6, cy - 6);
+  // Sweep badge
+  if (sweep) {
+    ctx.fillStyle = 'rgba(34,197,94,0.18)'; ctx.fillRect(W - 72, 4, 68, 18);
+    ctx.fillStyle = '#22c55e'; ctx.font = 'bold 8px monospace'; ctx.fillText('SWEEP', W - 68, 16);
+  }
+  delete window._bpiData[canvasId]; // cleanup
+}
+
 // ── BPI Card Renderer ─────────────────────────────────────────────
 function buildBPICard(bpi, sym) {
   if (!bpi || bpi.score === 0) return '';
@@ -566,69 +637,17 @@ function buildBPICard(bpi, sym) {
       }).join('') + '</div>';
   }
 
-  // Mini TradingView 5-min chart
-  // Canvas-based cluster chart — no external dependency, always renders
-  var canvasId = 'bpiCanvas_' + Date.now();
+  // Canvas chart — stores data globally, drawn after DOM insertion
+  var canvasId = 'bpiC_' + Date.now();
+  window._bpiData[canvasId] = {
+    price: bpi.demandZone || bpi.poc || 0,
+    clusters: (bpi.clusters || []).slice(0, 5),
+    fibs: (bpi.fibonacci || []).map(function(f){ return { price: f.price, label: f.label }; }),
+    sweep: !!bpi.sweepDetected
+  };
   var miniChart = '<canvas id="' + canvasId + '" width="320" height="160" style="width:100%;height:160px;border-radius:7px;border:1px solid var(--border);display:block;margin-bottom:9px;background:#080f18"></canvas>';
-  var chartScript = '<script>' +
-    '(function(){' +
-    'var el=document.getElementById("' + canvasId + '");' +
-    'if(!el)return;' +
-    'var ctx=el.getContext("2d");' +
-    'var W=el.width,H=el.height;' +
-    'var price=' + (bpi.demandZone||0) + ';' +
-    'var clusters=' + JSON.stringify((bpi.clusters||[]).slice(0,5)) + ';' +
-    'var fibs=' + JSON.stringify((bpi.fibonacci||[]).map(function(f){return{price:f.price,label:f.label};})) + ';' +
-    'var sweep=' + (bpi.sweepDetected?'true':'false') + ';' +
-    // Background
-    'ctx.fillStyle="#080f18";ctx.fillRect(0,0,W,H);' +
-    // Calculate price range for y-axis
-    'var allP=[price];' +
-    'clusters.forEach(function(c){allP.push(c.price);});' +
-    'fibs.forEach(function(f){allP.push(f.price);});' +
-    'var minP=Math.min.apply(null,allP)*0.990;' +
-    'var maxP=Math.max.apply(null,allP)*1.010;' +
-    'var range=maxP-minP;' +
-    'function toY(p){return H-((p-minP)/range*(H-24))-12;}' +
-    // Grid lines
-    'ctx.strokeStyle="rgba(255,255,255,0.04)";ctx.lineWidth=1;' +
-    'for(var g=0;g<5;g++){var gy=Math.round(H/5*g)+0.5;ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}' +
-    // Volume cluster bars (horizontal, left side)
-    'var maxVol=clusters[0]?clusters[0].vol:1;' +
-    'clusters.forEach(function(c,i){' +
-    'var y=toY(c.price);var bw=Math.max(20,Math.round((c.vol/maxVol)*100));' +
-    'var alpha=i===0?0.9:0.5;' +
-    'ctx.fillStyle=i===0?"rgba(240,180,41,"+alpha+")":"rgba(96,165,250,"+alpha+")";' +
-    'ctx.fillRect(0,y-4,bw,8);' +
-    // Price label
-    'ctx.fillStyle=i===0?"#f0b429":"#60a5fa";ctx.font="bold 8px monospace";' +
-    'ctx.fillText("$"+c.price.toFixed(2),bw+3,y+3);' +
-    'if(i===0){ctx.fillStyle="rgba(240,180,41,0.08)";ctx.fillRect(0,y-10,W,20);}' + // POC highlight
-    '});' +
-    // Fibonacci levels (dashed lines)
-    'fibs.forEach(function(f){' +
-    'var fy=toY(f.price);' +
-    'ctx.strokeStyle="rgba(167,139,250,0.35)";ctx.lineWidth=1;ctx.setLineDash([4,4]);' +
-    'ctx.beginPath();ctx.moveTo(120,fy);ctx.lineTo(W-40,fy);ctx.stroke();' +
-    'ctx.setLineDash([]);' +
-    'ctx.fillStyle="rgba(167,139,250,0.7)";ctx.font="7px monospace";' +
-    'ctx.fillText("Fib "+f.label,W-38,fy+3);' +
-    '});' +
-    // Current price line
-    'var cy=toY(price);' +
-    'ctx.strokeStyle=sweep?"#22c55e":"#f0b429";ctx.lineWidth=2;ctx.setLineDash([6,3]);' +
-    'ctx.beginPath();ctx.moveTo(0,cy);ctx.lineTo(W,cy);ctx.stroke();ctx.setLineDash([]);' +
-    'ctx.fillStyle=sweep?"#22c55e":"#f0b429";ctx.font="bold 9px monospace";' +
-    'ctx.fillText("DEMAND $"+price.toFixed(2)+(sweep?" SWEPT":""),W/2-40,cy-5);' +
-    // Sweep indicator
-    'if(sweep){' +
-    'ctx.fillStyle="rgba(34,197,94,0.15)";ctx.fillRect(W-70,4,66,18);' +
-    'ctx.fillStyle="#22c55e";ctx.font="bold 8px monospace";ctx.fillText("SWEEP",W-66,16);' +
-    '}' +
-    // Title
-    'ctx.fillStyle="rgba(255,255,255,0.3)";ctx.font="8px monospace";ctx.fillText("VOLUME PROFILE · DEMAND ZONES · FIB LEVELS",8,11);' +
-    '})();' +
-    '<\/script>';
+  // NOTE: chart is drawn by renderAnalysis() after innerHTML is set — no script tag needed
+  var chartScript = ''; // canvas drawn by drawBPICanvas() after DOM insertion
 
   return '<div class="bpi-card ' + cardCls + '">' +
     '<div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">' +
@@ -757,6 +776,11 @@ function renderAnalysis(data, out){
     '</div>' +
     (news.length ? '<div class="card"><div class="lbl">Recent News</div>' + news.map(function(n){return '<div style="font-size:11px;color:#8aa;padding:5px 0;border-bottom:1px solid var(--bg3)">' + n.headline + '<br><span style="font-size:9px;color:var(--muted)">' + (n.source||'') + (n.ageH ? ' · ' + n.ageH + 'h ago' : '') + '</span></div>';}).join('') + '</div>' : '') +
     '<button class="btn btn-dark" style="margin-top:4px" onclick="loadChartFor(\'' + sym + '\')">View Chart</button>';
+  // Draw BPI canvas after DOM insertion
+  setTimeout(function() {
+    var bpiCanvas = out.querySelector('canvas[id^="bpiC_"]');
+    if (bpiCanvas && window.drawBPICanvas) window.drawBPICanvas(bpiCanvas.id);
+  }, 60);
 }
 
 function loadChartFor(sym){
@@ -1863,12 +1887,20 @@ setTimeout(function() {
 
 document.getElementById('sqTicker').addEventListener('keydown', function(e){ if(e.key==='Enter') runSqueezeCheck(); });
 
-document.addEventListener('DOMContentLoaded', function() {
+// Hook squeeze + pulse into the EXISTING tab onclick system
+// DOMContentLoaded has already fired by the time bottom scripts run — hook directly
+(function() {
   var sqTab = document.querySelector('[data-tab="squeeze"]');
-  if (sqTab) sqTab.addEventListener('click', function(){ loadSqueezeScan(); });
-  var pTab = document.querySelector('[data-tab="pulse"]');
-  if (pTab) pTab.addEventListener('click', function(){ loadPulse(); startPulseTimer(); });
-});
+  var pTab  = document.querySelector('[data-tab="pulse"]');
+  if (sqTab) {
+    var origSq = sqTab.onclick;
+    sqTab.onclick = function() { if (origSq) origSq.call(this); loadSqueezeScan(); };
+  }
+  if (pTab) {
+    var origP = pTab.onclick;
+    pTab.onclick = function() { if (origP) origP.call(this); loadPulse(); startPulseTimer(); };
+  }
+})();
 
 async function runSqueezeCheck() {
   var sym = document.getElementById('sqTicker').value.toUpperCase().trim();
