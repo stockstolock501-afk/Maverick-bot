@@ -2180,156 +2180,420 @@ function buildPhaseMeter(conviction, color, needleAngle, label) {
   }
 
   // Needle
-  var nRad = (needleAngle + 90) * Math.PI / 180;
-  var nx   = cx + 75 * Math.cos(nRad);
-  var ny   = cy + 75 * Math.sin(nRad);
-  var needle = '<line x1="' + cx + '" y1="' + cy + '" x2="' + nx.toFixed(1) + '" y2="' + ny.toFixed(1) + '" stroke="' + color + '" stroke-width="3" stroke-linecap="round"/>' +
-    '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="' + color + '"/>';
+<!-- ================================================================ -->
+<!-- MAVERICK SQUEEZE + PREMIUM PULSE TABS v3.7 — BRILLIANT UI      -->
+<!-- Add to .tabs div:                                               -->
+<!--   <button class="tab" data-tab="squeeze">SQUEEZE</button>      -->
+<!--   <button class="tab" data-tab="pulse">PULSE</button>          -->
+<!-- Paste this entire block BEFORE </body>                          -->
+<!-- ================================================================ -->
 
-  // Conviction text in center
-  var centerText = '<text x="' + cx + '" y="' + (cy+22) + '" text-anchor="middle" fill="' + color + '" font-size="22" font-weight="900" font-family="monospace">' + conviction + '</text>' +
-    '<text x="' + cx + '" y="' + (cy+35) + '" text-anchor="middle" fill="#3a5570" font-size="8" letter-spacing="1">CONVICTION</text>';
+<style>
+/* ════════════════════════════════════════════════════════════
+   SQUEEZE GAUGE — Advisor's CSS-only approach (more reliable)
+   ════════════════════════════════════════════════════════════ */
+.sq-gauge-wrap{position:relative;width:72px;height:40px;margin:0 auto 8px;overflow:hidden}
+.sq-gauge-bg{position:absolute;top:0;left:0;width:72px;height:72px;border:6px solid #1a2a3a;border-radius:50%;border-bottom-color:transparent;border-left-color:transparent;transform:rotate(45deg)}
+.sq-gauge-fill{position:absolute;top:0;left:0;width:72px;height:72px;border:6px solid #f0b429;border-radius:50%;border-bottom-color:transparent;border-left-color:transparent;transform:rotate(45deg);transition:transform 1.2s cubic-bezier(0.34,1.1,0.64,1)}
+.sq-gauge-val{position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:13px;font-weight:900;font-family:monospace;line-height:1}
+.sq-gauge-lbl{position:absolute;bottom:-14px;left:0;right:0;text-align:center;font-size:7px;color:var(--muted);letter-spacing:.5px}
 
-  return '<div class="phase-meter-wrap">' +
-    '<svg width="220" height="115" viewBox="0 0 220 115">' + paths + arcPath + ticks + needle + centerText + '</svg>' +
+/* Phase badges */
+.pb{display:inline-block;font-size:8px;padding:2px 8px;border-radius:4px;font-weight:900;letter-spacing:1px}
+.pb0{background:rgba(36,53,72,.5);color:#3a5570;border:1px solid #1a2a3a}
+.pb05{background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.3)}
+.pb1{background:rgba(240,180,41,.15);color:#f0b429;border:1px solid rgba(240,180,41,.4)}
+.pb2{background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.4);box-shadow:0 0 8px rgba(34,197,94,.2)}
+.pb3{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+
+/* Squeeze deep analysis card */
+.sq-analysis-card{border-radius:10px;padding:14px;margin-bottom:10px;border:1px solid;position:relative;overflow:hidden}
+.sq-card-p1{background:linear-gradient(135deg,rgba(240,180,41,.09),rgba(240,180,41,.02));border-color:rgba(240,180,41,.4)}
+.sq-card-p2{background:linear-gradient(135deg,rgba(34,197,94,.1),rgba(34,197,94,.02));border-color:rgba(34,197,94,.4)}
+.sq-card-p3{background:linear-gradient(135deg,rgba(239,68,68,.09),rgba(239,68,68,.02));border-color:rgba(239,68,68,.3)}
+.sq-card-p0{background:var(--bg2);border-color:var(--border)}
+.sq-card-p05{background:linear-gradient(135deg,rgba(96,165,250,.07),transparent);border-color:rgba(96,165,250,.25)}
+.sq-glow{position:absolute;top:-40px;right:-40px;width:120px;height:120px;border-radius:50%;opacity:.07;filter:blur(25px);pointer-events:none}
+
+/* Pain gauge bar */
+.pain-wrap{height:7px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden;margin:6px 0 3px}
+.pain-fill{height:100%;border-radius:4px;transition:width 1s ease}
+
+/* Stop cluster box */
+.stop-box{background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:8px;margin-top:8px;font-size:10px;color:#fca5a5;line-height:1.6}
+
+/* Mini stat row */
+.sq-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:10px 0}
+.sq-stat{background:rgba(0,0,0,.25);border-radius:5px;padding:6px 4px;text-align:center}
+.sq-sl{font-size:7px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;margin-bottom:2px}
+.sq-sv{font-size:13px;font-weight:900;font-family:monospace;line-height:1}
+
+/* Scan list */
+.sq-list-card{background:var(--bg2);border:1px solid;border-left:4px solid;border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:background .15s}
+.sq-list-card:active{opacity:.8}
+
+/* ════════════════════════════════════════════════════════════
+   PULSE HUB
+   ════════════════════════════════════════════════════════════ */
+
+/* Whale radar tape */
+.radar-outer{background:#050b12;overflow:hidden;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);border-top:1px solid rgba(255,255,255,.05);margin-bottom:10px}
+.radar-track{display:inline-flex;white-space:nowrap;animation:radarScroll 30s linear infinite}
+.radar-track:hover{animation-play-state:paused}
+.radar-item{display:inline-flex;align-items:center;gap:6px;padding:0 20px;font-size:9px;font-weight:800;font-family:monospace;border-right:1px solid rgba(255,255,255,.06)}
+@keyframes radarScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+
+/* Heat tiles */
+.pulse-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.pulse-tile{border-radius:9px;padding:11px 8px 9px;text-align:center;cursor:pointer;position:relative;border:1px solid var(--border);background:var(--bg2);transition:transform .12s}
+.pulse-tile:active{transform:scale(.95)}
+.pt-p0{background:var(--bg2);border-color:var(--border)}
+.pt-p05{background:linear-gradient(135deg,rgba(96,165,250,.1),transparent);border-color:rgba(96,165,250,.3)}
+.pt-p1{background:linear-gradient(135deg,rgba(240,180,41,.18),rgba(240,180,41,.05));border-color:rgba(240,180,41,.5)}
+.pt-p2{background:linear-gradient(135deg,rgba(34,197,94,.2),rgba(34,197,94,.06));border-color:rgba(34,197,94,.5);box-shadow:0 0 14px rgba(34,197,94,.12)}
+.pt-p3{background:linear-gradient(135deg,rgba(239,68,68,.14),rgba(239,68,68,.04));border-color:rgba(239,68,68,.3)}
+
+.tile-sym{display:block;font-weight:900;color:#fff;line-height:1.1;margin-bottom:5px}
+.tile-chg{font-size:9px;font-family:monospace;font-weight:700;margin-bottom:3px}
+.tile-mmr{font-size:8px;font-weight:700;margin-bottom:2px}
+.tile-rv{font-size:8px;color:var(--muted)}
+.trophy{position:absolute;top:4px;right:5px;font-size:10px}
+.phase-pip{position:absolute;top:5px;left:5px;width:5px;height:5px;border-radius:50%}
+
+/* Timer + legend row */
+.pulse-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.pulse-legend{display:flex;gap:8px;font-size:8px;color:var(--muted)}
+.pleg{display:flex;align-items:center;gap:3px}
+.pleg-dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0}
+.pulse-timer-txt{font-family:monospace;font-size:9px;color:var(--gold)}
+
+/* Phase guide cards */
+.phase-guide{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.pg-card{border-radius:7px;padding:9px 11px;border:1px solid}
+</style>
+
+<!-- ════════════════════════════════════════════ SQUEEZE TAB ═══ -->
+<div id="tab-squeeze" class="hidden">
+
+  <!-- Individual lookup -->
+  <div class="card" style="border-color:rgba(239,68,68,.25);background:linear-gradient(135deg,rgba(239,68,68,.05),transparent)">
+    <div class="lbl" style="color:var(--red)">Short Squeeze Analyzer</div>
+    <div style="font-size:10px;color:var(--muted);margin-bottom:9px">Phase detection · Stop cluster · Short pain gauge · Yahoo Finance SI data</div>
+    <input id="sqTicker" placeholder="Enter ticker — e.g. GME, MVIS, LFVN" style="border-color:rgba(239,68,68,.2)"/>
+    <button onclick="runSqueezeCheck()" style="background:linear-gradient(135deg,#7f1d1d,#991b1b);border:none;border-radius:7px;color:#fff;padding:12px;width:100%;cursor:pointer;font-family:monospace;font-size:10px;font-weight:900;letter-spacing:2px;margin-bottom:0">ANALYZE SQUEEZE POTENTIAL</button>
+  </div>
+  <div id="sqCheckOut"></div>
+
+  <!-- Background scanner results -->
+  <div class="card" style="margin-top:4px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+      <div class="lbl" style="margin:0">Background Squeeze Scanner</div>
+      <span id="sqScanLbl" style="font-size:8px;color:var(--muted)">Scans every 5min during market hours</span>
+    </div>
+    <button class="btn btn-dark" style="font-size:9px;padding:9px;margin-bottom:0" onclick="loadSqueezeScan()">REFRESH SCAN</button>
+  </div>
+  <div id="sqScanOut"></div>
+
+  <!-- Phase Guide -->
+  <div class="card" style="margin-top:4px">
+    <div class="lbl">Squeeze Phase Science</div>
+    <div class="phase-guide">
+      <div class="pg-card" style="background:rgba(240,180,41,.07);border-color:rgba(240,180,41,.25)">
+        <div style="font-size:9px;color:#f0b429;font-weight:900;letter-spacing:1px;margin-bottom:4px">PHASE 1 — COILED SPRING</div>
+        <div style="font-size:10px;color:var(--muted);line-height:1.5">Price within 3% of HOD + Volume building (2x+) + Float rotation under 0.5x. Shorts are trapped but haven't panicked yet. Stop cluster sits just above HOD. This is your entry window before the cascade.</div>
+      </div>
+      <div class="pg-card" style="background:rgba(34,197,94,.07);border-color:rgba(34,197,94,.25)">
+        <div style="font-size:9px;color:#22c55e;font-weight:900;letter-spacing:1px;margin-bottom:4px">PHASE 2 — VERTICAL ASCENT</div>
+        <div style="font-size:10px;color:var(--muted);line-height:1.5">Price cleared HOD + Float rotating 0.8x+ + RVOL 5x+. Stop-loss cascade executing. Forced buy orders lifting price vertically with no sellers. Ride with an aggressive trailing stop.</div>
+      </div>
+      <div class="pg-card" style="background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2)">
+        <div style="font-size:9px;color:#ef4444;font-weight:900;letter-spacing:1px;margin-bottom:4px">PHASE 3 — MOMENTUM CLIMAX</div>
+        <div style="font-size:10px;color:var(--muted);line-height:1.5">RSI above 80 or price up 40%+. New sellers arriving. Distribution beginning. Protect all gains immediately. This is not a buy — this is your exit signal.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════ PULSE TAB ════ -->
+<div id="tab-pulse" class="hidden">
+
+  <!-- Whale Radar Tape (always visible at top) -->
+  <div class="radar-outer">
+    <div class="radar-track" id="pulseRadar">
+      <span class="radar-item" style="color:#1a3050">WHALE RADAR — PREMIUM AREA $0.50-$15 — RVOL 5x+ — SCANNING...</span>
+      <span class="radar-item" style="color:#1a3050">WHALE RADAR — PREMIUM AREA $0.50-$15 — RVOL 5x+ — SCANNING...</span>
+    </div>
+  </div>
+
+  <!-- Header row -->
+  <div class="pulse-hdr">
+    <div class="pulse-legend">
+      <span class="pleg"><span class="pleg-dot" style="background:#f0b429"></span>Phase 1</span>
+      <span class="pleg"><span class="pleg-dot" style="background:#22c55e"></span>Phase 2</span>
+      <span class="pleg"><span class="pleg-dot" style="background:#ef4444"></span>Climax</span>
+      <span class="pleg"><span class="pleg-dot" style="background:var(--border)"></span>Neutral</span>
+    </div>
+    <div class="pulse-timer-txt">Refresh: <span id="pulseTimerNum">30</span>s</div>
+  </div>
+
+  <!-- Heat Grid card -->
+  <div class="card" style="border-color:rgba(240,180,41,.2);padding:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="lbl" style="margin:0">MMR Heat Map · Squeeze Overlay</div>
+      <span id="pulseScanTime" style="font-size:8px;color:var(--muted)">--</span>
+    </div>
+    <div class="pulse-grid" id="pulseGrid">
+      <div style="grid-column:span 3;text-align:center;padding:30px;color:var(--muted);font-size:11px;letter-spacing:1px">INITIALIZING PULSE HUB...</div>
+    </div>
+  </div>
+
+  <button class="btn btn-dark" style="font-size:9px;padding:9px" onclick="loadPulse()">FORCE REFRESH NOW</button>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// SQUEEZE TAB
+// ════════════════════════════════════════════════════════════
+
+document.getElementById('sqTicker').addEventListener('keydown', function(e){ if(e.key==='Enter') runSqueezeCheck(); });
+
+document.addEventListener('DOMContentLoaded', function() {
+  var sqTab = document.querySelector('[data-tab="squeeze"]');
+  if (sqTab) sqTab.addEventListener('click', function(){ loadSqueezeScan(); });
+  var pTab = document.querySelector('[data-tab="pulse"]');
+  if (pTab) pTab.addEventListener('click', function(){ loadPulse(); startPulseTimer(); });
+});
+
+async function runSqueezeCheck() {
+  var sym = document.getElementById('sqTicker').value.toUpperCase().trim();
+  if (!sym) return;
+  var out = document.getElementById('sqCheckOut');
+  out.innerHTML = '<div class="card" style="border-color:rgba(239,68,68,.2)"><div class="loading-box">READING SQUEEZE MICROSTRUCTURE FOR ' + sym + '...</div><div class="loader"><div></div><div></div><div></div></div></div>';
+  try {
+    var r = await fetch('/api/squeeze-check', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ticker:sym}) });
+    var data = await r.json();
+    if (data.error) { out.innerHTML='<div class="card"><div style="color:var(--red)">'+data.error+'</div></div>'; return; }
+    out.innerHTML = buildSqueezeCard(data, true);
+    animateGauges();
+  } catch(e) { out.innerHTML='<div class="card"><div style="color:var(--red)">Error: '+e.message+'</div></div>'; }
+}
+
+function buildSqueezeCard(data, isDeep) {
+  var ph    = data.phase || {};
+  var phase = ph.phase  || 0;
+  var color = ph.color  || '#243548';
+  var intns = ph.intensity || 0;
+  var pbCls = phase===2?'pb2':phase===1?'pb1':phase===3?'pb3':phase===0.5?'pb05':'pb0';
+  var crdCls= phase===2?'sq-card-p2':phase===1?'sq-card-p1':phase===3?'sq-card-p3':phase===0.5?'sq-card-p05':'sq-card-p0';
+  var glowBg= phase===2?'#22c55e':phase===1?'#f0b429':phase===3?'#ef4444':'transparent';
+
+  // Gauge rotation: intensity 0→45deg, 50→90deg, 100→225deg (fills top-right)
+  var rotation = 45 + (intns / 100) * 180;
+
+  var painAbs = Math.abs(data.painPct || 0);
+  var painColor = data.painPct > 20?'#ef4444':data.painPct > 10?'#fb923c':data.painPct > 0?'#f0b429':'#3a5570';
+  var painWidth = Math.min(100, painAbs * 2.5);
+
+  var tgLink = (typeof BOT_USERNAME!=='undefined'&&BOT_USERNAME)?'https://t.me/'+BOT_USERNAME:'https://t.me';
+
+  var stopNote = (data.stopCluster && phase >= 1) ?
+    '<div class="stop-box">Stop-loss cluster at <strong>$'+data.stopCluster+'</strong>. ' +
+    'Price clearing this level on volume triggers forced short covering. This is the ignition point.</div>' : '';
+
+  var luxNote = '';
+  if (data.lux && data.lux.signalType==='BUY' && phase===1) {
+    luxNote = '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:6px;padding:8px;margin-top:7px;font-size:10px;color:#22c55e">LuxAlgo BUY signal aligned with Phase 1 coil — maximum conviction setup. TP: $'+(data.lux.tpLevel||'n/a')+' SL: $'+(data.lux.slLevel||'n/a')+'</div>';
+  }
+
+  var dilNote = (data.dilution && data.dilution.detected) ?
+    '<div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:7px;margin-top:7px;font-size:10px;color:#fca5a5">DILUTION SHIELD: '+data.dilution.type+' detected. Stop widened to 2x ATR. Size down.</div>' : '';
+
+  return '<div class="sq-analysis-card '+crdCls+'">' +
+    '<div class="sq-glow" style="background:'+glowBg+'"></div>' +
+
+    // Header: gauge + title
+    '<div style="display:flex;gap:14px;align-items:center;margin-bottom:12px">' +
+    '<div>' +
+    '<div class="sq-gauge-wrap" data-rotation="'+rotation+'" data-color="'+color+'">' +
+    '<div class="sq-gauge-bg"></div>' +
+    '<div class="sq-gauge-fill" style="border-color:'+color+';transform:rotate(45deg)"></div>' +
+    '<div class="sq-gauge-val" style="color:'+color+'">'+intns+'</div>' +
+    '</div>' +
+    '<div style="font-size:7px;text-align:center;color:var(--muted);margin-top:18px;letter-spacing:.5px">COIL</div>' +
+    '</div>' +
+    '<div style="flex:1">' +
+    '<div style="font-size:11px;color:var(--muted);font-weight:700;letter-spacing:1px;margin-bottom:3px">'+(data.symbol||'')+'</div>' +
+    '<div style="font-size:20px;font-weight:900;color:'+color+'">'+(ph.label||'NO SIGNAL')+'</div>' +
+    '<span class="pb '+pbCls+'" style="margin-top:5px;display:inline-block">PHASE '+(phase===0.5?'0.5':phase)+'</span>' +
+    '</div>' +
+    '<div style="text-align:right;flex-shrink:0">' +
+    '<div style="font-size:9px;color:var(--muted)">Conviction</div>' +
+    '<div style="font-size:26px;font-weight:900;color:'+color+';font-family:monospace">'+intns+'</div>' +
+    '</div>' +
+    '</div>' +
+
+    // Pain gauge
+    '<div style="font-size:8px;color:var(--muted);letter-spacing:.5px;margin-bottom:2px">SHORT SELLER PAIN GAUGE</div>' +
+    '<div class="pain-wrap"><div class="pain-fill" style="width:'+painWidth+'%;background:'+painColor+'"></div></div>' +
+    '<div style="font-size:10px;color:'+painColor+';font-weight:700;margin-bottom:9px">' +
+    (data.painPct > 0?'+':'')+data.painPct+'% — ' +
+    (data.painPct > 20?'Maximum Pain — cascade risk HIGH':data.painPct > 10?'Significant Pain building':data.painPct > 0?'Moderate discomfort':'Shorts profitable — low risk')+
+    '</div>' +
+
+    // Stat grid
+    '<div class="sq-stats">' +
+    '<div class="sq-stat"><div class="sq-sl">SI % Float</div><div class="sq-sv" style="color:'+((data.shortData&&data.shortData.siPercent>20)?'#ef4444':(data.shortData&&data.shortData.siPercent>10)?'#fb923c':'var(--text)')+'">'+(data.shortData?data.shortData.siPercent:'n/a')+'%</div></div>' +
+    '<div class="sq-stat"><div class="sq-sl">Days Cover</div><div class="sq-sv" style="color:'+((data.shortData&&data.shortData.dtc>5)?'#ef4444':'var(--text)')+'">'+(data.shortData?data.shortData.dtc:'n/a')+'d</div></div>' +
+    '<div class="sq-stat"><div class="sq-sl">RVOL</div><div class="sq-sv" style="color:'+(ph.rvol>5?'#22c55e':ph.rvol>2?'#f0b429':'var(--text)')+'">'+ph.rvol+'x</div></div>' +
+    '<div class="sq-stat"><div class="sq-sl">Float Rot</div><div class="sq-sv">'+ph.floatRot+'x</div></div>' +
+    '<div class="sq-stat"><div class="sq-sl">CTB Proxy</div><div class="sq-sv" style="color:'+((data.ctbProxy||0)>30?'#ef4444':'var(--text)')+'">'+(data.ctbProxy||0)+'</div></div>' +
+    '<div class="sq-stat"><div class="sq-sl">MMR</div><div class="sq-sv '+(data.mmr&&data.mmr.total>=60?'gold':'')+'">'+((data.mmr&&data.mmr.total)||0)+'</div></div>' +
+    '</div>' +
+    stopNote + luxNote + dilNote +
+
+    '<div style="display:flex;gap:6px;margin-top:10px">' +
+    '<button class="btn btn-gold" onclick="goAnalyze(\''+(data.symbol||'')+'\')" style="flex:1;padding:9px;font-size:9px;margin-bottom:0">Full Analysis</button>' +
+    '<button class="btn btn-dark" onclick="loadPulse();document.querySelector(\'[data-tab=pulse]\').click()" style="flex:1;padding:9px;font-size:9px;margin-bottom:0">Pulse Hub</button>' +
+    '<a href="'+tgLink+'" target="_blank" style="text-decoration:none;flex-shrink:0"><button class="btn btn-tg" style="padding:9px;margin-bottom:0;border-radius:7px;height:100%;font-size:10px">TG</button></a>' +
+    '</div>' +
     '</div>';
 }
 
-async function refreshSqueezeScan() {
-  var out = document.getElementById('squeezeScanResult');
-  out.innerHTML = '<div class="card"><div class="loading-box">Loading squeeze scan...</div></div>';
+function animateGauges() {
+  setTimeout(function() {
+    document.querySelectorAll('.sq-gauge-wrap').forEach(function(wrap) {
+      var rotation = parseFloat(wrap.dataset.rotation) || 45;
+      var color    = wrap.dataset.color || '#f0b429';
+      var fill = wrap.querySelector('.sq-gauge-fill');
+      if (fill) { fill.style.transform = 'rotate('+rotation+'deg)'; fill.style.borderColor = color; }
+    });
+  }, 100);
+}
+
+async function loadSqueezeScan() {
+  var out = document.getElementById('sqScanOut');
+  out.innerHTML = '<div class="card"><div style="font-size:10px;color:var(--muted)">Loading scan results...</div></div>';
   try {
     var r = await fetch('/api/squeeze-scan');
     var data = await r.json();
     var results = data.results || [];
-    document.getElementById('squeezeScanLabel').textContent = 'Scan #' + data.scanCount + ' · ' + results.length + ' tickers';
+    document.getElementById('sqScanLbl').textContent = 'Scan #'+(data.scanCount||0)+' · '+results.length+' tickers';
     if (!results.length) {
-      out.innerHTML = '<div class="card"><div style="font-size:11px;color:var(--muted)">Scanner building results... runs every 5min during market hours. Check back shortly.</div></div>';
+      out.innerHTML = '<div class="card"><div style="font-size:11px;color:var(--muted)">Scanner is warming up — runs every 5min during 4am-4pm ET market hours. Results will appear shortly. If you just deployed, give it 30 seconds.</div></div>';
       return;
     }
-    var phColors = { 0: '#555', 0.5: '#60a5fa', 1: '#f0b429', 2: '#22c55e', 3: '#ef4444' };
     var html = '';
     results.forEach(function(item) {
-      var ph = item.phase.phase || 0;
-      var pc = phColors[ph] || '#555';
-      var borderColor = ph === 2 ? 'var(--green)' : ph === 1 ? 'var(--gold)' : ph === 3 ? 'var(--red)' : 'var(--border)';
-      html += '<div class="sq-result-card" style="border-color:' + borderColor + ';border-left-color:' + pc + '" onclick="document.getElementById(\'squeezeTicker\').value=\'' + item.symbol + '\';runSqueezeCheck()">' +
+      var ph = item.phase || {};
+      var phase = ph.phase || 0;
+      var color = ph.color || '#243548';
+      var pbCls = phase===2?'pb2':phase===1?'pb1':phase===3?'pb3':phase===0.5?'pb05':'pb0';
+      html += '<div class="sq-list-card" style="border-color:'+(phase===2?'var(--green)':phase===1?'var(--gold)':phase===3?'var(--red)':'var(--border)')+';" ' +
+        'onclick="document.getElementById(\'sqTicker\').value=\''+item.symbol+'\';runSqueezeCheck()">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-        '<div><span style="font-size:17px;font-weight:900;color:#fff">' + item.symbol + '</span>' +
-        '<span class="phase-badge pb-' + (ph === 0.5 ? '05' : ph) + '" style="margin-left:8px">' + item.phase.label + '</span></div>' +
-        '<div style="text-align:right"><div style="font-size:9px;color:var(--muted)">Conviction</div><div style="font-size:18px;font-weight:900;color:' + pc + '">' + item.phase.conviction + '</div></div>' +
+        '<div><span style="font-size:18px;font-weight:900;color:#fff">'+item.symbol+'</span> <span class="pb '+pbCls+'" style="margin-left:6px">'+ph.label+'</span></div>' +
+        '<div style="text-align:right"><div style="font-size:8px;color:var(--muted)">CONVICTION</div><div style="font-size:20px;font-weight:900;color:'+color+';font-family:monospace">'+ph.intensity+'</div></div>' +
         '</div>' +
-        '<div class="g3">' +
-        '<div class="metric"><div class="ml">SI %</div><div class="mv" style="color:' + (item.phase.si > 15 ? 'var(--red)' : 'var(--text)') + '">' + item.phase.si + '%</div></div>' +
-        '<div class="metric"><div class="ml">DTC</div><div class="mv">' + item.phase.dtc + 'd</div></div>' +
-        '<div class="metric"><div class="ml">RVOL</div><div class="mv gold">' + item.phase.rvol + 'x</div></div>' +
+        '<div style="display:flex;gap:12px;font-size:10px">' +
+        '<span style="color:var(--muted)">SI: <strong style="color:'+(item.siPercent>15?'#ef4444':'var(--text)')+'">'+item.siPercent+'%</strong></span>' +
+        '<span style="color:var(--muted)">RVOL: <strong style="color:'+(ph.rvol>5?'#22c55e':'var(--text)')+'">'+ph.rvol+'x</strong></span>' +
+        '<span style="color:var(--muted)">MMR: <strong class="'+(item.mmr&&item.mmr.total>=60?'gold':'')+'">'+((item.mmr&&item.mmr.total)||0)+'</strong></span>' +
         '</div>' +
-        '<div style="font-size:9px;color:var(--muted);margin-top:5px">Tap to full squeeze analysis</div>' +
+        '<div style="font-size:9px;color:var(--muted);margin-top:5px">Tap for deep squeeze analysis</div>' +
         '</div>';
     });
     out.innerHTML = html;
-  } catch(e) { out.innerHTML = '<div class="card"><div style="color:var(--red)">Error: ' + e.message + '</div></div>'; }
+    animateGauges();
+  } catch(e) { out.innerHTML='<div class="card"><div style="color:var(--red)">'+e.message+'</div></div>'; }
 }
 
-// Auto-load squeeze scan when tab opens
-document.addEventListener('DOMContentLoaded', function() {
-  var sqTab = document.querySelector('[data-tab="squeeze"]');
-  if (sqTab) sqTab.addEventListener('click', function() { refreshSqueezeScan(); });
-});
+// ════════════════════════════════════════════════════════════
+// PULSE TAB
+// ════════════════════════════════════════════════════════════
 
-// ================================================================
-// PULSE TAB LOGIC
-// ================================================================
-var pulseCountdown = 30;
-var pulseTimer = null;
+var pulseCD = 30, pulseTmr = null;
 
-function startPulseCountdown() {
-  if (pulseTimer) clearInterval(pulseTimer);
-  pulseCountdown = 30;
-  pulseTimer = setInterval(function() {
-    pulseCountdown--;
-    var el = document.getElementById('pulseTimer');
-    if (el) el.textContent = pulseCountdown;
-    if (pulseCountdown <= 0) {
-      pulseCountdown = 30;
-      loadPulse();
-    }
+function startPulseTimer() {
+  if (pulseTmr) clearInterval(pulseTmr);
+  pulseCD = 30;
+  pulseTmr = setInterval(function() {
+    pulseCD--;
+    var el = document.getElementById('pulseTimerNum');
+    if (el) el.textContent = pulseCD;
+    if (pulseCD <= 0) { pulseCD = 30; loadPulse(); }
   }, 1000);
 }
 
 async function loadPulse() {
-  var grid = document.getElementById('pulseGrid');
-  var radar = document.getElementById('pulseRadarTrack');
-  if (!grid) return;
+  var grid  = document.getElementById('pulseGrid');
+  var radar = document.getElementById('pulseRadar');
+  var scanT = document.getElementById('pulseScanTime');
   try {
-    var r = await fetch('/api/premium-pulse');
+    var r = await fetch('/api/premium-pulse', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
     var data = await r.json();
-    var tiles  = data.tiles  || [];
+    var movers = data.movers || [];
     var radarItems = data.radar || [];
+    if (scanT) scanT.textContent = 'Updated: '+new Date().toLocaleTimeString();
 
-    // Render radar tape (duplicate for seamless loop)
-    if (radarItems.length > 0) {
-      var radarHTML = '';
-      var doubled = radarItems.concat(radarItems);
-      doubled.forEach(function(item) {
-        var cls = item.phase === 1 ? 'ri-p1' : item.phase === 2 ? 'ri-p2' : item.phase === 3 ? 'ri-p3' : 'ri-p0';
-        radarHTML += '<span class="radar-item ' + cls + '">' +
-          item.symbol + ' $' + item.price.toFixed(2) + ' ' +
-          (item.changePct >= 0 ? '+' : '') + item.changePct.toFixed(1) + '% ' +
-          item.rvol + 'x RVOL' +
-          (item.phase >= 1 ? ' P' + item.phase : '') +
+    // Radar tape
+    if (radarItems.length > 0 && radar) {
+      var ri2 = radarItems.concat(radarItems);
+      radar.innerHTML = ri2.map(function(item) {
+        var rc = item.phase===1?'#f0b429':item.phase===2?'#22c55e':item.phase===3?'#ef4444':'#3a5570';
+        return '<span class="radar-item" style="color:'+rc+'">' +
+          '$'+item.symbol+' &nbsp;' +
+          '<span style="color:#3a5570">RVOL</span> '+item.rvol+'x &nbsp;' +
+          (item.changePct>=0?'+':'')+item.changePct.toFixed(1)+'% &nbsp;' +
+          (item.phase>=1?'P'+item.phase:'')+
           '</span>';
-      });
-      if (radar) radar.innerHTML = radarHTML;
+      }).join('');
     }
 
-    // Render tiles
-    if (!tiles.length) {
-      grid.innerHTML = '<div style="grid-column:span 3;text-align:center;padding:24px;color:var(--muted);font-size:11px">No premium movers found. Market may be closed.</div>';
+    // Tiles
+    if (!movers.length) {
+      if (grid) grid.innerHTML = '<div style="grid-column:span 3;text-align:center;padding:30px;color:var(--muted)">No premium movers found. Market may be closed or quiet.</div>';
       return;
     }
     var html = '';
-    tiles.forEach(function(t) {
-      var mmrTotal = (t.mmr && t.mmr.total) || 0;
-      // Font size scales with MMR: 60=12px, 80=16px, 100=20px
-      var symSize = Math.round(12 + (mmrTotal - 60) / 40 * 8);
-      symSize = Math.max(11, Math.min(20, symSize));
-      var ph = t.phase || 0;
-      var tileClass = ph === 1 ? 'pt-p1' : ph === 2 ? 'pt-p2' : ph === 3 ? 'pt-p3' : 'pt-base';
-      var dotColor = ph === 1 ? '#f0b429' : ph === 2 ? '#22c55e' : ph === 3 ? '#ef4444' : 'transparent';
-      var chgColor = t.changePct >= 0 ? 'var(--green)' : 'var(--red)';
-      var isPerfect = mmrTotal >= 85 && ph <= 2;
+    movers.forEach(function(m) {
+      var mmrT   = m.mmr || 0;
+      var phase  = m.phase || 0;
+      var color  = m.phaseColor || 'var(--border)';
+      var tCls   = phase===1?'pt-p1':phase===2?'pt-p2':phase===3?'pt-p3':phase===0.5?'pt-p05':'pt-p0';
+      var dotClr = phase===1?'#f0b429':phase===2?'#22c55e':phase===3?'#ef4444':phase===0.5?'#60a5fa':'transparent';
+      var isPerfect = mmrT >= 85 && phase <= 2;
+      // Font scales with MMR: 60→12px, 100→18px
+      var symSz = Math.round(Math.max(11, Math.min(18, 12 + (mmrT - 60) * 0.15)));
+      var chgClr = m.changePct >= 0 ? 'var(--green)' : 'var(--red)';
+      var mmrClr = mmrT >= 80 ? 'var(--gold)' : mmrT >= 60 ? 'var(--blue)' : 'var(--muted)';
 
-      html += '<div class="pulse-tile ' + tileClass + '" onclick="quickPulseDive(\'' + t.symbol + '\')">' +
-        '<div class="phase-dot" style="background:' + dotColor + '"></div>' +
-        (isPerfect ? '<div class="trophy-badge">🏆</div>' : '') +
-        '<span class="tile-sym" style="font-size:' + symSize + 'px">' + t.symbol + '</span>' +
-        '<div class="tile-chg" style="color:' + chgColor + '">' + (t.changePct >= 0 ? '+' : '') + t.changePct.toFixed(1) + '%</div>' +
-        '<div class="tile-mmr" style="color:' + (mmrTotal >= 80 ? 'var(--gold)' : 'var(--muted)') + '">MMR ' + mmrTotal + '</div>' +
-        '<div class="tile-rvol" style="color:' + (t.rvol >= 5 ? 'var(--purple)' : 'var(--muted)') + '">' + t.rvol + 'x</div>' +
+      // Mini gauge inside tile
+      var tileRot = 45 + ((m.intensity||0) / 100 * 180);
+      var gaugeMini = '<div style="position:relative;width:36px;height:20px;overflow:hidden;margin:0 auto 5px">' +
+        '<div style="position:absolute;top:0;left:0;width:36px;height:36px;border:3px solid #1a2a3a;border-radius:50%;border-bottom-color:transparent;border-left-color:transparent;transform:rotate(45deg)"></div>' +
+        '<div style="position:absolute;top:0;left:0;width:36px;height:36px;border:3px solid '+color+';border-radius:50%;border-bottom-color:transparent;border-left-color:transparent;transform:rotate('+tileRot+'deg);transition:transform 1s cubic-bezier(.34,1.1,.64,1)"></div>' +
+        '</div>';
+
+      html += '<div class="pulse-tile '+tCls+'" onclick="quickDive(\''+m.symbol+'\')">' +
+        '<div class="phase-pip" style="background:'+dotClr+'"></div>' +
+        (isPerfect?'<div class="trophy">🏆</div>':'') +
+        gaugeMini +
+        '<span class="tile-sym" style="font-size:'+symSz+'px">'+m.symbol+'</span>' +
+        '<div class="tile-chg" style="color:'+chgClr+'">'+(m.changePct>=0?'+':'')+m.changePct.toFixed(1)+'%</div>' +
+        '<div class="tile-mmr" style="color:'+mmrClr+'">MMR '+mmrT+'</div>' +
+        '<div class="tile-rv" style="color:'+(m.rvol>=5?'var(--purple)':'var(--muted)')+'">'+m.rvol+'x vol</div>' +
         '</div>';
     });
-    grid.innerHTML = html;
+    if (grid) grid.innerHTML = html;
+
   } catch(e) {
-    if (grid) grid.innerHTML = '<div style="grid-column:span 3;text-align:center;padding:20px;color:var(--red);font-size:11px">Error: ' + e.message + '</div>';
+    if (grid) grid.innerHTML = '<div style="grid-column:span 3;padding:20px;color:var(--red);text-align:center;font-size:11px">Error: '+e.message+'</div>';
   }
 }
 
-function quickPulseDive(sym) {
-  // Load analyze tab and run probability
+function quickDive(sym) {
   goAnalyze(sym);
 }
-
-// Start pulse when tab opens
-document.addEventListener('DOMContentLoaded', function() {
-  var pulseTab = document.querySelector('[data-tab="pulse"]');
-  if (pulseTab) {
-    pulseTab.addEventListener('click', function() {
-      loadPulse();
-      startPulseCountdown();
-    });
-  }
-});
 </script>
 </body>
 </html>
