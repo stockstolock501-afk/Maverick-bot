@@ -202,6 +202,29 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
 .fib-zone{display:inline-block;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);border-radius:4px;padding:2px 7px;font-size:9px;color:var(--purple);margin:2px 2px 0 0}
 .fib-hit{background:rgba(167,139,250,.3);color:#fff;border-color:rgba(167,139,250,.6)}
 .bpi-mini-chart{width:100%;height:170px;border-radius:7px;overflow:hidden;border:1px solid var(--border);margin-bottom:9px}
+/* STRESS TEST CARD */
+.stress-card{border:1px solid rgba(167,139,250,.35);background:linear-gradient(135deg,rgba(167,139,250,.09),rgba(167,139,250,.02));border-radius:9px;padding:12px 14px;margin-bottom:9px}
+.stress-circle{width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;font-family:monospace;flex-shrink:0;border:3px solid rgba(167,139,250,.4)}
+.sc-green{color:var(--green);border-color:var(--green)}
+.sc-red{color:var(--red);border-color:var(--red)}
+.sc-gold{color:var(--gold);border-color:var(--gold)}
+.ev-positive{color:var(--green);font-weight:900;font-family:monospace}
+.ev-negative{color:var(--red);font-weight:900;font-family:monospace}
+.stagger-box{background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2);border-radius:6px;padding:8px;margin-top:7px;font-size:10px;color:#60a5fa;line-height:1.6}
+/* MACRO RIBBON */
+.macro-ribbon{display:flex;align-items:center;gap:7px;background:rgba(0,0,0,.25);border-radius:6px;padding:7px 10px;margin-bottom:8px;font-size:10px}
+.macro-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+/* TOP GAINERS LIST */
+.mover-list{margin-top:8px}
+.mover-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--bg3);cursor:pointer}
+.mover-row:last-child{border-bottom:none}
+.mover-row:active{opacity:.8}
+.mover-sym{font-size:14px;font-weight:900;color:#fff;font-family:monospace;width:55px}
+.mover-name{font-size:9px;color:var(--muted);flex:1;margin:0 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mover-price{font-size:12px;font-family:monospace;font-weight:700;color:var(--text);width:50px;text-align:right}
+.mover-chg{font-size:11px;font-family:monospace;font-weight:900;width:52px;text-align:right}
+.mover-vol{font-size:9px;color:var(--muted);width:38px;text-align:right}
+
 </style>
 </head>
 <body>
@@ -452,6 +475,59 @@ async function runAnalysis(){
 }
 
 
+
+// ── Stress Test Card ─────────────────────────────────────────────
+function buildStressCard(stress, macro, levels) {
+  if (!stress || !stress.paths) return '';
+  var eff   = stress.pathEfficiency || 0;
+  var ruin  = stress.riskOfRuin || 0;
+  var ev    = stress.expectedValue || 0;
+  var effCls  = eff  > 65 ? 'sc-green' : eff  > 50 ? 'sc-gold' : 'sc-red';
+  var ruinCls = ruin > 35 ? 'sc-red'   : ruin > 20 ? 'sc-gold' : 'sc-green';
+  var evCls   = ev   > 0  ? 'ev-positive' : 'ev-negative';
+  var verdictColor = stress.verdict === 'INSTITUTIONAL GRADE' ? 'var(--green)' : stress.verdict === 'FAVORABLE' ? 'var(--gold)' : 'var(--red)';
+
+  // Macro ribbon
+  var macroColor = macro && macro.penalty < -10 ? 'var(--red)' : macro && macro.penalty < 0 ? 'var(--gold)' : macro && macro.penalty > 0 ? 'var(--green)' : 'var(--muted)';
+  var macroDotBg = macro && macro.penalty < -10 ? '#ef4444' : macro && macro.penalty < 0 ? '#f0b429' : macro && macro.penalty > 0 ? '#22c55e' : '#555';
+  var macroHtml = macro ? '<div class="macro-ribbon"><div class="macro-dot" style="background:' + macroDotBg + '"></div><span style="color:' + macroColor + ';font-weight:700">' + (macro.regime || 'UNKNOWN') + '</span><span style="color:var(--muted);margin-left:4px">· SPY/QQQ macro regime · MMR adjusted ' + (macro.penalty > 0 ? '+' : '') + macro.penalty + ' pts</span></div>' : '';
+
+  // Kelly sizing note
+  var kellyCls = (stress.kellyCriterion||0) > 20 ? 'var(--green)' : (stress.kellyCriterion||0) > 0 ? 'var(--gold)' : 'var(--red)';
+  var kellySizing = stress.kellyCriterion > 0 ? 'Kelly suggests ' + Math.min(25, +(stress.kellyCriterion/2).toFixed(0)) + '% of capital' : 'Kelly suggests 0% — math does not favor this entry';
+
+  // Stagger execution plan
+  var sg = stress.stagger || {};
+  var staggerHtml = sg.pieces > 1 ?
+    '<div class="stagger-box">VWAP Execution Plan: Break ' + stress.positionShares + ' shares into ' + sg.pieces + ' x ' + sg.sharesEach + ' over ' + sg.pieces * (sg.intervalMin||3) + 'min. ' +
+    'Enter piece every ' + sg.intervalMin + ' min to minimize slippage and build near VWAP.</div>' :
+    '<div class="stagger-box">Small position. Single market entry acceptable.</div>';
+
+  return '<div class="stress-card">' +
+    '<div style="font-size:9px;color:var(--purple);font-weight:900;letter-spacing:2px;margin-bottom:8px">INSTITUTIONAL STRESS TEST — ' + stress.paths + ' PATHS</div>' +
+    macroHtml +
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
+    '<div class="stress-circle ' + effCls + '">' + eff + '%</div>' +
+    '<div style="flex:1"><div style="font-size:14px;font-weight:900;color:' + verdictColor + '">' + stress.verdict + '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:2px">Path Efficiency — probability T1 hit before stop</div></div>' +
+    '<div class="stress-circle ' + ruinCls + '" style="border-color:' + (ruin > 35?'var(--red)':ruin > 20?'var(--gold)':'var(--green)') + '">' + ruin + '%</div>' +
+    '</div>' +
+    '<div style="display:flex;gap:6px;font-size:10px;margin-bottom:8px">' +
+    '<span style="color:var(--muted)">Expected Value:</span> <span class="' + evCls + '">$' + ev + ' per trade</span>' +
+    '<span style="color:var(--muted);margin-left:10px">Portfolio risk:</span> <span style="color:' + (stress.portfolioRiskPct>5?'var(--red)':'var(--gold)') + '">' + (stress.portfolioRiskPct||0) + '%</span>' +
+    '</div>' +
+    '<div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.15);border-radius:6px;padding:8px;font-size:10px;line-height:1.6;color:var(--text)">' +
+    '<strong style="color:var(--purple)">Vanguard Verdict:</strong> ' +
+    (eff > 65 && ruin < 25 ? 'Math supports this entry. ' + eff + '% of paths hit T1 before stop. Expected value positive at $' + ev + '.' :
+     ruin > 40 ? 'High ruin risk at ' + ruin + '%. Reduce position size or wait for better entry point.' :
+     'Marginal setup. Consider waiting for sweep confirmation or tighter entry.') +
+    ' ' + (ev < 0 ? '<strong style="color:var(--red)">EV negative — do not take this trade.</strong>' : '') +
+    '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:6px">' + kellySizing + '</div>' +
+    staggerHtml +
+    '</div>';
+}
+
 // ── BPI Card Renderer ─────────────────────────────────────────────
 function buildBPICard(bpi, sym) {
   if (!bpi || bpi.score === 0) return '';
@@ -491,16 +567,67 @@ function buildBPICard(bpi, sym) {
   }
 
   // Mini TradingView 5-min chart
-  var chartId = 'bpiChart_' + sym + '_' + Date.now();
-  var miniChart = '<div class="bpi-mini-chart" id="' + chartId + '"></div>';
+  // Canvas-based cluster chart — no external dependency, always renders
+  var canvasId = 'bpiCanvas_' + Date.now();
+  var miniChart = '<canvas id="' + canvasId + '" width="320" height="160" style="width:100%;height:160px;border-radius:7px;border:1px solid var(--border);display:block;margin-bottom:9px;background:#080f18"></canvas>';
   var chartScript = '<script>' +
-    'setTimeout(function(){if(typeof TradingView!=="undefined"){' +
-    'try{new TradingView.widget({container_id:"' + chartId + '",symbol:"' + sym + '",' +
-    'interval:"5",theme:"dark",style:"1",locale:"en",' +
-    'toolbar_bg:"#0f1923",hide_top_toolbar:true,hide_legend:true,' +
-    'enable_publishing:false,allow_symbol_change:false,' +
-    'studies:["PivotPointsHighLow@tv-basicstudies"],' +
-    'width:"100%",height:170});}catch(e){}}},300);' +
+    '(function(){' +
+    'var el=document.getElementById("' + canvasId + '");' +
+    'if(!el)return;' +
+    'var ctx=el.getContext("2d");' +
+    'var W=el.width,H=el.height;' +
+    'var price=' + (bpi.demandZone||0) + ';' +
+    'var clusters=' + JSON.stringify((bpi.clusters||[]).slice(0,5)) + ';' +
+    'var fibs=' + JSON.stringify((bpi.fibonacci||[]).map(function(f){return{price:f.price,label:f.label};})) + ';' +
+    'var sweep=' + (bpi.sweepDetected?'true':'false') + ';' +
+    // Background
+    'ctx.fillStyle="#080f18";ctx.fillRect(0,0,W,H);' +
+    // Calculate price range for y-axis
+    'var allP=[price];' +
+    'clusters.forEach(function(c){allP.push(c.price);});' +
+    'fibs.forEach(function(f){allP.push(f.price);});' +
+    'var minP=Math.min.apply(null,allP)*0.990;' +
+    'var maxP=Math.max.apply(null,allP)*1.010;' +
+    'var range=maxP-minP;' +
+    'function toY(p){return H-((p-minP)/range*(H-24))-12;}' +
+    // Grid lines
+    'ctx.strokeStyle="rgba(255,255,255,0.04)";ctx.lineWidth=1;' +
+    'for(var g=0;g<5;g++){var gy=Math.round(H/5*g)+0.5;ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}' +
+    // Volume cluster bars (horizontal, left side)
+    'var maxVol=clusters[0]?clusters[0].vol:1;' +
+    'clusters.forEach(function(c,i){' +
+    'var y=toY(c.price);var bw=Math.max(20,Math.round((c.vol/maxVol)*100));' +
+    'var alpha=i===0?0.9:0.5;' +
+    'ctx.fillStyle=i===0?"rgba(240,180,41,"+alpha+")":"rgba(96,165,250,"+alpha+")";' +
+    'ctx.fillRect(0,y-4,bw,8);' +
+    // Price label
+    'ctx.fillStyle=i===0?"#f0b429":"#60a5fa";ctx.font="bold 8px monospace";' +
+    'ctx.fillText("$"+c.price.toFixed(2),bw+3,y+3);' +
+    'if(i===0){ctx.fillStyle="rgba(240,180,41,0.08)";ctx.fillRect(0,y-10,W,20);}' + // POC highlight
+    '});' +
+    // Fibonacci levels (dashed lines)
+    'fibs.forEach(function(f){' +
+    'var fy=toY(f.price);' +
+    'ctx.strokeStyle="rgba(167,139,250,0.35)";ctx.lineWidth=1;ctx.setLineDash([4,4]);' +
+    'ctx.beginPath();ctx.moveTo(120,fy);ctx.lineTo(W-40,fy);ctx.stroke();' +
+    'ctx.setLineDash([]);' +
+    'ctx.fillStyle="rgba(167,139,250,0.7)";ctx.font="7px monospace";' +
+    'ctx.fillText("Fib "+f.label,W-38,fy+3);' +
+    '});' +
+    // Current price line
+    'var cy=toY(price);' +
+    'ctx.strokeStyle=sweep?"#22c55e":"#f0b429";ctx.lineWidth=2;ctx.setLineDash([6,3]);' +
+    'ctx.beginPath();ctx.moveTo(0,cy);ctx.lineTo(W,cy);ctx.stroke();ctx.setLineDash([]);' +
+    'ctx.fillStyle=sweep?"#22c55e":"#f0b429";ctx.font="bold 9px monospace";' +
+    'ctx.fillText("DEMAND $"+price.toFixed(2)+(sweep?" SWEPT":""),W/2-40,cy-5);' +
+    // Sweep indicator
+    'if(sweep){' +
+    'ctx.fillStyle="rgba(34,197,94,0.15)";ctx.fillRect(W-70,4,66,18);' +
+    'ctx.fillStyle="#22c55e";ctx.font="bold 8px monospace";ctx.fillText("SWEEP",W-66,16);' +
+    '}' +
+    // Title
+    'ctx.fillStyle="rgba(255,255,255,0.3)";ctx.font="8px monospace";ctx.fillText("VOLUME PROFILE · DEMAND ZONES · FIB LEVELS",8,11);' +
+    '})();' +
     '<\/script>';
 
   return '<div class="bpi-card ' + cardCls + '">' +
@@ -600,6 +727,7 @@ function renderAnalysis(data, out){
     (tfSummary ? '<div style="font-size:9px;color:var(--muted);margin-top:8px;font-family:monospace">' + tfSummary + '</div>' : '') +
     '</div>' +
     planHtml +
+    buildStressCard(data.stress, data.macro, data.levels) +
     buildBPICard(data.bpi, data.ticker) +
     '<div class="card"><div class="lbl">Live Data <span style="color:var(--muted);font-size:8px">· ' + (q.source||'live').toUpperCase() + '</span></div>' +
     '<div class="g3">' +
@@ -1711,6 +1839,21 @@ setTimeout(function() {
   </div>
 
   <button class="btn btn-dark" style="font-size:9px;padding:9px" onclick="loadPulse()">FORCE REFRESH NOW</button>
+
+  <!-- Top Movers List -->
+  <div class="card" style="margin-top:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="lbl" style="margin:0">Top Movers — Premium Area $0.50-$15</div>
+      <span id="moverTime" style="font-size:8px;color:var(--muted)">--</span>
+    </div>
+    <div style="display:flex;gap:5px;margin-bottom:8px">
+      <button class="cat-filter-btn active" id="moverTabG" onclick="switchMoverTab('gainers',this)">TOP GAINERS</button>
+      <button class="cat-filter-btn" id="moverTabA" onclick="switchMoverTab('active',this)">MOST ACTIVE</button>
+    </div>
+    <div class="mover-list" id="moverList">
+      <div style="text-align:center;padding:20px;font-size:10px;color:var(--muted)">Loading movers...</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -1924,6 +2067,7 @@ function startPulseTimer() {
 }
 
 async function loadPulse() {
+  loadMovers();
   var grid  = document.getElementById('pulseGrid');
   var radar = document.getElementById('pulseRadar');
   var scanT = document.getElementById('pulseScanTime');
@@ -1992,6 +2136,70 @@ async function loadPulse() {
 
 function quickDive(sym) {
   goAnalyze(sym);
+}
+
+// Top movers list
+var currentMoverTab = 'gainers';
+var moverData = { gainers: [], active: [] };
+
+function switchMoverTab(tab, btn) {
+  currentMoverTab = tab;
+  document.querySelectorAll('.cat-filter-btn').forEach(function(b){ if(b.id==='moverTabG'||b.id==='moverTabA') b.classList.remove('active'); });
+  if(btn) btn.classList.add('active');
+  renderMoverList();
+}
+
+function renderMoverList() {
+  var list = document.getElementById('moverList');
+  var tm   = document.getElementById('moverTime');
+  if (!list) return;
+  var items = moverData[currentMoverTab] || [];
+  if (!items.length) {
+    list.innerHTML = '<div style="text-align:center;padding:16px;font-size:10px;color:var(--muted)">No movers found. Market may be closed.</div>';
+    return;
+  }
+  var html = '';
+  items.forEach(function(m) {
+    var chgColor = m.chg >= 0 ? 'var(--green)' : 'var(--red)';
+    var rvColor  = m.rv >= 5 ? 'var(--purple)' : m.rv >= 2 ? 'var(--gold)' : 'var(--muted)';
+    html += '<div class="mover-row" onclick="goAnalyze('' + m.sym + '')">' +
+      '<span class="mover-sym">' + m.sym + '</span>' +
+      '<span class="mover-name">' + (m.name||'') + '</span>' +
+      '<span class="mover-price">$' + m.price.toFixed(2) + '</span>' +
+      '<span class="mover-chg" style="color:' + chgColor + '">' + (m.chg>=0?'+':'') + m.chg.toFixed(1) + '%</span>' +
+      '<span class="mover-vol" style="color:' + rvColor + '">' + m.rv.toFixed(1) + 'x</span>' +
+      '</div>';
+  });
+  list.innerHTML = html;
+  if (tm) tm.textContent = 'Live · ' + new Date().toLocaleTimeString();
+}
+
+async function loadMovers() {
+  try {
+    var results = await Promise.all([
+      fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=day_gainers&_=' + Date.now(), { headers: { 'User-Agent': 'Mozilla/5.0' } }),
+      fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=most_actives&_=' + Date.now(), { headers: { 'User-Agent': 'Mozilla/5.0' } })
+    ]);
+    function parseList(r) {
+      return r.json().then(function(d) {
+        var qs = (d&&d.finance&&d.finance.result&&d.finance.result[0]&&d.finance.result[0].quotes)||[];
+        return qs.filter(function(q){return q.regularMarketPrice>=0.5&&q.regularMarketPrice<=15;})
+          .slice(0,20).map(function(q){
+            var rv = q.regularMarketVolume/(q.averageDailyVolume3Month||1);
+            return { sym:q.symbol, name:(q.shortName||'').slice(0,18), price:q.regularMarketPrice,
+              chg:q.regularMarketChangePercent, rv:+rv.toFixed(1) };
+          });
+      }).catch(function(){return[];});
+    }
+    var g = await parseList(results[0]);
+    var a = await parseList(results[1]);
+    moverData.gainers = g.sort(function(a,b){return b.chg-a.chg;});
+    moverData.active  = a.sort(function(a,b){return b.rv-a.rv;});
+    renderMoverList();
+  } catch(e) {
+    var list = document.getElementById('moverList');
+    if(list) list.innerHTML = '<div style="color:var(--red);font-size:10px;padding:10px">Error loading movers</div>';
+  }
 }
 </script>
 <!-- ================================================================ -->
