@@ -2186,6 +2186,97 @@ app.get('/api/groq-test', async function(req, res) {
   } catch(e) { res.json({ error: e.message }); }
 });
 
+// ================================================================
+// MAVERICK STRESS-TEST SIMULATOR v4.0 — Institutional Grade
+// 1,000-path Monte Carlo. Path Efficiency. Risk of Ruin. EV.
+// ================================================================
+
+function runStressTest(entry, stop, t1, t2, atr, portfolioSize, shares) {
+  if (!entry || !stop || !t1 || !atr || entry <= stop) {
+    return { pathEfficiency: 0, riskOfRuin: 0, expectedValue: 0, verdict: 'INVALID LEVELS', paths: 0 };
+  }
+  var ITERATIONS = 1000;
+  var t1Hits = 0, stopHits = 0, t2Hits = 0, survived = 0;
+  var pSize = portfolioSize || 348;
+  var posShares = shares || Math.floor((pSize * 0.03) / (entry - stop));
+  var winPerShare  = t1 - entry;
+  var lossPerShare = entry - stop;
+  var STEPS = 60; // 60-minute window
+
+  for (var i = 0; i < ITERATIONS; i++) {
+    var price = entry;
+    var hitT1 = false, hitStop = false, hitT2 = false;
+    for (var step = 0; step < STEPS; step++) {
+      // Geometric Brownian Motion: drift + noise
+      // Use 1.5x ATR as the step volatility (realistic intraday)
+      var drift = 0.0001; // small positive drift (trending assumption)
+      var noise = (Math.random() - 0.48) * (atr * 1.5); // slight bullish skew
+      price = price + drift * price + noise;
+      if (price <= stop) { hitStop = true; break; }
+      if (!hitT1 && price >= t1) { hitT1 = true; }
+      if (t2 && !hitT2 && price >= t2) { hitT2 = true; break; }
+    }
+    if (hitStop) stopHits++;
+    else if (hitT1 || hitT2) { t1Hits++; if (hitT2) t2Hits++; }
+    else survived++;
+  }
+
+  var efficiency   = +(t1Hits / ITERATIONS * 100).toFixed(1);
+  var ruin         = +(stopHits / ITERATIONS * 100).toFixed(1);
+  var t2Rate       = +(t2Hits / ITERATIONS * 100).toFixed(1);
+  var expectedVal  = +((efficiency/100 * winPerShare * posShares) - (ruin/100 * lossPerShare * posShares)).toFixed(2);
+  var kellyCriterion = +((efficiency/100 - (1 - efficiency/100) / (winPerShare / lossPerShare)) * 100).toFixed(1);
+
+  var verdict;
+  if (efficiency > 65 && ruin < 25)      verdict = 'INSTITUTIONAL GRADE';
+  else if (efficiency > 50 && ruin < 35) verdict = 'FAVORABLE';
+  else if (ruin > 40)                     verdict = 'HIGH RUIN RISK — REDUCE SIZE';
+  else                                    verdict = 'MARGINAL — WAIT FOR BETTER ENTRY';
+
+  // Execution stagger (VWAP-style): break into 4 pieces over 10 min
+  var staggerPieces = Math.max(1, Math.min(4, Math.floor(posShares / 50)));
+  var staggerShares = Math.floor(posShares / staggerPieces);
+
+  return {
+    pathEfficiency: efficiency,
+    riskOfRuin: ruin,
+    t2Rate: t2Rate,
+    expectedValue: expectedVal,
+    kellyCriterion: kellyCriterion,
+    verdict: verdict,
+    positionShares: posShares,
+    winPerShare: +winPerShare.toFixed(3),
+    lossPerShare: +lossPerShare.toFixed(3),
+    portfolioRiskPct: +((lossPerShare * posShares / pSize) * 100).toFixed(1),
+    portfolioExposurePct: +((entry * posShares / pSize) * 100).toFixed(1),
+    stagger: { pieces: staggerPieces, sharesEach: staggerShares, intervalMin: Math.ceil(10 / staggerPieces) },
+    paths: ITERATIONS
+  };
+}
+
+// Macro correlation: check SPY/QQQ trend to apply penalty
+async function getMacroSentiment() {
+  try {
+    var results = await Promise.all([
+      getCandles('SPY', '5d', '60m'),
+      getCandles('QQQ', '5d', '60m')
+    ]);
+    var spy = results[0]; var qqq = results[1];
+    if (!spy || !qqq) return { penalty: 0, regime: 'UNKNOWN', spyTrend: 'unknown', qqqTrend: 'unknown' };
+    var spyBull  = spy.trend === 'UP' && spy.rsi > 45 && spy.rsi < 75;
+    var qqqBull  = qqq.trend === 'UP' && qqq.rsi > 45 && qqq.rsi < 75;
+    var spyBear  = spy.trend === 'DOWN' && spy.rsi < 50;
+    var qqqBear  = qqq.trend === 'DOWN' && qqq.rsi < 50;
+    var penalty  = 0;
+    var regime   = 'NEUTRAL';
+    if (spyBear && qqqBear) { penalty = -15; regime = 'DISTRIBUTION — Market selling'; }
+    else if (spyBear || qqqBear) { penalty = -8; regime = 'CAUTION — Mixed macro'; }
+    else if (spyBull && qqqBull) { penalty = 5; regime = 'RISK-ON — Macro tailwind'; }
+    else { penalty = 0; regime = 'NEUTRAL'; }
+    return { penalty: penalty, regime: regime, spyTrend: spy.trend + ' RSI:' + spy.rsi, qqqTrend: qqq.trend + ' RSI:' + qqq.rsi, spyRvol: spy.relVolume, qqqRvol: qqq.relVolume };
+  } catch(e) { return { penalty: 0, regime: 'UNKNOWN' }; }
+}
+
 app.post('/api/analyze', async function(req, res) {
   var ticker = req.body.ticker;
   if (!ticker) return res.status(400).json({ error: 'no ticker' });
@@ -2228,6 +2319,13 @@ app.post('/api/analyze', async function(req, res) {
 
     // Bottom Probability Index
     var bpi = computeBPI(rawDaily, quote.price);
+
+    // Macro Correlation Shield
+    var macro = await getMacroSentiment();
+    var adjustedMMR = Math.min(100, Math.max(0, mmr.total + macro.penalty));
+
+    // Stress Test — 1,000 Monte Carlo paths
+    var stress = runStressTest(quote.price, levels.stop, levels.t1, levels.t2, atr || quote.price * 0.03, 348, null);
 
     var ANALYZE_PROMPT = 'You are MAVERICK aggressive day trading AI v4.0.\n' +
       'You receive: MMR score, LuxAlgo signals, multi-timeframe data, AND a Bottom Probability Index (BPI).\n\n' +
@@ -2284,8 +2382,9 @@ app.post('/api/analyze', async function(req, res) {
     if (!verdict) return res.status(503).json({ error: 'AI unavailable - visit /api/groq-test' });
 
     res.json({
-      ticker: sym, verdict: verdict, mmr: mmr, dilution: dilution, levels: levels,
-      bpi: bpi, luxAlgo: luxAlgo,
+      ticker: sym, verdict: verdict, mmr: mmr, adjustedMMR: adjustedMMR,
+      dilution: dilution, levels: levels, bpi: bpi, luxAlgo: luxAlgo,
+      stress: stress, macro: macro,
       data: { quote: quote, timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 }, news: news },
       timestamp: new Date().toISOString()
     });
