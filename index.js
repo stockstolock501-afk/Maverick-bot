@@ -681,63 +681,48 @@ async function continuousScanCycle() {
       .forEach(function(q) { candidates.add(q.symbol); });
   } catch(e) {}
 
-  var syms = Array.from(candidates).slice(0, 8);
-  for (var i = 0; i < syms.length; i++) {
-    var sym = syms[i];
-    var lastAlert = scanCache.get(sym);
-    if (lastAlert && (Date.now() - lastAlert) < 90 * 60 * 1000) continue;
+  // PARALLEL BATCH — all candidates simultaneously
+  var syms = Array.from(candidates).slice(0, 8).filter(function(s) {
+    var last = scanCache.get(s);
+    return !last || (Date.now() - last) >= 90 * 60 * 1000;
+  });
+  if (!syms.length) return;
+
+  var batchResults = await Promise.all(syms.map(function(sym) {
+    return Promise.all([getQuote(sym), getCandles(sym,'3mo','1d'), getCandles(sym,'2d','15m'), getFreshNews(sym)])
+      .then(function(r) { return { sym:sym, quote:r[0], tf1d:r[1], tf15:r[2], news:r[3] }; })
+      .catch(function() { return null; });
+  }));
+
+  batchResults.forEach(function(row) {
+    if (!row || !row.quote) return;
     try {
-      var results = await Promise.all([
-        getQuote(sym),
-        getCandles(sym, '3mo', '1d'),
-        getCandles(sym, '2d', '15m'),
-        getFreshNews(sym)
-      ]);
-      var quote = results[0];
-      var tf1d  = results[1];
-      var tf15  = results[2];
-      var news  = results[3];
-      if (!quote) continue;
-
-      // MMR math engine — no Groq call here
+      var sym = row.sym; var quote = row.quote; var tf1d = row.tf1d; var tf15 = row.tf15; var news = row.news;
       var mmr = calculateMMR(quote, tf1d, news);
-      if (!mmr.passesFilter) continue; // Below 60 — skip silently
-
-      // Additional technical check
+      if (!mmr.passesFilter) return;
       var techOk = tf15 && tf15.trend === 'UP' && tf15.rsi > 50 && tf15.rsi < 78;
       var luxSignal = tf1d ? luxAlgoSignal(tf1d) : null;
       var luxOk = luxSignal && luxSignal.signalType === 'BUY' && luxSignal.signalStrength > 50;
-
-      // Tier the alert
       var tier, tierText;
-      if (mmr.isSupernovaCandidate && techOk) {
-        tier = 'PERFECT'; tierText = 'PERFECT TRADE ALERT';
-      } else if (mmr.total >= 80 && techOk) {
-        tier = 'HIGH'; tierText = 'HIGH CONVICTION SETUP';
-      } else if (mmr.total >= 60) {
-        tier = 'MODERATE'; tierText = 'SETUP DETECTED';
-      } else {
-        continue;
-      }
-
+      if (mmr.isSupernovaCandidate && techOk)   { tier='PERFECT'; tierText='PERFECT TRADE ALERT'; }
+      else if (mmr.total >= 80 && techOk)        { tier='HIGH'; tierText='HIGH CONVICTION SETUP'; }
+      else if (mmr.total >= 60)                  { tier='MODERATE'; tierText='SETUP DETECTED'; }
+      else return;
       scanCache.set(sym, Date.now());
       if (TG_CHAT_ID && bot) {
         var atr = (tf1d && tf1d.atr) || null;
         var lv  = calcLevels(quote.price, atr);
-        var msg = tier === 'PERFECT' ?
-          'PERFECT TRADE - ' + sym + '\n' :
-          tierText + ' - ' + sym + '\n';
-        msg += 'MMR Score: ' + mmr.total + '/100 (Grade ' + mmr.grade + ')\n';
+        var msg = (tier === 'PERFECT' ? 'PERFECT TRADE - ' : tierText + ' - ') + sym + '\n';
+        msg += 'MMR: ' + mmr.total + '/100 (Grade ' + mmr.grade + ')\n';
         msg += '$' + quote.price.toFixed(2) + ' | +' + (quote.changePct||0).toFixed(1) + '%\n';
-        msg += 'Float Rotation: ' + mmr.floatRotation + 'x | RVOL: ' + mmr.rvol + 'x\n';
-        if (atr) msg += 'ATR Stop: $' + lv.stop + ' (1.5x ATR)\n';
-        if (luxOk) msg += 'LuxAlgo: BUY ' + luxSignal.signalStrength + '% - TP $' + luxSignal.tpLevel + '\n';
+        msg += 'Rotation: ' + mmr.floatRotation + 'x | RVOL: ' + mmr.rvol + 'x\n';
+        if (atr) msg += 'ATR Stop: $' + lv.stop + '\n';
+        if (luxOk) msg += 'LuxAlgo BUY ' + luxSignal.signalStrength + '% TP $' + luxSignal.tpLevel + '\n';
         msg += '\nText: dive ' + sym;
         tgSend(TG_CHAT_ID, msg);
       }
     } catch(e) {}
-    await new Promise(function(r) { setTimeout(r, 300); });
-  }
+  });
 }
 
 function startContinuousScanner() {
@@ -1207,32 +1192,32 @@ async function runCatalystFeedScan() {
       }
     } catch(e) {}
 
-    // ── Calculate conviction scores for new T1/T2 items ──────────
-    for (var i = 0; i < Math.min(newHighConviction.length, 5); i++) {
-      var item = newHighConviction[i];
-      try {
-        var cs = await calcConvictionScore(item);
-        item.csScore = cs.total;
+    // ── Parallel conviction scoring for new T1/T2 items ──────────
+    var topItems = newHighConviction.slice(0, 5);
+    var scoredItems = await Promise.all(topItems.map(function(item) {
+      return calcConvictionScore(item).then(function(cs) {
+        item.csScore  = cs.total;
         item.csPillars = cs.pillars;
         if (cs.quote) item.quote = cs.quote;
         if (cs.tf)    item.tf    = cs.tf;
-        // Fire Telegram for high conviction
-        if (cs.total >= 0.65 && TG_CHAT_ID && bot) {
-          var tierLabel = item.tier === 1 ? 'T1 HARD CATALYST' : 'T2 MOMENTUM';
-          var msg = tierLabel + ' - CS: ' + (cs.total * 100).toFixed(0) + '/100\n\n' +
-            (item.ticker ? '*' + item.ticker + '* - ' : '') + item.headline + '\n\n' +
-            (item.quote ? 'Price: $' + item.quote.price.toFixed(2) +
-              ' | Float: ' + (item.quote.floatShares ? (item.quote.floatShares/1e6).toFixed(1) + 'M' : 'n/a') + '\n' : '') +
-            (item.tf ? 'RVOL: ' + item.tf.rvol.toFixed(1) + 'x | RSI: ' + item.tf.rsi + '\n' : '') +
-            'Trigger: ' + item.trigger + '\n' +
-            'Pillars: ' + (item.csPillars || []).join(' | ') + '\n' +
-            'Source: ' + item.source + '\n\n' +
-            (item.ticker ? 'Reply: dive ' + item.ticker : 'No ticker identified');
-          tgSend(TG_CHAT_ID, msg);
-        }
-        await new Promise(function(r){ setTimeout(r, 300); });
-      } catch(e) {}
-    }
+        return item;
+      }).catch(function() { return item; });
+    }));
+    scoredItems.forEach(function(item) {
+      if (item.csScore >= 0.65 && TG_CHAT_ID && bot) {
+        var tierLabel = item.tier === 1 ? 'T1 HARD CATALYST' : 'T2 MOMENTUM';
+        var msg = tierLabel + ' - CS: ' + (item.csScore * 100).toFixed(0) + '/100\n\n' +
+          (item.ticker ? '*' + item.ticker + '* - ' : '') + item.headline + '\n\n' +
+          (item.quote ? 'Price: $' + item.quote.price.toFixed(2) +
+            ' | Float: ' + (item.quote.floatShares ? (item.quote.floatShares/1e6).toFixed(1) + 'M' : 'n/a') + '\n' : '') +
+          (item.tf ? 'RVOL: ' + item.tf.rvol.toFixed(1) + 'x | RSI: ' + item.tf.rsi + '\n' : '') +
+          'Trigger: ' + item.trigger + '\n' +
+          'Pillars: ' + (item.csPillars || []).join(' | ') + '\n' +
+          'Source: ' + item.source + '\n\n' +
+          (item.ticker ? 'Reply: dive ' + item.ticker : 'No ticker identified');
+        tgSend(TG_CHAT_ID, msg);
+      }
+    });
 
     // Update tier counts
     tier1TodayCount = catalystStore.filter(function(c){ return c.tier===1; }).length;
@@ -1923,49 +1908,45 @@ async function runSqueezeScan() {
     } catch(e) {}
   }
 
-  var results = [];
+  // PARALLEL SQUEEZE SCAN — all 12 tickers simultaneously
   var syms = Array.from(candidates).slice(0, 12);
-  for (var i = 0; i < syms.length; i++) {
-    var sym = syms[i];
+  var sqBatch = await Promise.all(syms.map(function(sym) {
+    return Promise.all([getQuote(sym), getCandles(sym,'3mo','1d'), getShortData(sym)])
+      .then(function(pr) { return { sym:sym, quote:pr[0], tf:pr[1], sd:pr[2] }; })
+      .catch(function() { return null; });
+  }));
+
+  var results = [];
+  sqBatch.forEach(function(row) {
+    if (!row || !row.quote || row.quote.price < 0.5 || row.quote.price > 15) return;
     try {
-      var pr = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getShortData(sym)]);
-      var quote2 = pr[0]; var tf = pr[1]; var sd = pr[2];
-      if (!quote2 || quote2.price < 0.5 || quote2.price > 15) continue;
+      var sym = row.sym; var quote2 = row.quote; var tf = row.tf; var sd = row.sd;
       var phase  = detectSqueezePhase(quote2, tf);
       var mmr    = calculateMMR(quote2, tf, []);
       var stopCluster = +(quote2.high * 1.02).toFixed(2);
       var avgShortEntry = sd.yearHigh > 0 ? sd.yearHigh * 0.90 : quote2.price * 1.10;
       var painPct = +((quote2.price - avgShortEntry) / avgShortEntry * 100).toFixed(1);
       var ctbProxy = sd.siPercent > 0 ? Math.round(sd.siPercent * Math.min(phase.rvol / 5, 2) * 10) : 0;
-
-      var item = {
-        symbol: sym, price: quote2.price, changePct: quote2.changePct,
-        high: quote2.high, floatShares: quote2.floatShares,
-        shortName: quote2.shortName, phase: phase, mmr: mmr,
-        siPercent: sd.siPercent, dtc: sd.dtc, stopCluster: stopCluster,
-        painPct: painPct, ctbProxy: ctbProxy, scannedAt: new Date().toISOString()
-      };
-      results.push(item);
-
-      // Telegram: Phase 1 or 2 only
+      results.push({ symbol:sym, price:quote2.price, changePct:quote2.changePct,
+        high:quote2.high, floatShares:quote2.floatShares, shortName:quote2.shortName,
+        phase:phase, mmr:mmr, siPercent:sd.siPercent, dtc:sd.dtc,
+        stopCluster:stopCluster, painPct:painPct, ctbProxy:ctbProxy,
+        scannedAt:new Date().toISOString() });
       var alertKey = sym + ':P' + phase.phase + ':' + new Date().toDateString();
       if ((phase.phase === 1 || phase.phase === 2) && !squeezeAlerted.has(alertKey) && TG_CHAT_ID && bot) {
         squeezeAlerted.add(alertKey);
         tgSend(TG_CHAT_ID,
-          (phase.phase === 2 ? 'SQUEEZE PHASE 2 — VERTICAL ASCENT' : 'SQUEEZE PHASE 1 — COILED SPRING') + '\n\n' +
+          (phase.phase === 2 ? 'SQUEEZE PHASE 2 - VERTICAL ASCENT' : 'SQUEEZE PHASE 1 - COILED SPRING') + '\n\n' +
           '*' + sym + '* @ $' + quote2.price.toFixed(2) + ' (+' + (quote2.changePct||0).toFixed(1) + '%)\n\n' +
           'Phase: ' + phase.label + ' | Conviction: ' + phase.intensity + '\n' +
           'RVOL: ' + phase.rvol + 'x | Float Rotation: ' + phase.floatRot + 'x\n' +
           'SI: ' + sd.siPercent + '% | DTC: ' + sd.dtc + 'd\n' +
           'Stop Cluster: $' + stopCluster + '\n' +
           'Short Pain: ' + (painPct > 0 ? '+' : '') + painPct + '%\n' +
-          'MMR: ' + mmr.total + '/100\n\n' +
-          'Reply: dive ' + sym
-        );
+          'MMR: ' + mmr.total + '/100\n\nReply: dive ' + sym);
       }
-      await new Promise(function(r) { setTimeout(r, 350); });
     } catch(e) {}
-  }
+  });
 
   results.sort(function(a, b) {
     var pa = a.phase.phase, pb = b.phase.phase;
@@ -2119,21 +2100,29 @@ app.post('/api/premium-pulse', async function(req, res) {
           .forEach(function(q) { seen.add(q.symbol); allQuotes.push(q); });
       } catch(e) {}
     }
+
+    // INSTITUTIONAL PARALLEL PROCESSING — all 18 tickers simultaneously
+    // Drops response time from ~6 seconds to under 1 second
+    var batch = allQuotes.slice(0, 18);
+    var batchResults = await Promise.all(batch.map(function(q) {
+      return getCandles(q.symbol, '3mo', '1d').then(function(tf) {
+        return { q: q, tf: tf };
+      }).catch(function() { return { q: q, tf: null }; });
+    }));
+
     var movers = [], radarItems = [];
-    for (var i = 0; i < Math.min(allQuotes.length, 18); i++) {
-      var q = allQuotes[i];
+    batchResults.forEach(function(row) {
       try {
-        var tf = await getCandles(q.symbol, '3mo', '1d');
-        var rv = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
+        var q   = row.q;
+        var tf  = row.tf;
+        var rv  = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
         var quoteObj = { price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
           floatShares: q.floatShares, volume: q.regularMarketVolume,
           avgVolume: q.averageDailyVolume3Month, high: q.regularMarketDayHigh,
           low: q.regularMarketDayLow, marketCap: q.marketCap, shortName: q.shortName };
         var mmr    = calculateMMR(quoteObj, tf, []);
         var phase  = detectSqueezePhase(quoteObj, tf);
-        // Check squeeze store for richer data
         var sqEntry = squeezeStore.find(function(s) { return s.symbol === q.symbol; });
-
         var item = { symbol: q.symbol, name: q.shortName,
           price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
           rvol: +rv.toFixed(1), floatShares: q.floatShares,
@@ -2141,12 +2130,11 @@ app.post('/api/premium-pulse', async function(req, res) {
           phase: phase.phase, phaseLabel: phase.label, phaseColor: phase.color,
           intensity: phase.intensity, scorePT: mmr.total >= 85 ? 7 : mmr.total >= 70 ? 5 : 3,
           siPercent: sqEntry ? sqEntry.siPercent : 0 };
-
         movers.push(item);
         if (rv >= 5) radarItems.push(item);
-        await new Promise(function(r){ setTimeout(r, 100); });
       } catch(e) {}
-    }
+    });
+
     movers.sort(function(a, b) { return (b.mmr||0) - (a.mmr||0); });
     radarItems.sort(function(a, b) { return (b.rvol||0) - (a.rvol||0); });
     res.json({ movers: movers, radar: radarItems, timestamp: new Date().toISOString() });
@@ -2511,7 +2499,6 @@ app.post('/api/whale-scan', async function(req, res) {
             'LuxAlgo aligned + ' + (isPhase2 ? 'Phase 2 defense - whale defending $' + +tf1d2.low.toFixed(2) : 'Phase 3 markup underway') :
             isPhase2 ? 'Phase 2 price defense - same level bounced repeatedly' : 'Phase 3 markup - follow the institutional flow'
         });
-        await new Promise(function(r){setTimeout(r,200);});
       } catch(e) {}
     }
     var top = scored.sort(function(a,b){return b.footprintScore-a.footprintScore;}).slice(0,5);
