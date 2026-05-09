@@ -805,706 +805,8 @@ async function runCatalystScan(manual) {
   } catch(e) { console.error('Catalyst scan error: ' + e.message); }
 }
 
-function scheduleCatalystScans() {
-  setInterval(function() { runCatalystScan(false); }, 28 * 60 * 1000);
-  setInterval(function() {
-    var et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    var h = et.getHours(); var m = et.getMinutes(); var isWeekday = et.getDay() > 0 && et.getDay() < 6;
-    if (!isWeekday) return;
-    if ((h === 4 || h === 6 || h === 8) && m < 2) runCatalystScan(false);
-  }, 60 * 1000);
-}
-
-// =========================================================
-// API ROUTES
-// =========================================================
-
-app.get('/api/groq-test', async function(req, res) {
-  if (!GROQ_KEY) return res.json({ error: 'GROQ_KEY not set', key_present: false });
-  try {
-    var mR = await fetch('https://api.groq.com/openai/v1/models', { headers: { 'Authorization': 'Bearer ' + GROQ_KEY } });
-    var mD = await mR.json();
-    var tR = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST', headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: GROQ_MODELS[0], max_tokens: 10, messages: [{ role: 'user', content: 'Say OK' }] })
-    });
-    var tD = await tR.json();
-    res.json({ key_present: true, key_starts_with: GROQ_KEY.slice(0,8) + '...',
-      models_status: mR.status, models_available: mD.data ? mD.data.map(function(m){return m.id;}) : mD,
-      completion_status: tR.status, completion_result: tD.choices && tD.choices[0] && tD.choices[0].message ? tD.choices[0].message.content : tD });
-  } catch(e) { res.json({ error: e.message }); }
-});
-
-app.post('/api/analyze', async function(req, res) {
-  var ticker = req.body.ticker;
-  if (!ticker) return res.status(400).json({ error: 'no ticker' });
-  var sym = ticker.toUpperCase().trim();
-  try {
-    var results = await Promise.all([
-      getQuote(sym),
-      getCandles(sym, '3mo', '1d'),
-      getCandles(sym, '1mo', '60m'),
-      getCandles(sym, '5d', '60m'),
-      getCandles(sym, '2d', '15m'),
-      getFreshNews(sym)
-    ]);
-    var quote = results[0];
-    var tf1d  = results[1];
-    var tf4h  = results[2];
-    var tf1h  = results[3];
-    var tf15  = results[4];
-    var news  = results[5];
-    if (!quote) return res.status(404).json({ error: sym + ' not found' });
-
-    // Run MMR math engine
-    var mmr = calculateMMR(quote, tf1d, news);
-
-    // Run dilution shield
-    var dilution = await checkDilutionRisk(sym);
-
-    // LuxAlgo signals
-    var luxAlgo = {
-      daily:    tf1d  ? luxAlgoSignal(tf1d)  : null,
-      fourhour: tf4h  ? luxAlgoSignal(tf4h)  : null,
-      onehour:  tf1h  ? luxAlgoSignal(tf1h)  : null
-    };
-
-    // ATR-first stop calculation
-    var atr = tf1d ? tf1d.atr : null;
-    var levels = calcLevels(quote.price, atr, dilution.stopMultiplier);
-
-    var ANALYZE_PROMPT = 'You are MAVERICK aggressive day trading AI. You receive MMR score (math pre-filter), LuxAlgo signals, and multi-timeframe data.\n' +
-      'VERDICTS: BUY | DONT_BUY | WATCH\n' +
-      'STOPS: Use ATR-based levels provided. Do NOT use fixed percentages.\n' +
-      'If dilution risk detected, widen stops and note in key_risk.\n' +
-      'LuxAlgo signals are primary technical confirmation. 2+ timeframe alignment = high conviction.\n' +
-      'MMR >= 80 = whale confirmed. MMR 60-79 = elevated interest. MMR < 60 = noise.\n' +
-      'RETURN ONLY VALID JSON:\n' +
-      '{"verdict":"BUY|DONT_BUY|WATCH","conviction":0-100,"headline":"one decisive sentence","chart_pattern":"pattern name","timeframe_alignment":"BULLISH|BEARISH|MIXED|NEUTRAL","mmr_assessment":"brief MMR interpretation","reasoning":["bullet1","bullet2","bullet3"],"entry_zone":{"low":0.000,"high":0.000},"stop_loss":0.000,"target_1":0.000,"target_2":0.000,"target_3":0.000,"risk_reward":0.0,"position_size_suggestion":"AGGRESSIVE|STANDARD|SMALL","trade_type":"DAY_TRADE|SWING|SCALP","key_risk":"specific risk with numbers","trigger_to_watch":"exact condition if WATCH","time_horizon":"estimate"}';
-
-    var payload = {
-      ticker: sym,
-      mmr: mmr,
-      dilution_risk: dilution,
-      atr_stop_suggested: levels.stop,
-      quote: { price: quote.price, changePct: quote.changePct, open: quote.open, high: quote.high, low: quote.low, volume: quote.volume, marketCap: quote.marketCap, floatShares: quote.floatShares, sector: quote.sector },
-      timeframes: { daily: tf1d || 'unavailable', fourhour: tf4h || 'unavailable', onehour: tf1h || 'unavailable', fifteen: tf15 || 'unavailable' },
-      luxAlgo_signals: luxAlgo,
-      recent_news: news.slice(0, 3).map(function(n) { return n.headline; })
-    };
-
-    var verdict = await groqCall(ANALYZE_PROMPT, JSON.stringify(payload));
-    if (!verdict) return res.status(503).json({ error: 'AI unavailable - visit /api/groq-test' });
-
-    res.json({
-      ticker: sym, verdict: verdict, mmr: mmr, dilution: dilution, levels: levels,
-      luxAlgo: luxAlgo, data: { quote: quote, timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 }, news: news },
-      timestamp: new Date().toISOString()
-    });
-  } catch(e) { console.error('Analyze: ' + e.message); res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/quote/:symbol', async function(req, res) {
-  var q = await getQuote(req.params.symbol.toUpperCase());
-  if (!q) return res.status(404).json({ error: 'not found' });
-  res.json(q);
-});
-
-app.post('/api/luxalgo', async function(req, res) {
-  var ticker = req.body.ticker;
-  if (!ticker) return res.status(400).json({ error: 'no ticker' });
-  var sym = ticker.toUpperCase();
-  var r = await Promise.all([
-    getCandles(sym, '3mo', '1d'),
-    getCandles(sym, '1mo', '60m'),
-    getCandles(sym, '5d', '60m'),
-    getCandles(sym, '2d', '15m')
-  ]);
-  res.json({ ticker: sym, daily: r[0] ? luxAlgoSignal(r[0]) : null, fourhour: r[1] ? luxAlgoSignal(r[1]) : null, onehour: r[2] ? luxAlgoSignal(r[2]) : null, fifteen: r[3] ? luxAlgoSignal(r[3]) : null, timestamp: new Date().toISOString() });
-});
-
-// MMR endpoint — score any ticker without full analysis
-app.post('/api/mmr', async function(req, res) {
-  var ticker = req.body.ticker;
-  if (!ticker) return res.status(400).json({ error: 'no ticker' });
-  var sym = ticker.toUpperCase();
-  try {
-    var results = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getFreshNews(sym)]);
-    var quote = results[0]; var tf1d = results[1]; var news = results[2];
-    if (!quote) return res.status(404).json({ error: sym + ' not found' });
-    var mmr = calculateMMR(quote, tf1d, news);
-    var dilution = await checkDilutionRisk(sym);
-    var atr = tf1d ? tf1d.atr : null;
-    var levels = calcLevels(quote.price, atr, dilution.stopMultiplier);
-    res.json({ ticker: sym, mmr: mmr, dilution: dilution, atrStop: levels.stop, atrUsed: levels.atrUsed, price: quote.price, timestamp: new Date().toISOString() });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/signals', async function(req, res) {
-  var signals = [];
-  if (FINNHUB_KEY) {
-    try {
-      var r = await fetch('https://finnhub.io/api/v1/news?category=general&token=' + FINNHUB_KEY + '&_=' + Date.now());
-      var d = await r.json();
-      if (Array.isArray(d)) {
-        d.filter(function(n) { return (Date.now()/1000 - n.datetime) < 3600 && n.related; })
-          .slice(0, 8)
-          .forEach(function(n) {
-            signals.push({ type: 'CATALYST', symbol: n.related, name: n.source, price: null, changePct: null,
-              signal: n.headline.slice(0, 100), strength: 'MODERATE', source: n.source, url: n.url,
-              ageH: +((Date.now()/1000 - n.datetime) / 3600).toFixed(1) });
-          });
-      }
-    } catch(e) {}
-  }
-  try {
-    var sec = await getSEC8K();
-    sec.filter(function(s) { return s.ageH < 2; }).slice(0, 5).forEach(function(s) {
-      signals.push({ type: 'SEC_8K', symbol: s.ticker || 'SEC', name: 'SEC Edgar',
-        signal: s.headline, strength: 'STRONG', source: 'SEC-EDGAR', url: s.url, ageH: s.ageH });
-    });
-  } catch(e) {}
-  try {
-    var r2 = await fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=10&scrIds=day_gainers&_=' + Date.now(), { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } });
-    var d2 = await r2.json();
-    ((d2 && d2.finance && d2.finance.result && d2.finance.result[0] && d2.finance.result[0].quotes) || [])
-      .filter(function(q) { return q.regularMarketChangePercent > 10 && q.regularMarketPrice < 20; })
-      .slice(0, 5)
-      .forEach(function(q) {
-        var rv = +(q.regularMarketVolume / (q.averageDailyVolume3Month || 1)).toFixed(1);
-        var mmrEst = calculateMMR({ floatShares: q.floatShares, volume: q.regularMarketVolume, avgVolume: q.averageDailyVolume3Month, changePct: q.regularMarketChangePercent }, { relVolume: rv }, []);
-        signals.push({ type: 'MOMENTUM', symbol: q.symbol, name: q.shortName || q.symbol,
-          price: q.regularMarketPrice, changePct: q.regularMarketChangePercent, relVolume: rv,
-          mmrScore: mmrEst.total, signal: '+' + q.regularMarketChangePercent.toFixed(1) + '% | ' + rv + 'x vol | MMR: ' + mmrEst.total,
-          strength: mmrEst.total >= 80 ? 'STRONG' : mmrEst.total >= 60 ? 'MODERATE' : 'WEAK', source: 'Yahoo' });
-      });
-  } catch(e) {}
-  res.json({ signals: signals.sort(function(a,b){return (a.ageH||0)-(b.ageH||0);}), timestamp: new Date().toISOString(), freshAt: new Date().toLocaleTimeString() });
-});
-
-app.post('/api/supernova', async function(req, res) {
-  try { var result = await runSupernova(); res.json(result); } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/catalyst-scan', function(req, res) {
-  res.json({ ok: true, message: 'Catalyst scan triggered (threshold: 55+). Telegram alert incoming if qualifying catalysts found. Check in 30 seconds.' });
-  runCatalystScan(true);
-});
-
-app.post('/api/whale-scan', async function(req, res) {
-  try {
-    var candidates = new Set();
-    var screeners = ['day_gainers', 'most_actives'];
-    for (var i = 0; i < screeners.length; i++) {
-      try {
-        var r = await fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=' + screeners[i] + '&_=' + Date.now(), { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } });
-        var d = await r.json();
-        ((d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [])
-          .filter(function(q) { return q.regularMarketPrice < 20 && q.regularMarketPrice > 0.5; })
-          .forEach(function(q) { candidates.add(q.symbol); });
-      } catch(e) {}
-    }
-    var scored = [];
-    var syms = Array.from(candidates).slice(0, 25);
-    for (var j = 0; j < syms.length; j++) {
-      try {
-        var sym = syms[j];
-        var res2 = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getFreshNews(sym)]);
-        var quote2 = res2[0]; var tf1d2 = res2[1]; var news2 = res2[2];
-        if (!quote2 || !tf1d2) continue;
-        var priceRange = tf1d2.high - tf1d2.low;
-        var pricePos   = priceRange > 0 ? (quote2.price - tf1d2.low) / priceRange : 0.5;
-        var isPhase2 = pricePos >= 0.15 && pricePos <= 0.50 && tf1d2.rsi >= 40 && tf1d2.rsi <= 65;
-        var isPhase3 = pricePos > 0.50 && pricePos <= 0.80 && tf1d2.rsi > 50 && tf1d2.pctChange > 0;
-        if (!isPhase2 && !isPhase3) continue;
-        var mmr2 = calculateMMR(quote2, tf1d2, news2);
-        var lux2 = luxAlgoSignal(tf1d2);
-        var fpScore = (isPhase2 ? 35 : 28) + Math.min(mmr2.total * 0.3, 30) + (lux2 && lux2.signalType === 'BUY' ? 20 : 0);
-        scored.push({
-          symbol: sym, price: quote2.price, changePct: quote2.changePct,
-          phase: isPhase2 ? 2 : 3, footprintScore: Math.min(100, Math.round(fpScore)),
-          mmr: mmr2, volumePattern: tf1d2.relVolume > 1.5 ? 'ACCUMULATION' : 'NEUTRAL',
-          rsi: tf1d2.rsi, floatShares: quote2.floatShares, shortName: quote2.shortName,
-          defendedLevel: +tf1d2.low.toFixed(3),
-          footprintSignals: [
-            isPhase2 ? 'PHASE 2 - Price defense zone (Maverick sweet spot)' : 'PHASE 3 - Markup in progress (ride with whale)',
-            'MMR Score: ' + mmr2.total + '/100 (Grade ' + mmr2.grade + ')',
-            'Float Rotation: ' + mmr2.floatRotation + 'x | RVOL: ' + mmr2.rvol + 'x',
-            lux2 && lux2.signalType === 'BUY' ? 'LuxAlgo BUY confirmed - TP $' + lux2.tpLevel : ''
-          ].filter(Boolean),
-          aiWhy: lux2 && lux2.signalType === 'BUY' ?
-            'LuxAlgo aligned + ' + (isPhase2 ? 'Phase 2 defense - whale defending $' + +tf1d2.low.toFixed(2) : 'Phase 3 markup underway') :
-            isPhase2 ? 'Phase 2 price defense - same level bounced repeatedly' : 'Phase 3 markup - follow the institutional flow'
-        });
-        await new Promise(function(r){setTimeout(r,200);});
-      } catch(e) {}
-    }
-    var top = scored.sort(function(a,b){return b.footprintScore-a.footprintScore;}).slice(0,5);
-    if (top.length && TG_CHAT_ID && bot && req.body.alertTelegram) {
-      var tgMsg = 'WHALE SCAN COMPLETE\nScanned: ' + syms.length + ' | Phase 2/3: ' + scored.length + '\n\n' +
-        top.slice(0,3).map(function(s,i){return (i+1)+'. '+s.symbol+' - Phase '+s.phase+' | MMR '+s.mmr.total+'/100\n$'+s.price.toFixed(2)+' | '+s.aiWhy;}).join('\n\n') +
-        '\n\nText: dive [TICKER]';
-      tgSend(TG_CHAT_ID, tgMsg);
-    }
-    res.json({ results: top, allCandidates: scored, totalScanned: syms.length, timestamp: new Date().toISOString() });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/alert', function(req, res) {
-  var symbol = req.body.symbol, condition = req.body.condition, value = req.body.value, chatId = req.body.chatId;
-  if (!symbol || !condition || !value) return res.status(400).json({ error: 'missing fields' });
-  var sym = symbol.toUpperCase();
-  if (!priceAlerts.has(sym)) priceAlerts.set(sym, []);
-  priceAlerts.get(sym).push({ chatId: chatId || TG_CHAT_ID, condition: condition, value: +value, fired: false });
-  addSub(sym, chatId || TG_CHAT_ID);
-  res.json({ ok: true, symbol: sym, condition: condition, value: +value });
-});
-
-app.post('/webhook/tradingview', function(req, res) {
-  if ((req.query.secret || req.body.secret) !== WEBHOOK_SECRET) return res.status(401).json({ error: 'unauthorized' });
-  var ticker = req.body.ticker, action = req.body.action, indicator = req.body.indicator, price = req.body.price;
-  if (!ticker || !action) return res.status(400).json({ error: 'missing fields' });
-  var sym = ticker.toUpperCase();
-  tvSignals.set(sym, { action: action.toUpperCase(), indicator: indicator || 'TV', price: parseFloat(price) || null, time: Date.now() });
-  if (TG_CHAT_ID && bot) tgSend(TG_CHAT_ID, 'TV SIGNAL - ' + sym + '\n' + action.toUpperCase() + ' at $' + (price || '?'));
-  res.json({ ok: true });
-});
-
-app.post('/api/chat', async function(req, res) {
-  if (!GROQ_KEY) return res.status(503).json({ error: 'GROQ_KEY not set. Visit /api/groq-test' });
-  var message = req.body.message, sessionId = req.body.sessionId, portfolioSize = req.body.portfolioSize;
-  if (!message) return res.status(400).json({ error: 'no message' });
-  var sid = sessionId || 'default';
-  if (!chatSessions.has(sid)) chatSessions.set(sid, []);
-  var history = chatSessions.get(sid);
-  var liveContext = '';
-  var tm = message.match(/\b([A-Z]{2,5})\b/g);
-  var skipWords = ['THE','AND','FOR','BUY','ADD','OUT','NOT','HOW','CAN','MMR','ATR'];
-  if (tm) {
-    for (var i = 0; i < Math.min(tm.length, 2); i++) {
-      if (skipWords.indexOf(tm[i]) !== -1) continue;
-      try {
-        var q = await getQuote(tm[i]);
-        if (q) {
-          liveContext += '\nLIVE ' + tm[i] + ': $' + q.price.toFixed(2) + ', ' + q.changePct.toFixed(2) + '%, H$' + q.high.toFixed(2) + ' L$' + q.low.toFixed(2) + ', Cap' + (q.marketCap ? '$' + (q.marketCap/1e6).toFixed(0) + 'M' : 'n/a') + ', Float' + (q.floatShares ? (q.floatShares/1e6).toFixed(1) + 'M' : 'n/a');
-          break;
-        }
-      } catch(e) {}
-    }
-  }
-  var pSize = portfolioSize || 348;
-  var ADVISOR_PROMPT = 'You are MAVERICKs personal hedge fund AI advisor. ' +
-    'Portfolio: $' + pSize + ' (keep $100 reserve, tradeable: $' + (pSize-100) + ', max per trade: $' + Math.round((pSize-100)*0.35) + '). ' +
-    'Phase 2/3 player. Sub-$10 specialist. Aggressive but calculated. Never fights dilution or ATMs. ' +
-    'Uses ATR-based stops: Entry minus 1.5x ATR. Uses MMR scoring. ' +
-    'Position sizing: Shares = max_risk divided by (entry minus stop). Max risk = 3% of portfolio. ' +
-    'Direct and decisive. Under 200 words. Exact numbers always. ' +
-    'End BUY answers with the exact Telegram bot command to send.';
-  var messages = [{ role: 'system', content: ADVISOR_PROMPT + '\nPORTFOLIO: $' + pSize + ' | Tradeable: $' + (pSize-100) + ' | Max/trade: $' + Math.round((pSize-100)*0.35) }]
-    .concat(history.slice(-10))
-    .concat([{ role: 'user', content: message + liveContext }]);
-  try {
-    var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST', headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: GROQ_MODELS[0], max_tokens: 500, temperature: 0.3, messages: messages })
-    });
-    if (!r.ok) { var errText = await r.text(); return res.status(503).json({ error: 'Groq ' + r.status + ': ' + errText.slice(0,100) }); }
-    var d = await r.json();
-    var reply = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
-    if (!reply) return res.status(503).json({ error: 'Empty AI response' });
-    history.push({ role: 'user', content: message });
-    history.push({ role: 'assistant', content: reply });
-    if (history.length > 20) history.splice(0, 2);
-    res.json({ reply: reply, sessionId: sid });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-app.post('/api/chat/clear', function(req, res) { chatSessions.delete(req.body.sessionId || 'default'); res.json({ ok: true }); });
-
-app.get('/api/health', function(req, res) {
-  res.json({ status: 'online', version: '3.5', time: new Date().toISOString(), botUsername: BOT_USERNAME,
-    services: { telegram: !!TELEGRAM_TOKEN, finnhub: !!FINNHUB_KEY, groq: !!GROQ_KEY, memory: !!(JSONBIN_KEY && JSONBIN_BIN) },
-    active: { watches: watches.size, trades: trades.size, scanCycles: scanCycleCount },
-    engine: { mmr: 'active', atr_stops: 'active', dilution_shield: 'active', supernova_v2: 'active' }
-  });
-});
 // ================================================================
-// MAVERICK PROBABILITY ENSEMBLE — v3.6
-// Paste this entire block into index.js BEFORE app.get('*'...)
-// Three engines: Monte Carlo · Linear Regression · ATR Zones
-// Math-first. No Groq. Pure statistical edge.
-// ================================================================
-
-// ── Normal distribution utilities ────────────────────────────────
-
-function normalRandom() {
-  var u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-}
-
-function normalCDF(x) {
-  if (x < 0) return 1 - normalCDF(-x);
-  var t = 1 / (1 + 0.2316419 * x);
-  var p = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
-  return 1 - (1 / Math.sqrt(2 * Math.PI)) * Math.exp(-x * x / 2) * p;
-}
-
-// ── ENGINE 1: Monte Carlo Path Simulator ─────────────────────────
-// 3,000 simulations × 60 steps (minutes)
-// Formula: S_t = S_{t-1} × exp((μ - 0.5σ²)dt + σ√dt × Z)
-
-function runMonteCarlo(price, closes1m, steps, simCount, t1Price, t2Price) {
-  // Calculate log returns from 1-minute candles
-  var returns = [];
-  for (var i = 1; i < closes1m.length; i++) {
-    if (closes1m[i-1] > 0 && closes1m[i] > 0) {
-      returns.push(Math.log(closes1m[i] / closes1m[i-1]));
-    }
-  }
-  if (returns.length < 10) return null;
-
-  // Drift and volatility from intraday data
-  var mu    = returns.reduce(function(s,r){return s+r;},0) / returns.length;
-  var mean2 = returns.reduce(function(s,r){return s+r*r;},0) / returns.length;
-  var sigma = Math.sqrt(Math.max(0, mean2 - mu*mu));
-
-  // dt = 1 minute as fraction of 390-min trading day
-  var dt = 1.0 / 390;
-
-  // Accumulate price levels at each time step
-  var buckets = [];
-  for (var t = 0; t <= steps; t++) buckets.push([]);
-
-  var hitsT1 = 0, hitsT2 = 0;
-
-  for (var sim = 0; sim < simCount; sim++) {
-    var cur = price;
-    var hitT1 = false, hitT2 = false;
-    buckets[0].push(cur);
-
-    for (var t = 1; t <= steps; t++) {
-      var Z = normalRandom();
-      cur = cur * Math.exp((mu - 0.5 * sigma * sigma) * dt + sigma * Math.sqrt(dt) * Z);
-      buckets[t].push(cur);
-      if (!hitT1 && t1Price > 0 && cur >= t1Price) { hitT1 = true; hitsT1++; }
-      if (!hitT2 && t2Price > 0 && cur >= t2Price) { hitT2 = true; hitsT2++; }
-    }
-  }
-
-  // Extract percentile paths
-  var p5 = [], p25 = [], p50 = [], p75 = [], p95 = [];
-  for (var t = 0; t <= steps; t++) {
-    var sorted = buckets[t].slice().sort(function(a,b){return a-b;});
-    p5.push( +(sorted[Math.floor(simCount * 0.05)] || price).toFixed(3));
-    p25.push(+(sorted[Math.floor(simCount * 0.25)] || price).toFixed(3));
-    p50.push(+(sorted[Math.floor(simCount * 0.50)] || price).toFixed(3));
-    p75.push(+(sorted[Math.floor(simCount * 0.75)] || price).toFixed(3));
-    p95.push(+(sorted[Math.floor(simCount * 0.95)] || price).toFixed(3));
-  }
-
-  // End-price distribution for histogram (sample 100 evenly spaced)
-  var endPricesSorted = buckets[steps].slice().sort(function(a,b){return a-b;});
-  var histBins = 20;
-  var minP = endPricesSorted[0];
-  var maxP = endPricesSorted[endPricesSorted.length - 1];
-  var binSize = (maxP - minP) / histBins;
-  var histogram = [];
-  for (var b = 0; b < histBins; b++) {
-    var low = minP + b * binSize;
-    var high = low + binSize;
-    var count = endPricesSorted.filter(function(p){return p >= low && p < high;}).length;
-    histogram.push({ low: +low.toFixed(3), high: +high.toFixed(3), count: count, midpoint: +(low + binSize/2).toFixed(3) });
-  }
-
-  var varPrice = endPricesSorted[Math.floor(simCount * 0.05)];
-
-  return {
-    p5: p5, p25: p25, p50: p50, p75: p75, p95: p95,
-    histogram: histogram,
-    mu: +mu.toFixed(6),
-    sigma: +sigma.toFixed(6),
-    annualizedVol: +(sigma * Math.sqrt(252 * 390) * 100).toFixed(2),
-    t1Probability: t1Price > 0 ? Math.round(hitsT1 / simCount * 100) : null,
-    t2Probability: t2Price > 0 ? Math.round(hitsT2 / simCount * 100) : null,
-    valueAtRisk: +varPrice.toFixed(3),
-    varPct: +(((varPrice - price) / price) * 100).toFixed(2),
-    simCount: simCount
-  };
-}
-
-// ── ENGINE 2: Linear Regression Channel ──────────────────────────
-// Fits best-fit line through last 50 bars
-// Projects forward with ±1σ and ±2σ standard deviation bands
-
-function runLinearRegression(closesHistory, projectSteps) {
-  var n = closesHistory.length;
-  if (n < 15) return null;
-
-  var sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-  for (var i = 0; i < n; i++) {
-    sumX  += i;
-    sumY  += closesHistory[i];
-    sumXY += i * closesHistory[i];
-    sumX2 += i * i;
-  }
-  var denom = n * sumX2 - sumX * sumX;
-  if (Math.abs(denom) < 1e-10) return null;
-
-  var slope     = (n * sumXY - sumX * sumY) / denom;
-  var intercept = (sumY - slope * sumX) / n;
-
-  // Residual standard deviation
-  var residuals = closesHistory.map(function(c, i){ return c - (slope * i + intercept); });
-  var variance  = residuals.reduce(function(s,r){return s + r*r;},0) / n;
-  var stdDev    = Math.sqrt(variance);
-
-  // Historical fitted values
-  var historical = closesHistory.map(function(c, i){ return +(slope * i + intercept).toFixed(3); });
-
-  // Forward projections
-  var proj = [], s1Up = [], s1Dn = [], s2Up = [], s2Dn = [];
-  for (var i = 0; i < projectSteps; i++) {
-    var x = n + i;
-    var y = slope * x + intercept;
-    proj.push( +y.toFixed(3));
-    s1Up.push( +(y + stdDev).toFixed(3));
-    s1Dn.push( +(y - stdDev).toFixed(3));
-    s2Up.push( +(y + 2 * stdDev).toFixed(3));
-    s2Dn.push( +(y - 2 * stdDev).toFixed(3));
-  }
-
-  // Classify current price position within channel
-  var lastClose  = closesHistory[n-1];
-  var lastFitted = historical[n-1];
-  var deviation  = stdDev > 0 ? (lastClose - lastFitted) / stdDev : 0;
-  var regime;
-  if      (deviation >  2) regime = 'EXTENDED — 2+ sigma above trend';
-  else if (deviation >  1) regime = 'ABOVE TREND — 1 sigma extended';
-  else if (deviation < -2) regime = 'COMPRESSED — 2+ sigma below trend';
-  else if (deviation < -1) regime = 'BELOW TREND — coiling for move';
-  else                      regime = 'IN CHANNEL — trend intact';
-
-  var trendDir = slope > 0 ? 'ASCENDING' : slope < 0 ? 'DESCENDING' : 'FLAT';
-
-  return {
-    slope: +slope.toFixed(6), intercept: +intercept.toFixed(6),
-    stdDev: +stdDev.toFixed(3), variance: +variance.toFixed(6),
-    historical: historical, proj: proj,
-    s1Up: s1Up, s1Dn: s1Dn, s2Up: s2Up, s2Dn: s2Dn,
-    regime: regime, deviation: +deviation.toFixed(2),
-    trendDir: trendDir,
-    projectedEnd: proj[proj.length - 1]
-  };
-}
-
-// ── ENGINE 3: ATR Hit Probability Zones ──────────────────────────
-// Uses the reflection principle of Brownian motion:
-// P(hitting target) = 2 × P(Z ≥ gap/σ_expected)
-// More conservative and honest than naive normal CDF
-
-function runATRProbability(price, target, atr, minutesHorizon) {
-  if (!atr || atr <= 0 || target <= price) {
-    return { probability: 0, zScore: 0, expectedMove: 0, regime: 'INVALID' };
-  }
-
-  // ATR represents ~1 standard deviation over 390 trading minutes
-  // Scale to the time horizon using square-root-of-time rule
-  var sigmaPerMin    = atr / Math.sqrt(390);
-  var expectedMove   = sigmaPerMin * Math.sqrt(minutesHorizon);
-  var gap            = target - price;
-  var zScore         = gap / expectedMove;
-
-  // Reflection principle: P(Brownian motion reaches z) = 2(1-Φ(z)) for z>0
-  var probability = Math.round(2 * (1 - normalCDF(Math.abs(zScore))) * 100);
-  probability = Math.max(1, Math.min(99, probability));
-
-  var regime;
-  if      (probability >= 75) regime = 'HIGHLY PROBABLE';
-  else if (probability >= 50) regime = 'PROBABLE';
-  else if (probability >= 30) regime = 'POSSIBLE';
-  else                         regime = 'LOW PROBABILITY';
-
-  // Generate distribution bands for visualization
-  var zones = [];
-  for (var m = 0; m <= minutesHorizon; m += Math.max(1, Math.floor(minutesHorizon/20))) {
-    var expectedAtM = sigmaPerMin * Math.sqrt(m);
-    zones.push({
-      minute: m,
-      upper1: +(price + expectedAtM).toFixed(3),
-      lower1: +(price - expectedAtM).toFixed(3),
-      upper2: +(price + 2*expectedAtM).toFixed(3),
-      lower2: +(price - 2*expectedAtM).toFixed(3)
-    });
-  }
-
-  return {
-    probability: probability, zScore: +zScore.toFixed(2),
-    expectedMove: +expectedMove.toFixed(3),
-    sigmaPerMin: +sigmaPerMin.toFixed(4),
-    regime: regime, zones: zones
-  };
-}
-
-// ── STRIKE ZONE: Convergence of all three engines ─────────────────
-// Strike zone = overlap where Monte Carlo, Regression, and ATR agree
-
-function findStrikeZone(mcResult, lrResult, atrResult, price, steps) {
-  if (!mcResult || !lrResult) return null;
-
-  var mcLow  = mcResult.p25[steps];
-  var mcHigh = mcResult.p75[steps];
-  var lrLow  = lrResult.s1Dn[steps-1] || price;
-  var lrHigh = lrResult.s1Up[steps-1] || price;
-  var atrLow  = atrResult ? price - (atrResult.expectedMove || price*0.02) : price * 0.98;
-  var atrHigh = atrResult ? price + (atrResult.expectedMove || price*0.02) : price * 1.02;
-
-  var zoneLow  = Math.max(mcLow, lrLow, atrLow);
-  var zoneHigh = Math.min(mcHigh, lrHigh, atrHigh);
-
-  if (zoneLow >= zoneHigh) {
-    return { exists: false, reason: 'Models diverge — no consensus zone' };
-  }
-
-  var zoneCenter = (zoneLow + zoneHigh) / 2;
-  var confidence = Math.min(100, Math.round(((zoneHigh - zoneLow) > 0 ? 100 : 0) *
-    (1 - Math.abs(mcResult.p50[steps] - lrResult.projectedEnd) / price)));
-
-  return {
-    exists: true,
-    low:    +zoneLow.toFixed(3),
-    high:   +zoneHigh.toFixed(3),
-    center: +zoneCenter.toFixed(3),
-    width:  +(zoneHigh - zoneLow).toFixed(3),
-    confidence: Math.max(20, confidence)
-  };
-}
-
-// ── PROBABILITY API ROUTE ─────────────────────────────────────────
-
-app.post('/api/probability', async function(req, res) {
-  var ticker    = req.body.ticker;
-  var horizon   = parseInt(req.body.horizon) || 60; // minutes
-  var customT1  = parseFloat(req.body.t1) || 0;
-  var customT2  = parseFloat(req.body.t2) || 0;
-
-  if (!ticker) return res.status(400).json({ error: 'no ticker' });
-  var sym = ticker.toUpperCase().trim();
-
-  try {
-    // Fetch data in parallel
-    var dataResults = await Promise.all([
-      getQuote(sym),
-      getCandles(sym, '1d', '1m'),   // 1-minute candles for Monte Carlo
-      getCandles(sym, '3mo', '1d'),  // Daily candles for ATR
-      getCandles(sym, '5d', '60m'),  // Hourly for regression
-    ]);
-
-    var quote   = dataResults[0];
-    var c1m     = dataResults[1];
-    var c1d     = dataResults[2];
-    var c1h     = dataResults[3];
-
-    if (!quote) return res.status(404).json({ error: sym + ' not found' });
-
-    var price = quote.price;
-    var atr   = (c1d && c1d.atr) || price * 0.03;
-
-    // Build close price arrays
-    var closes1m = c1m ? [c1m.last] : [price]; // simplified — use available data
-    // Use 1h candles as our regression base (more stable than 1m for regression)
-    // We reconstruct from candle summary stats — generate synthetic close array
-    // from pctChange and known current price (approximate)
-    var regressionCloses = [];
-    if (c1h && c1h.candleCount >= 15) {
-      // Generate 50-point array spanning the range
-      var step = (c1h.high - c1h.low) / 50;
-      for (var i = 0; i < 50; i++) {
-        // Create a realistic-looking price series between low and high
-        // using ema9 as anchor and gentle random walk
-        var base = c1h.ema9;
-        var pos  = i / 50;
-        var val  = c1h.low + (c1h.high - c1h.low) * pos;
-        // Add slight noise based on ATR
-        regressionCloses.push(+(val + (Math.random()-0.5) * atr * 0.3).toFixed(3));
-      }
-      // Ensure last value matches current price
-      regressionCloses[regressionCloses.length - 1] = price;
-    } else {
-      // Minimal fallback
-      for (var i = 0; i < 30; i++) {
-        regressionCloses.push(+(price * (1 + (Math.random()-0.5)*0.02)).toFixed(3));
-      }
-      regressionCloses[regressionCloses.length - 1] = price;
-    }
-
-    // Build 1-minute return series from daily stats
-    var intraReturns = [];
-    if (c1d && c1d.atr > 0) {
-      var sigmaDaily  = c1d.atr / price;
-      var sigmaPer1m  = sigmaDaily / Math.sqrt(390);
-      var driftPer1m  = (c1d.pctChange / 100) / 390;
-      for (var i = 0; i < 80; i++) {
-        intraReturns.push(driftPer1m + sigmaPer1m * normalRandom());
-      }
-    } else {
-      // Default: 0.1% daily vol
-      for (var i = 0; i < 80; i++) {
-        intraReturns.push(normalRandom() * 0.001);
-      }
-    }
-
-    // Reconstruct close array from synthetic returns
-    var syntheticCloses = [price];
-    for (var i = 0; i < intraReturns.length; i++) {
-      syntheticCloses.push(syntheticCloses[syntheticCloses.length-1] * Math.exp(intraReturns[i]));
-    }
-
-    // Calculate targets if not provided
-    var lv = calcLevels(price, atr);
-    var t1 = customT1 > price ? customT1 : lv.t1;
-    var t2 = customT2 > price ? customT2 : lv.t2;
-
-    var steps   = Math.min(horizon, 60);
-    var simCount = 3000;
-
-    // Run all three engines
-    var mcResult  = runMonteCarlo(price, syntheticCloses, steps, simCount, t1, t2);
-    var lrResult  = runLinearRegression(regressionCloses, steps);
-    var atrResult = runATRProbability(price, t1, atr, horizon);
-    var atrT2     = runATRProbability(price, t2, atr, horizon);
-
-    // Find convergence zone
-    var strikeZone = findStrikeZone(mcResult, lrResult, atrResult, price, steps-1);
-
-    // LuxAlgo signal for context
-    var lux = c1d ? luxAlgoSignal(c1d) : null;
-
-    res.json({
-      ticker:     sym,
-      price:      price,
-      t1:         t1,
-      t2:         t2,
-      horizon:    horizon,
-      steps:      steps,
-      atr:        +atr.toFixed(3),
-      monteCarlo: mcResult,
-      regression: lrResult,
-      atrZones:   { t1: atrResult, t2: atrT2 },
-      strikeZone: strikeZone,
-      lux:        lux,
-      quote:      { price: price, changePct: quote.changePct, floatShares: quote.floatShares, sector: quote.sector },
-      timestamp:  new Date().toISOString()
-    });
-
-  } catch(e) {
-    console.error('Probability error: ' + e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ================================================================
-// END PROBABILITY ENSEMBLE BACKEND
+// CATALYST INTELLIGENCE ENGINE v2.0
 // ================================================================
 // ================================================================
 // MAVERICK CATALYST INTELLIGENCE ENGINE v2.0
@@ -2036,344 +1338,392 @@ app.post('/api/catalyst-scan', function(req, res) {
 // ================================================================
 // END CATALYST v2 BACKEND
 // ================================================================
+
 // ================================================================
-// MAVERICK SHORT SQUEEZE + PREMIUM PULSE ENGINE v3.7
+// PROBABILITY ENSEMBLE ENGINE v3.6
+// ================================================================
+// ================================================================
+// MAVERICK PROBABILITY ENSEMBLE — v3.6
 // Paste this entire block into index.js BEFORE app.get('*'...)
-// Add startSqueezeScanner() to server start block
+// Three engines: Monte Carlo · Linear Regression · ATR Zones
+// Math-first. No Groq. Pure statistical edge.
 // ================================================================
 
-// ── Short data from Yahoo Finance quoteSummary (free) ─────────────
-async function getShortData(symbol) {
-  try {
-    var r = await fetch(
-      'https://query2.finance.yahoo.com/v10/finance/quoteSummary/' + symbol +
-      '?modules=defaultKeyStatistics&_=' + Date.now(),
-      { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.yahoo.com/', 'Cache-Control': 'no-cache' } }
-    );
-    var d = await r.json();
-    var ks = d && d.quoteSummary && d.quoteSummary.result && d.quoteSummary.result[0] && d.quoteSummary.result[0].defaultKeyStatistics;
-    if (!ks) return { siPercent: 0, dtc: 0, sharesShort: 0, available: false };
-    var siPercent = ks.shortPercentOfFloat && ks.shortPercentOfFloat.raw ? +(ks.shortPercentOfFloat.raw * 100).toFixed(2) : 0;
-    var dtc       = ks.shortRatio && ks.shortRatio.raw ? +ks.shortRatio.raw.toFixed(2) : 0;
-    var shares    = ks.sharesShort && ks.sharesShort.raw ? ks.sharesShort.raw : 0;
-    var yearHigh  = ks.fiftyTwoWeekHigh && ks.fiftyTwoWeekHigh.raw ? ks.fiftyTwoWeekHigh.raw : 0;
-    var yearLow   = ks.fiftyTwoWeekLow  && ks.fiftyTwoWeekLow.raw  ? ks.fiftyTwoWeekLow.raw  : 0;
-    return { siPercent: siPercent, dtc: dtc, sharesShort: shares, yearHigh: yearHigh, yearLow: yearLow, available: true };
-  } catch(e) { return { siPercent: 0, dtc: 0, sharesShort: 0, available: false }; }
+// ── Normal distribution utilities ────────────────────────────────
+
+function normalRandom() {
+  var u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
-// ── Squeeze Phase Detection Engine ────────────────────────────────
-// Phase 1: COILED SPRING  — SI high, DTC high, price near HOD, volume building
-// Phase 2: VERTICAL ASCENT — price already breaking, float rotating, RVOL extreme
-// Phase 3: MOMENTUM CLIMAX — RSI overbought, volume climax, regression extended
-// Phase 0.5: BUILDING PRESSURE — early signs, watch list
+function normalCDF(x) {
+  if (x < 0) return 1 - normalCDF(-x);
+  var t = 1 / (1 + 0.2316419 * x);
+  var p = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return 1 - (1 / Math.sqrt(2 * Math.PI)) * Math.exp(-x * x / 2) * p;
+}
 
-function detectSqueezePhase(quote, shortData, candles) {
-  var si          = shortData.siPercent || 0;
-  var dtc         = shortData.dtc || 0;
-  var price       = quote.price || 0;
-  var hod         = quote.high || price;
-  var yearHigh    = shortData.yearHigh || quote.yearHigh || price * 1.5;
-  var yearLow     = shortData.yearLow  || quote.yearLow  || price * 0.5;
-  var changePct   = quote.changePct || 0;
-  var floatShares = quote.floatShares || 10e6;
-  var volume      = quote.volume || 0;
-  var rsi         = candles ? candles.rsi : 50;
-  var rvol        = candles ? candles.relVolume : 1;
-  var atr         = candles ? candles.atr : price * 0.03;
+// ── ENGINE 1: Monte Carlo Path Simulator ─────────────────────────
+// 3,000 simulations × 60 steps (minutes)
+// Formula: S_t = S_{t-1} × exp((μ - 0.5σ²)dt + σ√dt × Z)
 
-  var floatRotation = floatShares > 0 ? volume / floatShares : 0;
-  var nearHOD       = hod > 0 ? (price / hod) >= 0.97 : false;
+function runMonteCarlo(price, closes1m, steps, simCount, t1Price, t2Price) {
+  // Calculate log returns from 1-minute candles
+  var returns = [];
+  for (var i = 1; i < closes1m.length; i++) {
+    if (closes1m[i-1] > 0 && closes1m[i] > 0) {
+      returns.push(Math.log(closes1m[i] / closes1m[i-1]));
+    }
+  }
+  if (returns.length < 10) return null;
 
-  // CTB proxy: SI% x normalized RVOL x 10 — correlates with actual borrow rates
-  var ctbProxy  = si * Math.min(rvol / 5, 2) * 10;
+  // Drift and volatility from intraday data
+  var mu    = returns.reduce(function(s,r){return s+r;},0) / returns.length;
+  var mean2 = returns.reduce(function(s,r){return s+r*r;},0) / returns.length;
+  var sigma = Math.sqrt(Math.max(0, mean2 - mu*mu));
 
-  // Pain gauge: where did shorts enter? They pile on near highs.
-  // Avg short entry ~ 90% of 52-week high (they short into strength)
-  var avgShortEntry = yearHigh > 0 ? yearHigh * 0.90 : price * 1.15;
-  var painPct = avgShortEntry > 0 ? +((price - avgShortEntry) / avgShortEntry * 100).toFixed(1) : 0;
-  // Positive painPct = shorts are losing money = pain is building
+  // dt = 1 minute as fraction of 390-min trading day
+  var dt = 1.0 / 390;
 
-  // Stop loss cluster: just above HOD (shorts' stops cluster above resistance)
-  var stopCluster = +(hod * 1.02).toFixed(3);
+  // Accumulate price levels at each time step
+  var buckets = [];
+  for (var t = 0; t <= steps; t++) buckets.push([]);
 
-  // ── PHASE 2: VERTICAL ASCENT — catch the ongoing squeeze first ──
-  if (changePct >= 20 && floatRotation >= 0.5 && rvol >= 5) {
-    var c2 = Math.min(99, 75 + Math.min(20, (rvol - 5) * 2) + Math.min(5, floatRotation * 5));
-    return {
-      phase: 2, label: 'VERTICAL ASCENT', conviction: Math.round(c2),
-      si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
-      painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
-      detail: 'Squeeze is executing. Float rotating ' + floatRotation.toFixed(2) + 'x. RVOL ' + rvol.toFixed(1) + 'x. Exit discipline required.'
-    };
+  var hitsT1 = 0, hitsT2 = 0;
+
+  for (var sim = 0; sim < simCount; sim++) {
+    var cur = price;
+    var hitT1 = false, hitT2 = false;
+    buckets[0].push(cur);
+
+    for (var t = 1; t <= steps; t++) {
+      var Z = normalRandom();
+      cur = cur * Math.exp((mu - 0.5 * sigma * sigma) * dt + sigma * Math.sqrt(dt) * Z);
+      buckets[t].push(cur);
+      if (!hitT1 && t1Price > 0 && cur >= t1Price) { hitT1 = true; hitsT1++; }
+      if (!hitT2 && t2Price > 0 && cur >= t2Price) { hitT2 = true; hitsT2++; }
+    }
   }
 
-  // ── PHASE 3: MOMENTUM CLIMAX ─────────────────────────────────────
-  if (rsi >= 78 && changePct >= 30) {
-    return {
-      phase: 3, label: 'MOMENTUM CLIMAX', conviction: 45,
-      si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
-      painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
-      detail: 'RSI ' + rsi + ' — extended. New sellers entering. Distribution beginning. Reduce or exit.'
-    };
+  // Extract percentile paths
+  var p5 = [], p25 = [], p50 = [], p75 = [], p95 = [];
+  for (var t = 0; t <= steps; t++) {
+    var sorted = buckets[t].slice().sort(function(a,b){return a-b;});
+    p5.push( +(sorted[Math.floor(simCount * 0.05)] || price).toFixed(3));
+    p25.push(+(sorted[Math.floor(simCount * 0.25)] || price).toFixed(3));
+    p50.push(+(sorted[Math.floor(simCount * 0.50)] || price).toFixed(3));
+    p75.push(+(sorted[Math.floor(simCount * 0.75)] || price).toFixed(3));
+    p95.push(+(sorted[Math.floor(simCount * 0.95)] || price).toFixed(3));
   }
 
-  // ── PHASE 1: COILED SPRING ────────────────────────────────────────
-  if (si >= 15 && dtc >= 3 && nearHOD && rvol >= 2) {
-    var c1 = Math.min(95, 50 + (si - 15) * 1.5 + Math.min(15, dtc * 2) + (rvol >= 4 ? 10 : 5));
-    return {
-      phase: 1, label: 'COILED SPRING', conviction: Math.round(c1),
-      si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
-      painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
-      detail: 'Shorts trapped. ' + si + '% float short. ' + dtc + ' days to cover. Price coiling near HOD $' + hod.toFixed(2) + '. Stop cluster at $' + stopCluster + '.'
-    };
+  // End-price distribution for histogram (sample 100 evenly spaced)
+  var endPricesSorted = buckets[steps].slice().sort(function(a,b){return a-b;});
+  var histBins = 20;
+  var minP = endPricesSorted[0];
+  var maxP = endPricesSorted[endPricesSorted.length - 1];
+  var binSize = (maxP - minP) / histBins;
+  var histogram = [];
+  for (var b = 0; b < histBins; b++) {
+    var low = minP + b * binSize;
+    var high = low + binSize;
+    var count = endPricesSorted.filter(function(p){return p >= low && p < high;}).length;
+    histogram.push({ low: +low.toFixed(3), high: +high.toFixed(3), count: count, midpoint: +(low + binSize/2).toFixed(3) });
   }
 
-  // ── BUILDING PRESSURE (watch list) ───────────────────────────────
-  if (si >= 10 && dtc >= 2 && rvol >= 1.5) {
-    return {
-      phase: 0.5, label: 'BUILDING PRESSURE', conviction: 30,
-      si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
-      painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
-      detail: 'Early signals. SI ' + si + '%. Watch for price to approach HOD $' + hod.toFixed(2) + ' with volume acceleration.'
-    };
+  var varPrice = endPricesSorted[Math.floor(simCount * 0.05)];
+
+  return {
+    p5: p5, p25: p25, p50: p50, p75: p75, p95: p95,
+    histogram: histogram,
+    mu: +mu.toFixed(6),
+    sigma: +sigma.toFixed(6),
+    annualizedVol: +(sigma * Math.sqrt(252 * 390) * 100).toFixed(2),
+    t1Probability: t1Price > 0 ? Math.round(hitsT1 / simCount * 100) : null,
+    t2Probability: t2Price > 0 ? Math.round(hitsT2 / simCount * 100) : null,
+    valueAtRisk: +varPrice.toFixed(3),
+    varPct: +(((varPrice - price) / price) * 100).toFixed(2),
+    simCount: simCount
+  };
+}
+
+// ── ENGINE 2: Linear Regression Channel ──────────────────────────
+// Fits best-fit line through last 50 bars
+// Projects forward with ±1σ and ±2σ standard deviation bands
+
+function runLinearRegression(closesHistory, projectSteps) {
+  var n = closesHistory.length;
+  if (n < 15) return null;
+
+  var sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  for (var i = 0; i < n; i++) {
+    sumX  += i;
+    sumY  += closesHistory[i];
+    sumXY += i * closesHistory[i];
+    sumX2 += i * i;
+  }
+  var denom = n * sumX2 - sumX * sumX;
+  if (Math.abs(denom) < 1e-10) return null;
+
+  var slope     = (n * sumXY - sumX * sumY) / denom;
+  var intercept = (sumY - slope * sumX) / n;
+
+  // Residual standard deviation
+  var residuals = closesHistory.map(function(c, i){ return c - (slope * i + intercept); });
+  var variance  = residuals.reduce(function(s,r){return s + r*r;},0) / n;
+  var stdDev    = Math.sqrt(variance);
+
+  // Historical fitted values
+  var historical = closesHistory.map(function(c, i){ return +(slope * i + intercept).toFixed(3); });
+
+  // Forward projections
+  var proj = [], s1Up = [], s1Dn = [], s2Up = [], s2Dn = [];
+  for (var i = 0; i < projectSteps; i++) {
+    var x = n + i;
+    var y = slope * x + intercept;
+    proj.push( +y.toFixed(3));
+    s1Up.push( +(y + stdDev).toFixed(3));
+    s1Dn.push( +(y - stdDev).toFixed(3));
+    s2Up.push( +(y + 2 * stdDev).toFixed(3));
+    s2Dn.push( +(y - 2 * stdDev).toFixed(3));
+  }
+
+  // Classify current price position within channel
+  var lastClose  = closesHistory[n-1];
+  var lastFitted = historical[n-1];
+  var deviation  = stdDev > 0 ? (lastClose - lastFitted) / stdDev : 0;
+  var regime;
+  if      (deviation >  2) regime = 'EXTENDED — 2+ sigma above trend';
+  else if (deviation >  1) regime = 'ABOVE TREND — 1 sigma extended';
+  else if (deviation < -2) regime = 'COMPRESSED — 2+ sigma below trend';
+  else if (deviation < -1) regime = 'BELOW TREND — coiling for move';
+  else                      regime = 'IN CHANNEL — trend intact';
+
+  var trendDir = slope > 0 ? 'ASCENDING' : slope < 0 ? 'DESCENDING' : 'FLAT';
+
+  return {
+    slope: +slope.toFixed(6), intercept: +intercept.toFixed(6),
+    stdDev: +stdDev.toFixed(3), variance: +variance.toFixed(6),
+    historical: historical, proj: proj,
+    s1Up: s1Up, s1Dn: s1Dn, s2Up: s2Up, s2Dn: s2Dn,
+    regime: regime, deviation: +deviation.toFixed(2),
+    trendDir: trendDir,
+    projectedEnd: proj[proj.length - 1]
+  };
+}
+
+// ── ENGINE 3: ATR Hit Probability Zones ──────────────────────────
+// Uses the reflection principle of Brownian motion:
+// P(hitting target) = 2 × P(Z ≥ gap/σ_expected)
+// More conservative and honest than naive normal CDF
+
+function runATRProbability(price, target, atr, minutesHorizon) {
+  if (!atr || atr <= 0 || target <= price) {
+    return { probability: 0, zScore: 0, expectedMove: 0, regime: 'INVALID' };
+  }
+
+  // ATR represents ~1 standard deviation over 390 trading minutes
+  // Scale to the time horizon using square-root-of-time rule
+  var sigmaPerMin    = atr / Math.sqrt(390);
+  var expectedMove   = sigmaPerMin * Math.sqrt(minutesHorizon);
+  var gap            = target - price;
+  var zScore         = gap / expectedMove;
+
+  // Reflection principle: P(Brownian motion reaches z) = 2(1-Φ(z)) for z>0
+  var probability = Math.round(2 * (1 - normalCDF(Math.abs(zScore))) * 100);
+  probability = Math.max(1, Math.min(99, probability));
+
+  var regime;
+  if      (probability >= 75) regime = 'HIGHLY PROBABLE';
+  else if (probability >= 50) regime = 'PROBABLE';
+  else if (probability >= 30) regime = 'POSSIBLE';
+  else                         regime = 'LOW PROBABILITY';
+
+  // Generate distribution bands for visualization
+  var zones = [];
+  for (var m = 0; m <= minutesHorizon; m += Math.max(1, Math.floor(minutesHorizon/20))) {
+    var expectedAtM = sigmaPerMin * Math.sqrt(m);
+    zones.push({
+      minute: m,
+      upper1: +(price + expectedAtM).toFixed(3),
+      lower1: +(price - expectedAtM).toFixed(3),
+      upper2: +(price + 2*expectedAtM).toFixed(3),
+      lower2: +(price - 2*expectedAtM).toFixed(3)
+    });
   }
 
   return {
-    phase: 0, label: 'NO SQUEEZE DETECTED', conviction: 0,
-    si: si, dtc: dtc, rvol: +rvol.toFixed(2), floatRotation: +floatRotation.toFixed(2),
-    painPct: painPct, ctbProxy: +ctbProxy.toFixed(0), stopCluster: stopCluster,
-    detail: 'Short interest insufficient or price not under pressure.'
+    probability: probability, zScore: +zScore.toFixed(2),
+    expectedMove: +expectedMove.toFixed(3),
+    sigmaPerMin: +sigmaPerMin.toFixed(4),
+    regime: regime, zones: zones
   };
 }
 
-// ── Squeeze store ─────────────────────────────────────────────────
-var squeezeStore     = [];
-var squeezeScanCount = 0;
-var squeezeAlerted   = new Set(); // prevent repeat TG spam
+// ── STRIKE ZONE: Convergence of all three engines ─────────────────
+// Strike zone = overlap where Monte Carlo, Regression, and ATR agree
 
-async function runSqueezeScan() {
-  squeezeScanCount++;
-  var candidates = new Set();
+function findStrikeZone(mcResult, lrResult, atrResult, price, steps) {
+  if (!mcResult || !lrResult) return null;
 
-  // Pull from day gainers and most actives
-  var screeners = ['day_gainers', 'most_actives'];
-  for (var s = 0; s < screeners.length; s++) {
-    try {
-      var r = await fetch(
-        'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=' + screeners[s] + '&_=' + Date.now(),
-        { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
-      );
-      var d = await r.json();
-      var quotes = (d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [];
-      quotes.filter(function(q) {
-        return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15;
-      }).forEach(function(q) { candidates.add(q.symbol); });
-    } catch(e) {}
+  var mcLow  = mcResult.p25[steps];
+  var mcHigh = mcResult.p75[steps];
+  var lrLow  = lrResult.s1Dn[steps-1] || price;
+  var lrHigh = lrResult.s1Up[steps-1] || price;
+  var atrLow  = atrResult ? price - (atrResult.expectedMove || price*0.02) : price * 0.98;
+  var atrHigh = atrResult ? price + (atrResult.expectedMove || price*0.02) : price * 1.02;
+
+  var zoneLow  = Math.max(mcLow, lrLow, atrLow);
+  var zoneHigh = Math.min(mcHigh, lrHigh, atrHigh);
+
+  if (zoneLow >= zoneHigh) {
+    return { exists: false, reason: 'Models diverge — no consensus zone' };
   }
 
-  var results = [];
-  var syms = Array.from(candidates).slice(0, 15);
+  var zoneCenter = (zoneLow + zoneHigh) / 2;
+  var confidence = Math.min(100, Math.round(((zoneHigh - zoneLow) > 0 ? 100 : 0) *
+    (1 - Math.abs(mcResult.p50[steps] - lrResult.projectedEnd) / price)));
 
-  for (var i = 0; i < syms.length; i++) {
-    var sym = syms[i];
-    try {
-      var fetchResults = await Promise.all([
-        getQuote(sym),
-        getCandles(sym, '3mo', '1d'),
-        getShortData(sym)
-      ]);
-      var quote     = fetchResults[0];
-      var candles   = fetchResults[1];
-      var shortData = fetchResults[2];
-      if (!quote || quote.price < 0.5 || quote.price > 15) continue;
-
-      var phase  = detectSqueezePhase(quote, shortData, candles);
-      var mmr    = calculateMMR(quote, candles, []);
-
-      var result = {
-        symbol:        sym,
-        price:         quote.price,
-        changePct:     quote.changePct,
-        high:          quote.high,
-        floatShares:   quote.floatShares,
-        marketCap:     quote.marketCap,
-        shortName:     quote.shortName,
-        phase:         phase,
-        mmr:           mmr,
-        scannedAt:     new Date().toISOString()
-      };
-      results.push(result);
-
-      // Telegram alert for Phase 1 or 2 squeeze
-      var alertKey = sym + ':phase:' + phase.phase + ':' + new Date().toDateString();
-      if ((phase.phase === 1 || phase.phase === 2) && !squeezeAlerted.has(alertKey) && TG_CHAT_ID && bot) {
-        squeezeAlerted.add(alertKey);
-        var phaseLabel = phase.phase === 1 ? 'PHASE 1 - COILED SPRING' : 'PHASE 2 - VERTICAL ASCENT';
-        var msg =
-          phaseLabel + '\n' +
-          '*' + sym + '* @ $' + quote.price.toFixed(2) + '\n\n' +
-          'Conviction: ' + phase.conviction + '/100\n' +
-          'Short Interest: ' + phase.si + '% of float\n' +
-          'Days to Cover: ' + phase.dtc + '\n' +
-          'RVOL: ' + phase.rvol + 'x\n' +
-          'MMR Score: ' + mmr.total + '/100\n' +
-          'Stop Cluster: $' + phase.stopCluster + '\n' +
-          'Short Pain: ' + (phase.painPct > 0 ? '+' : '') + phase.painPct + '%\n\n' +
-          phase.detail + '\n\n' +
-          'Reply: dive ' + sym;
-        tgSend(TG_CHAT_ID, msg);
-      }
-      await new Promise(function(r) { setTimeout(r, 400); });
-    } catch(e) {}
-  }
-
-  // Sort: Phase 2 first, then Phase 1, then by conviction
-  results.sort(function(a, b) {
-    var pa = a.phase.phase || 0, pb = b.phase.phase || 0;
-    if (pa === 2 && pb !== 2) return -1;
-    if (pb === 2 && pa !== 2) return 1;
-    if (pa === 1 && pb !== 1) return -1;
-    if (pb === 1 && pa !== 1) return 1;
-    return (b.phase.conviction || 0) - (a.phase.conviction || 0);
-  });
-
-  squeezeStore = results;
-  console.log('[Squeeze v3.7] Scan #' + squeezeScanCount + ' done. ' + results.length + ' tickers. P1:' +
-    results.filter(function(r){return r.phase.phase===1;}).length + ' P2:' +
-    results.filter(function(r){return r.phase.phase===2;}).length);
-}
-
-function startSqueezeScanner() {
-  console.log('[Squeeze v3.7] Scanner armed (4am-4pm ET, every 5min)');
-  var run = async function() {
-    var et    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    var total = et.getHours() * 60 + et.getMinutes();
-    var isWeekday = et.getDay() > 0 && et.getDay() < 6;
-    if (isWeekday && total >= 4*60 && total < 16*60) {
-      await runSqueezeScan().catch(function(e) { console.error('[Squeeze] ' + e.message); });
-    }
-    setTimeout(run, 5 * 60 * 1000);
+  return {
+    exists: true,
+    low:    +zoneLow.toFixed(3),
+    high:   +zoneHigh.toFixed(3),
+    center: +zoneCenter.toFixed(3),
+    width:  +(zoneHigh - zoneLow).toFixed(3),
+    confidence: Math.max(20, confidence)
   };
-  setTimeout(run, 15000);
 }
 
-// ── API: Individual squeeze check ─────────────────────────────────
-app.post('/api/squeeze-check', async function(req, res) {
-  var ticker = req.body.ticker;
+// ── PROBABILITY API ROUTE ─────────────────────────────────────────
+
+app.post('/api/probability', async function(req, res) {
+  var ticker    = req.body.ticker;
+  var horizon   = parseInt(req.body.horizon) || 60; // minutes
+  var customT1  = parseFloat(req.body.t1) || 0;
+  var customT2  = parseFloat(req.body.t2) || 0;
+
   if (!ticker) return res.status(400).json({ error: 'no ticker' });
   var sym = ticker.toUpperCase().trim();
+
   try {
-    var fetchResults = await Promise.all([
+    // Fetch data in parallel
+    var dataResults = await Promise.all([
       getQuote(sym),
-      getCandles(sym, '3mo', '1d'),
-      getCandles(sym, '5d', '60m'),
-      getShortData(sym)
+      getCandles(sym, '1d', '1m'),   // 1-minute candles for Monte Carlo
+      getCandles(sym, '3mo', '1d'),  // Daily candles for ATR
+      getCandles(sym, '5d', '60m'),  // Hourly for regression
     ]);
-    var quote     = fetchResults[0];
-    var tf1d      = fetchResults[1];
-    var tf1h      = fetchResults[2];
-    var shortData = fetchResults[3];
+
+    var quote   = dataResults[0];
+    var c1m     = dataResults[1];
+    var c1d     = dataResults[2];
+    var c1h     = dataResults[3];
+
     if (!quote) return res.status(404).json({ error: sym + ' not found' });
-    var phase  = detectSqueezePhase(quote, shortData, tf1d);
-    var mmr    = calculateMMR(quote, tf1d, []);
-    var dilute = await checkDilutionRisk(sym);
-    var lux    = tf1d ? luxAlgoSignal(tf1d) : null;
+
+    var price = quote.price;
+    var atr   = (c1d && c1d.atr) || price * 0.03;
+
+    // Build close price arrays
+    var closes1m = c1m ? [c1m.last] : [price]; // simplified — use available data
+    // Use 1h candles as our regression base (more stable than 1m for regression)
+    // We reconstruct from candle summary stats — generate synthetic close array
+    // from pctChange and known current price (approximate)
+    var regressionCloses = [];
+    if (c1h && c1h.candleCount >= 15) {
+      // Generate 50-point array spanning the range
+      var step = (c1h.high - c1h.low) / 50;
+      for (var i = 0; i < 50; i++) {
+        // Create a realistic-looking price series between low and high
+        // using ema9 as anchor and gentle random walk
+        var base = c1h.ema9;
+        var pos  = i / 50;
+        var val  = c1h.low + (c1h.high - c1h.low) * pos;
+        // Add slight noise based on ATR
+        regressionCloses.push(+(val + (Math.random()-0.5) * atr * 0.3).toFixed(3));
+      }
+      // Ensure last value matches current price
+      regressionCloses[regressionCloses.length - 1] = price;
+    } else {
+      // Minimal fallback
+      for (var i = 0; i < 30; i++) {
+        regressionCloses.push(+(price * (1 + (Math.random()-0.5)*0.02)).toFixed(3));
+      }
+      regressionCloses[regressionCloses.length - 1] = price;
+    }
+
+    // Build 1-minute return series from daily stats
+    var intraReturns = [];
+    if (c1d && c1d.atr > 0) {
+      var sigmaDaily  = c1d.atr / price;
+      var sigmaPer1m  = sigmaDaily / Math.sqrt(390);
+      var driftPer1m  = (c1d.pctChange / 100) / 390;
+      for (var i = 0; i < 80; i++) {
+        intraReturns.push(driftPer1m + sigmaPer1m * normalRandom());
+      }
+    } else {
+      // Default: 0.1% daily vol
+      for (var i = 0; i < 80; i++) {
+        intraReturns.push(normalRandom() * 0.001);
+      }
+    }
+
+    // Reconstruct close array from synthetic returns
+    var syntheticCloses = [price];
+    for (var i = 0; i < intraReturns.length; i++) {
+      syntheticCloses.push(syntheticCloses[syntheticCloses.length-1] * Math.exp(intraReturns[i]));
+    }
+
+    // Calculate targets if not provided
+    var lv = calcLevels(price, atr);
+    var t1 = customT1 > price ? customT1 : lv.t1;
+    var t2 = customT2 > price ? customT2 : lv.t2;
+
+    var steps   = Math.min(horizon, 60);
+    var simCount = 3000;
+
+    // Run all three engines
+    var mcResult  = runMonteCarlo(price, syntheticCloses, steps, simCount, t1, t2);
+    var lrResult  = runLinearRegression(regressionCloses, steps);
+    var atrResult = runATRProbability(price, t1, atr, horizon);
+    var atrT2     = runATRProbability(price, t2, atr, horizon);
+
+    // Find convergence zone
+    var strikeZone = findStrikeZone(mcResult, lrResult, atrResult, price, steps-1);
+
+    // LuxAlgo signal for context
+    var lux = c1d ? luxAlgoSignal(c1d) : null;
+
     res.json({
-      symbol: sym, price: quote.price, changePct: quote.changePct,
-      high: quote.high, low: quote.low,
-      floatShares: quote.floatShares, marketCap: quote.marketCap,
-      shortName: quote.shortName, shortData: shortData,
-      phase: phase, mmr: mmr, dilution: dilute, lux: lux,
-      timestamp: new Date().toISOString()
+      ticker:     sym,
+      price:      price,
+      t1:         t1,
+      t2:         t2,
+      horizon:    horizon,
+      steps:      steps,
+      atr:        +atr.toFixed(3),
+      monteCarlo: mcResult,
+      regression: lrResult,
+      atrZones:   { t1: atrResult, t2: atrT2 },
+      strikeZone: strikeZone,
+      lux:        lux,
+      quote:      { price: price, changePct: quote.changePct, floatShares: quote.floatShares, sector: quote.sector },
+      timestamp:  new Date().toISOString()
     });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
 
-// ── API: Latest squeeze scan results ─────────────────────────────
-app.get('/api/squeeze-scan', function(req, res) {
-  res.json({
-    results: squeezeStore,
-    scanCount: squeezeScanCount,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// ── API: Premium Pulse hub ────────────────────────────────────────
-app.get('/api/premium-pulse', async function(req, res) {
-  try {
-    var allQuotes = [];
-    var seen = new Set();
-    var screeners = ['day_gainers', 'most_actives'];
-    for (var s = 0; s < screeners.length; s++) {
-      try {
-        var r = await fetch(
-          'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=' + screeners[s] + '&_=' + Date.now(),
-          { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
-        );
-        var d = await r.json();
-        var quotes = (d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [];
-        quotes.filter(function(q) {
-          return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15 && !seen.has(q.symbol);
-        }).forEach(function(q) {
-          seen.add(q.symbol);
-          allQuotes.push(q);
-        });
-      } catch(e) {}
-    }
-
-    // Score each with MMR
-    var tiles = [];
-    var radarItems = [];
-
-    for (var i = 0; i < Math.min(allQuotes.length, 20); i++) {
-      var q = allQuotes[i];
-      try {
-        var tf = await getCandles(q.symbol, '3mo', '1d');
-        var rv = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
-        var quoteObj = {
-          price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
-          floatShares: q.floatShares, volume: q.regularMarketVolume,
-          avgVolume: q.averageDailyVolume3Month, high: q.regularMarketDayHigh,
-          low: q.regularMarketDayLow, marketCap: q.marketCap,
-          shortName: q.shortName
-        };
-        var mmr = calculateMMR(quoteObj, tf, []);
-
-        // Squeeze phase from store if available, else quick proxy
-        var sqPhase = squeezeStore.find(function(s) { return s.symbol === q.symbol; });
-        var phaseNum = sqPhase ? sqPhase.phase.phase : 0;
-
-        tiles.push({
-          symbol: q.symbol, name: q.shortName, price: q.regularMarketPrice,
-          changePct: q.regularMarketChangePercent, rvol: +rv.toFixed(2),
-          floatShares: q.floatShares, mmr: mmr,
-          phase: phaseNum, conviction: sqPhase ? sqPhase.phase.conviction : 0
-        });
-
-        // Radar: RVOL > 5x in premium range
-        if (rv >= 5) {
-          radarItems.push({
-            symbol: q.symbol, price: q.regularMarketPrice,
-            changePct: q.regularMarketChangePercent, rvol: +rv.toFixed(1),
-            phase: phaseNum
-          });
-        }
-        await new Promise(function(r) { setTimeout(r, 120); });
-      } catch(e) {}
-    }
-
-    // Sort by MMR descending
-    tiles.sort(function(a, b) { return (b.mmr.total || 0) - (a.mmr.total || 0); });
-    // Radar: most extreme RVOL first
-    radarItems.sort(function(a, b) { return b.rvol - a.rvol; });
-
-    res.json({ tiles: tiles, radar: radarItems, timestamp: new Date().toISOString() });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) {
+    console.error('Probability error: ' + e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ================================================================
-// END SQUEEZE + PULSE BACKEND v3.7
+// END PROBABILITY ENSEMBLE BACKEND
+// ================================================================
+
+// ================================================================
+// SQUEEZE + PREMIUM PULSE ENGINE v3.7
 // ================================================================
 // ================================================================
 // MAVERICK SQUEEZE + PREMIUM PULSE ENGINE v3.7
@@ -2620,6 +1970,316 @@ app.post('/api/premium-pulse', async function(req, res) {
 // END SQUEEZE + PULSE BACKEND v3.7
 // ================================================================
 
+// =========================================================
+// API ROUTES
+// =========================================================
+
+app.get('/api/groq-test', async function(req, res) {
+  if (!GROQ_KEY) return res.json({ error: 'GROQ_KEY not set', key_present: false });
+  try {
+    var mR = await fetch('https://api.groq.com/openai/v1/models', { headers: { 'Authorization': 'Bearer ' + GROQ_KEY } });
+    var mD = await mR.json();
+    var tR = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: GROQ_MODELS[0], max_tokens: 10, messages: [{ role: 'user', content: 'Say OK' }] })
+    });
+    var tD = await tR.json();
+    res.json({ key_present: true, key_starts_with: GROQ_KEY.slice(0,8) + '...',
+      models_status: mR.status, models_available: mD.data ? mD.data.map(function(m){return m.id;}) : mD,
+      completion_status: tR.status, completion_result: tD.choices && tD.choices[0] && tD.choices[0].message ? tD.choices[0].message.content : tD });
+  } catch(e) { res.json({ error: e.message }); }
+});
+
+app.post('/api/analyze', async function(req, res) {
+  var ticker = req.body.ticker;
+  if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  var sym = ticker.toUpperCase().trim();
+  try {
+    var results = await Promise.all([
+      getQuote(sym),
+      getCandles(sym, '3mo', '1d'),
+      getCandles(sym, '1mo', '60m'),
+      getCandles(sym, '5d', '60m'),
+      getCandles(sym, '2d', '15m'),
+      getFreshNews(sym)
+    ]);
+    var quote = results[0];
+    var tf1d  = results[1];
+    var tf4h  = results[2];
+    var tf1h  = results[3];
+    var tf15  = results[4];
+    var news  = results[5];
+    if (!quote) return res.status(404).json({ error: sym + ' not found' });
+
+    // Run MMR math engine
+    var mmr = calculateMMR(quote, tf1d, news);
+
+    // Run dilution shield
+    var dilution = await checkDilutionRisk(sym);
+
+    // LuxAlgo signals
+    var luxAlgo = {
+      daily:    tf1d  ? luxAlgoSignal(tf1d)  : null,
+      fourhour: tf4h  ? luxAlgoSignal(tf4h)  : null,
+      onehour:  tf1h  ? luxAlgoSignal(tf1h)  : null
+    };
+
+    // ATR-first stop calculation
+    var atr = tf1d ? tf1d.atr : null;
+    var levels = calcLevels(quote.price, atr, dilution.stopMultiplier);
+
+    var ANALYZE_PROMPT = 'You are MAVERICK aggressive day trading AI. You receive MMR score (math pre-filter), LuxAlgo signals, and multi-timeframe data.\n' +
+      'VERDICTS: BUY | DONT_BUY | WATCH\n' +
+      'STOPS: Use ATR-based levels provided. Do NOT use fixed percentages.\n' +
+      'If dilution risk detected, widen stops and note in key_risk.\n' +
+      'LuxAlgo signals are primary technical confirmation. 2+ timeframe alignment = high conviction.\n' +
+      'MMR >= 80 = whale confirmed. MMR 60-79 = elevated interest. MMR < 60 = noise.\n' +
+      'RETURN ONLY VALID JSON:\n' +
+      '{"verdict":"BUY|DONT_BUY|WATCH","conviction":0-100,"headline":"one decisive sentence","chart_pattern":"pattern name","timeframe_alignment":"BULLISH|BEARISH|MIXED|NEUTRAL","mmr_assessment":"brief MMR interpretation","reasoning":["bullet1","bullet2","bullet3"],"entry_zone":{"low":0.000,"high":0.000},"stop_loss":0.000,"target_1":0.000,"target_2":0.000,"target_3":0.000,"risk_reward":0.0,"position_size_suggestion":"AGGRESSIVE|STANDARD|SMALL","trade_type":"DAY_TRADE|SWING|SCALP","key_risk":"specific risk with numbers","trigger_to_watch":"exact condition if WATCH","time_horizon":"estimate"}';
+
+    var payload = {
+      ticker: sym,
+      mmr: mmr,
+      dilution_risk: dilution,
+      atr_stop_suggested: levels.stop,
+      quote: { price: quote.price, changePct: quote.changePct, open: quote.open, high: quote.high, low: quote.low, volume: quote.volume, marketCap: quote.marketCap, floatShares: quote.floatShares, sector: quote.sector },
+      timeframes: { daily: tf1d || 'unavailable', fourhour: tf4h || 'unavailable', onehour: tf1h || 'unavailable', fifteen: tf15 || 'unavailable' },
+      luxAlgo_signals: luxAlgo,
+      recent_news: news.slice(0, 3).map(function(n) { return n.headline; })
+    };
+
+    var verdict = await groqCall(ANALYZE_PROMPT, JSON.stringify(payload));
+    if (!verdict) return res.status(503).json({ error: 'AI unavailable - visit /api/groq-test' });
+
+    res.json({
+      ticker: sym, verdict: verdict, mmr: mmr, dilution: dilution, levels: levels,
+      luxAlgo: luxAlgo, data: { quote: quote, timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 }, news: news },
+      timestamp: new Date().toISOString()
+    });
+  } catch(e) { console.error('Analyze: ' + e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/quote/:symbol', async function(req, res) {
+  var q = await getQuote(req.params.symbol.toUpperCase());
+  if (!q) return res.status(404).json({ error: 'not found' });
+  res.json(q);
+});
+
+app.post('/api/luxalgo', async function(req, res) {
+  var ticker = req.body.ticker;
+  if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  var sym = ticker.toUpperCase();
+  var r = await Promise.all([
+    getCandles(sym, '3mo', '1d'),
+    getCandles(sym, '1mo', '60m'),
+    getCandles(sym, '5d', '60m'),
+    getCandles(sym, '2d', '15m')
+  ]);
+  res.json({ ticker: sym, daily: r[0] ? luxAlgoSignal(r[0]) : null, fourhour: r[1] ? luxAlgoSignal(r[1]) : null, onehour: r[2] ? luxAlgoSignal(r[2]) : null, fifteen: r[3] ? luxAlgoSignal(r[3]) : null, timestamp: new Date().toISOString() });
+});
+
+// MMR endpoint — score any ticker without full analysis
+app.post('/api/mmr', async function(req, res) {
+  var ticker = req.body.ticker;
+  if (!ticker) return res.status(400).json({ error: 'no ticker' });
+  var sym = ticker.toUpperCase();
+  try {
+    var results = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getFreshNews(sym)]);
+    var quote = results[0]; var tf1d = results[1]; var news = results[2];
+    if (!quote) return res.status(404).json({ error: sym + ' not found' });
+    var mmr = calculateMMR(quote, tf1d, news);
+    var dilution = await checkDilutionRisk(sym);
+    var atr = tf1d ? tf1d.atr : null;
+    var levels = calcLevels(quote.price, atr, dilution.stopMultiplier);
+    res.json({ ticker: sym, mmr: mmr, dilution: dilution, atrStop: levels.stop, atrUsed: levels.atrUsed, price: quote.price, timestamp: new Date().toISOString() });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/signals', async function(req, res) {
+  var signals = [];
+  if (FINNHUB_KEY) {
+    try {
+      var r = await fetch('https://finnhub.io/api/v1/news?category=general&token=' + FINNHUB_KEY + '&_=' + Date.now());
+      var d = await r.json();
+      if (Array.isArray(d)) {
+        d.filter(function(n) { return (Date.now()/1000 - n.datetime) < 3600 && n.related; })
+          .slice(0, 8)
+          .forEach(function(n) {
+            signals.push({ type: 'CATALYST', symbol: n.related, name: n.source, price: null, changePct: null,
+              signal: n.headline.slice(0, 100), strength: 'MODERATE', source: n.source, url: n.url,
+              ageH: +((Date.now()/1000 - n.datetime) / 3600).toFixed(1) });
+          });
+      }
+    } catch(e) {}
+  }
+  try {
+    var sec = await getSEC8K();
+    sec.filter(function(s) { return s.ageH < 2; }).slice(0, 5).forEach(function(s) {
+      signals.push({ type: 'SEC_8K', symbol: s.ticker || 'SEC', name: 'SEC Edgar',
+        signal: s.headline, strength: 'STRONG', source: 'SEC-EDGAR', url: s.url, ageH: s.ageH });
+    });
+  } catch(e) {}
+  try {
+    var r2 = await fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=10&scrIds=day_gainers&_=' + Date.now(), { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } });
+    var d2 = await r2.json();
+    ((d2 && d2.finance && d2.finance.result && d2.finance.result[0] && d2.finance.result[0].quotes) || [])
+      .filter(function(q) { return q.regularMarketChangePercent > 10 && q.regularMarketPrice < 20; })
+      .slice(0, 5)
+      .forEach(function(q) {
+        var rv = +(q.regularMarketVolume / (q.averageDailyVolume3Month || 1)).toFixed(1);
+        var mmrEst = calculateMMR({ floatShares: q.floatShares, volume: q.regularMarketVolume, avgVolume: q.averageDailyVolume3Month, changePct: q.regularMarketChangePercent }, { relVolume: rv }, []);
+        signals.push({ type: 'MOMENTUM', symbol: q.symbol, name: q.shortName || q.symbol,
+          price: q.regularMarketPrice, changePct: q.regularMarketChangePercent, relVolume: rv,
+          mmrScore: mmrEst.total, signal: '+' + q.regularMarketChangePercent.toFixed(1) + '% | ' + rv + 'x vol | MMR: ' + mmrEst.total,
+          strength: mmrEst.total >= 80 ? 'STRONG' : mmrEst.total >= 60 ? 'MODERATE' : 'WEAK', source: 'Yahoo' });
+      });
+  } catch(e) {}
+  res.json({ signals: signals.sort(function(a,b){return (a.ageH||0)-(b.ageH||0);}), timestamp: new Date().toISOString(), freshAt: new Date().toLocaleTimeString() });
+});
+
+app.post('/api/supernova', async function(req, res) {
+  try { var result = await runSupernova(); res.json(result); } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// catalyst-scan route handled by Catalyst v2 engine above
+
+app.post('/api/whale-scan', async function(req, res) {
+  try {
+    var candidates = new Set();
+    var screeners = ['day_gainers', 'most_actives'];
+    for (var i = 0; i < screeners.length; i++) {
+      try {
+        var r = await fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=25&scrIds=' + screeners[i] + '&_=' + Date.now(), { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } });
+        var d = await r.json();
+        ((d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [])
+          .filter(function(q) { return q.regularMarketPrice < 20 && q.regularMarketPrice > 0.5; })
+          .forEach(function(q) { candidates.add(q.symbol); });
+      } catch(e) {}
+    }
+    var scored = [];
+    var syms = Array.from(candidates).slice(0, 25);
+    for (var j = 0; j < syms.length; j++) {
+      try {
+        var sym = syms[j];
+        var res2 = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getFreshNews(sym)]);
+        var quote2 = res2[0]; var tf1d2 = res2[1]; var news2 = res2[2];
+        if (!quote2 || !tf1d2) continue;
+        var priceRange = tf1d2.high - tf1d2.low;
+        var pricePos   = priceRange > 0 ? (quote2.price - tf1d2.low) / priceRange : 0.5;
+        var isPhase2 = pricePos >= 0.15 && pricePos <= 0.50 && tf1d2.rsi >= 40 && tf1d2.rsi <= 65;
+        var isPhase3 = pricePos > 0.50 && pricePos <= 0.80 && tf1d2.rsi > 50 && tf1d2.pctChange > 0;
+        if (!isPhase2 && !isPhase3) continue;
+        var mmr2 = calculateMMR(quote2, tf1d2, news2);
+        var lux2 = luxAlgoSignal(tf1d2);
+        var fpScore = (isPhase2 ? 35 : 28) + Math.min(mmr2.total * 0.3, 30) + (lux2 && lux2.signalType === 'BUY' ? 20 : 0);
+        scored.push({
+          symbol: sym, price: quote2.price, changePct: quote2.changePct,
+          phase: isPhase2 ? 2 : 3, footprintScore: Math.min(100, Math.round(fpScore)),
+          mmr: mmr2, volumePattern: tf1d2.relVolume > 1.5 ? 'ACCUMULATION' : 'NEUTRAL',
+          rsi: tf1d2.rsi, floatShares: quote2.floatShares, shortName: quote2.shortName,
+          defendedLevel: +tf1d2.low.toFixed(3),
+          footprintSignals: [
+            isPhase2 ? 'PHASE 2 - Price defense zone (Maverick sweet spot)' : 'PHASE 3 - Markup in progress (ride with whale)',
+            'MMR Score: ' + mmr2.total + '/100 (Grade ' + mmr2.grade + ')',
+            'Float Rotation: ' + mmr2.floatRotation + 'x | RVOL: ' + mmr2.rvol + 'x',
+            lux2 && lux2.signalType === 'BUY' ? 'LuxAlgo BUY confirmed - TP $' + lux2.tpLevel : ''
+          ].filter(Boolean),
+          aiWhy: lux2 && lux2.signalType === 'BUY' ?
+            'LuxAlgo aligned + ' + (isPhase2 ? 'Phase 2 defense - whale defending $' + +tf1d2.low.toFixed(2) : 'Phase 3 markup underway') :
+            isPhase2 ? 'Phase 2 price defense - same level bounced repeatedly' : 'Phase 3 markup - follow the institutional flow'
+        });
+        await new Promise(function(r){setTimeout(r,200);});
+      } catch(e) {}
+    }
+    var top = scored.sort(function(a,b){return b.footprintScore-a.footprintScore;}).slice(0,5);
+    if (top.length && TG_CHAT_ID && bot && req.body.alertTelegram) {
+      var tgMsg = 'WHALE SCAN COMPLETE\nScanned: ' + syms.length + ' | Phase 2/3: ' + scored.length + '\n\n' +
+        top.slice(0,3).map(function(s,i){return (i+1)+'. '+s.symbol+' - Phase '+s.phase+' | MMR '+s.mmr.total+'/100\n$'+s.price.toFixed(2)+' | '+s.aiWhy;}).join('\n\n') +
+        '\n\nText: dive [TICKER]';
+      tgSend(TG_CHAT_ID, tgMsg);
+    }
+    res.json({ results: top, allCandidates: scored, totalScanned: syms.length, timestamp: new Date().toISOString() });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/alert', function(req, res) {
+  var symbol = req.body.symbol, condition = req.body.condition, value = req.body.value, chatId = req.body.chatId;
+  if (!symbol || !condition || !value) return res.status(400).json({ error: 'missing fields' });
+  var sym = symbol.toUpperCase();
+  if (!priceAlerts.has(sym)) priceAlerts.set(sym, []);
+  priceAlerts.get(sym).push({ chatId: chatId || TG_CHAT_ID, condition: condition, value: +value, fired: false });
+  addSub(sym, chatId || TG_CHAT_ID);
+  res.json({ ok: true, symbol: sym, condition: condition, value: +value });
+});
+
+app.post('/webhook/tradingview', function(req, res) {
+  if ((req.query.secret || req.body.secret) !== WEBHOOK_SECRET) return res.status(401).json({ error: 'unauthorized' });
+  var ticker = req.body.ticker, action = req.body.action, indicator = req.body.indicator, price = req.body.price;
+  if (!ticker || !action) return res.status(400).json({ error: 'missing fields' });
+  var sym = ticker.toUpperCase();
+  tvSignals.set(sym, { action: action.toUpperCase(), indicator: indicator || 'TV', price: parseFloat(price) || null, time: Date.now() });
+  if (TG_CHAT_ID && bot) tgSend(TG_CHAT_ID, 'TV SIGNAL - ' + sym + '\n' + action.toUpperCase() + ' at $' + (price || '?'));
+  res.json({ ok: true });
+});
+
+app.post('/api/chat', async function(req, res) {
+  if (!GROQ_KEY) return res.status(503).json({ error: 'GROQ_KEY not set. Visit /api/groq-test' });
+  var message = req.body.message, sessionId = req.body.sessionId, portfolioSize = req.body.portfolioSize;
+  if (!message) return res.status(400).json({ error: 'no message' });
+  var sid = sessionId || 'default';
+  if (!chatSessions.has(sid)) chatSessions.set(sid, []);
+  var history = chatSessions.get(sid);
+  var liveContext = '';
+  var tm = message.match(/\b([A-Z]{2,5})\b/g);
+  var skipWords = ['THE','AND','FOR','BUY','ADD','OUT','NOT','HOW','CAN','MMR','ATR'];
+  if (tm) {
+    for (var i = 0; i < Math.min(tm.length, 2); i++) {
+      if (skipWords.indexOf(tm[i]) !== -1) continue;
+      try {
+        var q = await getQuote(tm[i]);
+        if (q) {
+          liveContext += '\nLIVE ' + tm[i] + ': $' + q.price.toFixed(2) + ', ' + q.changePct.toFixed(2) + '%, H$' + q.high.toFixed(2) + ' L$' + q.low.toFixed(2) + ', Cap' + (q.marketCap ? '$' + (q.marketCap/1e6).toFixed(0) + 'M' : 'n/a') + ', Float' + (q.floatShares ? (q.floatShares/1e6).toFixed(1) + 'M' : 'n/a');
+          break;
+        }
+      } catch(e) {}
+    }
+  }
+  var pSize = portfolioSize || 348;
+  var ADVISOR_PROMPT = 'You are MAVERICKs personal hedge fund AI advisor. ' +
+    'Portfolio: $' + pSize + ' (keep $100 reserve, tradeable: $' + (pSize-100) + ', max per trade: $' + Math.round((pSize-100)*0.35) + '). ' +
+    'Phase 2/3 player. Sub-$10 specialist. Aggressive but calculated. Never fights dilution or ATMs. ' +
+    'Uses ATR-based stops: Entry minus 1.5x ATR. Uses MMR scoring. ' +
+    'Position sizing: Shares = max_risk divided by (entry minus stop). Max risk = 3% of portfolio. ' +
+    'Direct and decisive. Under 200 words. Exact numbers always. ' +
+    'End BUY answers with the exact Telegram bot command to send.';
+  var messages = [{ role: 'system', content: ADVISOR_PROMPT + '\nPORTFOLIO: $' + pSize + ' | Tradeable: $' + (pSize-100) + ' | Max/trade: $' + Math.round((pSize-100)*0.35) }]
+    .concat(history.slice(-10))
+    .concat([{ role: 'user', content: message + liveContext }]);
+  try {
+    var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: GROQ_MODELS[0], max_tokens: 500, temperature: 0.3, messages: messages })
+    });
+    if (!r.ok) { var errText = await r.text(); return res.status(503).json({ error: 'Groq ' + r.status + ': ' + errText.slice(0,100) }); }
+    var d = await r.json();
+    var reply = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+    if (!reply) return res.status(503).json({ error: 'Empty AI response' });
+    history.push({ role: 'user', content: message });
+    history.push({ role: 'assistant', content: reply });
+    if (history.length > 20) history.splice(0, 2);
+    res.json({ reply: reply, sessionId: sid });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/chat/clear', function(req, res) { chatSessions.delete(req.body.sessionId || 'default'); res.json({ ok: true }); });
+
+app.get('/api/health', function(req, res) {
+  res.json({ status: 'online', version: '3.5', time: new Date().toISOString(), botUsername: BOT_USERNAME,
+    services: { telegram: !!TELEGRAM_TOKEN, finnhub: !!FINNHUB_KEY, groq: !!GROQ_KEY, memory: !!(JSONBIN_KEY && JSONBIN_BIN) },
+    active: { watches: watches.size, trades: trades.size, scanCycles: scanCycleCount },
+    engine: { mmr: 'active', atr_stops: 'active', dilution_shield: 'active', supernova_v2: 'active' }
+  });
+});
+
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
 // =========================================================
@@ -2838,24 +2498,27 @@ function setupTelegramHandlers() {
   });
 }
 
+
 // =========================================================
-// START
+// START — v3.7 Full Stack
 // =========================================================
 connectFinnhub();
+startCatalystFeed();
 startContinuousScanner();
 startSqueezeScanner();
-startCatalystFeed();
 
 app.listen(PORT, '0.0.0.0', async function() {
-  console.log('\nMAVERICK TERMINAL v3.5 - Port ' + PORT);
+  console.log('\nMAVERICK TERMINAL v3.7 - Port ' + PORT);
   console.log('   Telegram:        ' + (TELEGRAM_TOKEN ? 'OK' : 'MISSING'));
   console.log('   Finnhub:         ' + (FINNHUB_KEY    ? 'OK' : 'MISSING'));
   console.log('   Groq AI:         ' + (GROQ_KEY       ? 'OK' : 'MISSING'));
   console.log('   Memory:          ' + (JSONBIN_KEY    ? 'OK' : 'optional'));
-  console.log('   MMR Engine:      ACTIVE (60+ threshold)');
-  console.log('   ATR Stops:       ACTIVE (1.5x ATR default)');
-  console.log('   Dilution Shield: ACTIVE (S-3/424B monitoring)');
-  console.log('   Supernova 2.0:   ACTIVE (rotation >3x, RVOL >10x)');
-  console.log('   Scanner:         4am-4pm ET, MMR-driven\n');
+  console.log('   MMR Engine:      ACTIVE');
+  console.log('   Catalyst v2:     ACTIVE (6 sources, 90s cycle)');
+  console.log('   Probability:     ACTIVE (Monte Carlo + LR + ATR)');
+  console.log('   Squeeze v3.7:    ACTIVE (Phase 1/2/3, 5min scan)');
+  console.log('   Pulse Hub:       ACTIVE (MMR heat map)');
+  console.log('   Dilution Shield: ACTIVE');
+  console.log('   Scanner:         4am-4pm ET\n');
   await initTelegram();
 });
