@@ -182,6 +182,26 @@ select{text-transform:none}
 
 .hidden{display:none}
 footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-bottom:28px}
+
+/* ── BPI: BOTTOM PROBABILITY INDEX STYLES ── */
+.bpi-card{border-radius:9px;padding:12px 14px;margin-bottom:9px;border:1px solid;position:relative;overflow:hidden}
+.bpi-high{background:linear-gradient(135deg,rgba(34,197,94,.08),transparent);border-color:rgba(34,197,94,.35)}
+.bpi-mid{background:linear-gradient(135deg,rgba(240,180,41,.08),transparent);border-color:rgba(240,180,41,.3)}
+.bpi-low{background:linear-gradient(135deg,rgba(239,68,68,.06),transparent);border-color:rgba(239,68,68,.25)}
+.bpi-score-ring{position:relative;width:74px;height:74px;flex-shrink:0}
+.bpi-score-ring svg{position:absolute;top:0;left:0;transform:rotate(-90deg)}
+.bpi-score-inner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.bpi-score-num{font-size:21px;font-weight:900;font-family:monospace;line-height:1}
+.bpi-score-lbl{font-size:7px;color:var(--muted);letter-spacing:.5px}
+.bpi-sweep{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:5px;padding:6px 9px;font-size:10px;color:#22c55e;margin-top:7px;line-height:1.5}
+.bpi-sweep-none{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:5px;padding:6px 9px;font-size:10px;color:var(--muted);margin-top:7px}
+.cluster-row{display:flex;align-items:center;gap:7px;font-size:9px;padding:2px 0}
+.cluster-price{width:48px;font-family:monospace;font-weight:700;color:var(--muted);flex-shrink:0}
+.cluster-bar{height:8px;background:var(--blue);border-radius:2px;opacity:.55;flex-shrink:0;transition:width .6s ease}
+.cluster-poc{background:var(--gold);opacity:.8}
+.fib-zone{display:inline-block;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);border-radius:4px;padding:2px 7px;font-size:9px;color:var(--purple);margin:2px 2px 0 0}
+.fib-hit{background:rgba(167,139,250,.3);color:#fff;border-color:rgba(167,139,250,.6)}
+.bpi-mini-chart{width:100%;height:170px;border-radius:7px;overflow:hidden;border:1px solid var(--border);margin-bottom:9px}
 </style>
 </head>
 <body>
@@ -431,6 +451,84 @@ async function runAnalysis(){
   }catch(e){out.innerHTML=errorHTML(e.message);}
 }
 
+
+// ── BPI Card Renderer ─────────────────────────────────────────────
+function buildBPICard(bpi, sym) {
+  if (!bpi || bpi.score === 0) return '';
+  var score = bpi.score || 0;
+  var color = score >= 75 ? 'var(--green)' : score >= 55 ? 'var(--gold)' : 'var(--red)';
+  var cardCls = score >= 75 ? 'bpi-high' : score >= 55 ? 'bpi-mid' : 'bpi-low';
+  var circ = 2 * Math.PI * 32;
+  var dash = (score / 100) * circ;
+  var ring = '<svg width="74" height="74" viewBox="0 0 74 74">' +
+    '<circle cx="37" cy="37" r="32" fill="none" stroke="var(--bg3)" stroke-width="5"/>' +
+    '<circle cx="37" cy="37" r="32" fill="none" stroke="' + color + '" stroke-width="5" ' +
+    'stroke-dasharray="' + dash.toFixed(1) + ' ' + circ.toFixed(1) + '" stroke-linecap="round"/>' +
+    '</svg>';
+
+  // Cluster bars
+  var maxVol = bpi.clusters && bpi.clusters[0] ? bpi.clusters[0].vol : 1;
+  var clusterHtml = bpi.clusters && bpi.clusters.length ?
+    '<div class="lbl" style="margin-bottom:5px;margin-top:8px">Volume Clusters (Demand Zones)</div>' +
+    bpi.clusters.slice(0,5).map(function(c, i) {
+      var w = Math.max(5, Math.round((c.vol / maxVol) * 120));
+      var isPoC = i === 0;
+      return '<div class="cluster-row"><span class="cluster-price">$' + c.price.toFixed(2) + '</span>' +
+        '<div class="cluster-bar ' + (isPoC ? 'cluster-poc' : '') + '" style="width:' + w + 'px"></div>' +
+        (isPoC ? '<span style="font-size:8px;color:var(--gold)">POC</span>' : '') +
+        '</div>';
+    }).join('') : '';
+
+  // Fibonacci zones
+  var fibHtml = '';
+  if (bpi.fibonacci && bpi.fibonacci.length) {
+    fibHtml = '<div style="margin-top:8px"><div class="lbl" style="margin-bottom:4px">Fibonacci Retracement</div>' +
+      bpi.fibonacci.map(function(f) {
+        var isNear = bpi.nearFib && bpi.nearFib.indexOf(f.label) !== -1;
+        return '<span class="fib-zone ' + (isNear ? 'fib-hit' : '') + '">' +
+          f.label + ' $' + f.price + (isNear ? ' ← CURRENT' : '') + '</span>';
+      }).join('') + '</div>';
+  }
+
+  // Mini TradingView 5-min chart
+  var chartId = 'bpiChart_' + sym + '_' + Date.now();
+  var miniChart = '<div class="bpi-mini-chart" id="' + chartId + '"></div>';
+  var chartScript = '<script>' +
+    'setTimeout(function(){if(typeof TradingView!=="undefined"){' +
+    'try{new TradingView.widget({container_id:"' + chartId + '",symbol:"' + sym + '",' +
+    'interval:"5",theme:"dark",style:"1",locale:"en",' +
+    'toolbar_bg:"#0f1923",hide_top_toolbar:true,hide_legend:true,' +
+    'enable_publishing:false,allow_symbol_change:false,' +
+    'studies:["PivotPointsHighLow@tv-basicstudies"],' +
+    'width:"100%",height:170});}catch(e){}}},300);' +
+    '<\/script>';
+
+  return '<div class="bpi-card ' + cardCls + '">' +
+    '<div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">' +
+    '<div class="bpi-score-ring">' + ring +
+    '<div class="bpi-score-inner"><div class="bpi-score-num" style="color:' + color + '">' + score + '</div>' +
+    '<div class="bpi-score-lbl">BPI</div></div></div>' +
+    '<div style="flex:1">' +
+    '<div style="font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:3px">BOTTOM PROBABILITY INDEX</div>' +
+    '<div style="font-size:14px;font-weight:900;color:' + color + '">' + (bpi.label || '') + '</div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5">' + (bpi.verdict || '') + '</div>' +
+    '</div></div>' +
+    miniChart + chartScript +
+    '<div class="g3" style="margin-bottom:8px">' +
+    '<div class="metric"><div class="ml">Demand Zone</div><div class="mv gold">$' + (bpi.demandZone || bpi.poc || '?') + '</div></div>' +
+    '<div class="metric"><div class="ml">Pivot Prob</div><div class="mv" style="color:' + color + '">' + (bpi.historicalPivotProb || 0) + '%</div></div>' +
+    '<div class="metric"><div class="ml">Pivots in Zone</div><div class="mv">' + (bpi.pivotsInZone || 0) + ' / ' + (bpi.totalPivots || 0) + '</div></div>' +
+    '</div>' +
+    (bpi.sweepDetected ?
+      '<div class="bpi-sweep">LIQUIDITY SWEEP CONFIRMED — Price wicked below recent low then reclaimed. Retail stops flushed. Institutional absorption likely.</div>' :
+      '<div class="bpi-sweep-none">No liquidity sweep detected. Monitor for price to wick below recent low and reclaim for highest-confidence entry.</div>'
+    ) +
+    (bpi.nearFib ? '<div style="font-size:10px;color:var(--purple);margin-top:6px">Fibonacci: ' + bpi.nearFib + ' — institutional reference level</div>' : '') +
+    (bpi.nearRound ? '<div style="font-size:10px;color:var(--orange);margin-top:4px">Round Number: ' + bpi.nearRound + ' — stop cluster zone below this</div>' : '') +
+    clusterHtml + fibHtml +
+    '</div>';
+}
+
 function renderAnalysis(data, out){
   var v = data.verdict || {};
   var q = (data.data && data.data.quote) || {};
@@ -502,6 +600,7 @@ function renderAnalysis(data, out){
     (tfSummary ? '<div style="font-size:9px;color:var(--muted);margin-top:8px;font-family:monospace">' + tfSummary + '</div>' : '') +
     '</div>' +
     planHtml +
+    buildBPICard(data.bpi, data.ticker) +
     '<div class="card"><div class="lbl">Live Data <span style="color:var(--muted);font-size:8px">· ' + (q.source||'live').toUpperCase() + '</span></div>' +
     '<div class="g3">' +
     '<div class="metric"><div class="ml">Price</div><div class="mv">$' + (q.price||'?') + '</div></div>' +
