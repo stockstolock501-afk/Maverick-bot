@@ -9,6 +9,9 @@ var path        = require('path');
 var TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 var FINNHUB_KEY    = process.env.FINNHUB_KEY;
 var GROQ_KEY       = process.env.GROQ_KEY;
+var GROQ_KEY_2     = process.env.GROQ_KEY_2;   // Optional: second Groq key
+var GROQ_KEY_3     = process.env.GROQ_KEY_3;   // Optional: third Groq key
+var CEREBRAS_KEY   = process.env.CEREBRAS_KEY; // Optional: free at inference.cerebras.ai
 var JSONBIN_KEY    = process.env.JSONBIN_KEY;
 var JSONBIN_BIN    = process.env.JSONBIN_BIN;
 var WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'maverick';
@@ -20,52 +23,125 @@ var app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Groq models - verified live on your account
-var GROQ_MODELS = [
-  'llama-3.3-70b-versatile',
-  'llama-3.1-8b-instant',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-];
+// ── Multi-Brain AI System ─────────────────────────────────────────
+// Key rotation: cycles through available Groq keys on 429
+// Tiered routing: scans → Cerebras/8B, manual analysis → 70B
+var GROQ_KEYS = [GROQ_KEY, GROQ_KEY_2, GROQ_KEY_3].filter(Boolean);
+var groqKeyIdx = 0;
 
-async function groqCall(system, user, maxTokens) {
+// Models: fast/cheap for scans, premium for manual deep dives
+var GROQ_MODELS_HEAVY = [
+  'llama-3.3-70b-versatile',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'llama-3.1-8b-instant'
+];
+var GROQ_MODELS_LIGHT = [
+  'llama-3.1-8b-instant',
+  'llama-3.3-70b-versatile'
+];
+var GROQ_MODELS = GROQ_MODELS_HEAVY; // legacy reference
+
+// Groq call with key rotation on 429
+async function groqCall(system, user, maxTokens, useLightModel) {
   maxTokens = maxTokens || 1500;
-  if (!GROQ_KEY) { console.error('GROQ_KEY missing'); return null; }
-  for (var i = 0; i < GROQ_MODELS.length; i++) {
-    var model = GROQ_MODELS[i];
-    try {
-      var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: model, max_tokens: maxTokens, temperature: 0.25,
-          messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
-      });
-      if (!r.ok) { var err = await r.text(); console.error('Groq [' + model + '] ' + r.status + ': ' + err.slice(0,150)); continue; }
-      var d = await r.json();
-      var text = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '';
-      if (!text) { console.error('Groq [' + model + '] empty'); continue; }
-      var cleaned = text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
-      var m = cleaned.match(/\{[\s\S]*\}/);
-      if (!m) { console.error('Groq [' + model + '] no JSON in response'); continue; }
-      return JSON.parse(m[0]);
-    } catch(e) { console.error('Groq [' + model + ']: ' + e.message); }
+  var models = useLightModel ? GROQ_MODELS_LIGHT : GROQ_MODELS_HEAVY;
+  var keysToTry = GROQ_KEYS.length;
+  if (!keysToTry) { console.error('No GROQ_KEY set'); return null; }
+
+  for (var ki = 0; ki < keysToTry; ki++) {
+    var key = GROQ_KEYS[groqKeyIdx % GROQ_KEYS.length];
+    for (var mi = 0; mi < models.length; mi++) {
+      var model = models[mi];
+      try {
+        var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: model, max_tokens: maxTokens, temperature: 0.25,
+            messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
+        });
+        if (r.status === 429) {
+          console.log('[AI] Groq key ' + groqKeyIdx + ' rate limited. Rotating...');
+          groqKeyIdx = (groqKeyIdx + 1) % GROQ_KEYS.length;
+          break; // try next key
+        }
+        if (!r.ok) { var err = await r.text(); console.error('Groq [' + model + '] ' + r.status + ': ' + err.slice(0,100)); continue; }
+        var d = await r.json();
+        var text = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '';
+        if (!text) continue;
+        var cleaned = text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
+        var m = cleaned.match(/\{[\s\S]*\}/);
+        if (!m) continue;
+        return JSON.parse(m[0]);
+      } catch(e) { console.error('Groq [' + model + ']: ' + e.message); }
+    }
   }
-  console.error('All Groq models failed');
+  console.error('[AI] All Groq keys/models exhausted');
   return null;
 }
 
-async function groqChat(messages, maxTokens) {
-  maxTokens = maxTokens || 500;
-  if (!GROQ_KEY) return null;
+// Cerebras: auxiliary brain for background scans — much higher free limits
+// Get free key at: inference.cerebras.ai — add CEREBRAS_KEY to Render env vars
+async function cerebrasCall(system, user, maxTokens) {
+  if (!CEREBRAS_KEY) return null;
   try {
-    var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    var r = await fetch('https://api.cerebras.ai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: GROQ_MODELS[0], max_tokens: maxTokens, temperature: 0.3, messages: messages })
+      headers: { 'Authorization': 'Bearer ' + CEREBRAS_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama3.1-8b',
+        max_tokens: maxTokens || 1000,
+        temperature: 0.25,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
+      })
     });
     if (!r.ok) return null;
     var d = await r.json();
-    return (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || null;
-  } catch(e) { return null; }
+    var text = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '';
+    if (!text) return null;
+    var cleaned = text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
+    var m = cleaned.match(/\{[\s\S]*\}/);
+    return m ? JSON.parse(m[0]) : null;
+  } catch(e) { console.error('[Cerebras] ' + e.message); return null; }
+}
+
+// Tiered AI call:
+// priority='high' → Groq 70B (for manual analyze/dive — preserve quota)
+// priority='scan' → Cerebras first, fallback Groq 8B (background scans)
+async function aiCall(system, user, maxTokens, priority) {
+  if (priority === 'scan') {
+    // Try Cerebras first (higher limits, saves Groq quota)
+    var cb = await cerebrasCall(system, user, maxTokens || 800);
+    if (cb) return cb;
+    // Fallback: Groq 8B (light model)
+    return groqCall(system, user, maxTokens || 800, true);
+  }
+  // Default: Groq premium model for high-stakes verdicts
+  return groqCall(system, user, maxTokens, false);
+}
+
+async function groqChat(messages, maxTokens, useLightModel) {
+  maxTokens = maxTokens || 1000;
+  var keys = GROQ_KEYS;
+  if (!keys.length) return null;
+  var models = useLightModel ? GROQ_MODELS_LIGHT : GROQ_MODELS_HEAVY;
+  for (var ki = 0; ki < keys.length; ki++) {
+    var key = keys[(groqKeyIdx + ki) % keys.length];
+    for (var mi = 0; mi < models.length; mi++) {
+      try {
+        var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: models[mi], max_tokens: maxTokens, temperature: 0.4, messages: messages })
+        });
+        if (r.status === 429) { groqKeyIdx = (groqKeyIdx+1) % keys.length; break; }
+        if (!r.ok) continue;
+        var d = await r.json();
+        var txt = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+        if (txt) return txt;
+      } catch(e) {}
+    }
+  }
+  return null;
 }
 
 // Telegram with 409 fix
@@ -631,7 +707,7 @@ async function runSupernova() {
     }), null, 2) + '\n\nTime: ' + new Date().toLocaleString() + '\nReturn ONLY JSON.';
 
   try {
-    var verdict = await groqCall(SUPERNOVA_PROMPT, payload, 4000);
+    var verdict = await aiCall(SUPERNOVA_PROMPT, payload, 2000, 'scan'); // Cerebras/8B — saves 70B quota
     return verdict || { scan_time: new Date().toISOString(), market_session: 'ERROR', market_pulse: 'AI returned no data.', supernovas: [], algo_note: 'Visit /api/groq-test' };
   } catch(e) {
     return { scan_time: new Date().toISOString(), market_session: 'ERROR', market_pulse: e.message, supernovas: [], algo_note: '' };
@@ -2366,7 +2442,7 @@ app.post('/api/analyze', async function(req, res) {
       recent_news: news.slice(0, 3).map(function(n) { return n.headline; })
     };
 
-    var verdict = await groqCall(ANALYZE_PROMPT, JSON.stringify(payload));
+    var verdict = await aiCall(ANALYZE_PROMPT, JSON.stringify(payload), 1500, 'high'); // 70B — precision matters here
     if (!verdict) return res.status(503).json({ error: 'AI unavailable - visit /api/groq-test' });
 
     res.json({
@@ -2615,7 +2691,7 @@ app.post('/api/chat', async function(req, res) {
   try {
     var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: GROQ_MODELS[0], max_tokens: 1000, temperature: isTrading ? 0.3 : 0.5, messages: messages })
+      body: JSON.stringify({ model: isTrading ? GROQ_MODELS_HEAVY[0] : GROQ_MODELS_LIGHT[0], max_tokens: 1000, temperature: isTrading ? 0.3 : 0.5, messages: messages })
     });
     if (!r.ok) { var errText = await r.text(); return res.status(503).json({ error: 'Groq ' + r.status + ': ' + errText.slice(0,100) }); }
     var d = await r.json();
