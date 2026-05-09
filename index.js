@@ -1737,6 +1737,118 @@ app.post('/api/probability', async function(req, res) {
 // Then add startSqueezeScanner(); to your server start block
 // ================================================================
 
+// ── Raw candle array fetcher (needed for BPI pivot analysis) ─────
+async function getRawCandles(symbol, range, interval) {
+  try {
+    var url = 'https://query2.finance.yahoo.com/v8/finance/chart/' + symbol +
+              '?range=' + range + '&interval=' + interval + '&_=' + Date.now();
+    var r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.yahoo.com/', 'Cache-Control': 'no-cache' }
+    });
+    var d = await r.json();
+    var res = d && d.chart && d.chart.result && d.chart.result[0];
+    if (!res) return [];
+    var q   = res.indicators && res.indicators.quote && res.indicators.quote[0];
+    var ts  = res.timestamp || [];
+    if (!q || !ts.length) return [];
+    var out = [];
+    for (var i = 0; i < ts.length; i++) {
+      if (q.close[i] != null) {
+        out.push({ t: ts[i], o: q.open[i]||0, h: q.high[i]||0, l: q.low[i]||0, c: q.close[i], v: q.volume[i]||0 });
+      }
+    }
+    return out;
+  } catch(e) { return []; }
+}
+
+// ================================================================
+// BOTTOM PROBABILITY INDEX (BPI) ENGINE — v4.0
+// Pivot clustering + VAP + Liquidity Sweep + Fibonacci + Round Numbers
+// All free. All math. No guessing.
+// ================================================================
+
+function computeBPI(candles, currentPrice) {
+  if (!candles || candles.length < 20) {
+    return { score: 0, label: 'INSUFFICIENT DATA', demandZone: 0, clusters: [], sweepDetected: false, fibonacci: [], breakdown: {} };
+  }
+  var price = currentPrice || candles[candles.length - 1].c;
+
+  // 1. PIVOT LOW DETECTION (V-bottoms with 2-bar lookback each side)
+  var pivotLows = [];
+  for (var i = 2; i < candles.length - 2; i++) {
+    var c = candles[i];
+    if (c.l < candles[i-1].l && c.l < candles[i-2].l && c.l < candles[i+1].l && c.l < candles[i+2].l) {
+      pivotLows.push({ price: c.l, vol: c.v, index: i });
+    }
+  }
+
+  // 2. PIVOT DENSITY in current zone (price ±2%)
+  var zoneLow  = price * 0.98;
+  var zoneHigh = price * 1.02;
+  var pivotsInZone = pivotLows.filter(function(p) { return p.price >= zoneLow && p.price <= zoneHigh; });
+  var pivotDensityScore = Math.min(40, pivotsInZone.length * 10);
+  var historicalPivotProb = pivotLows.length > 0 ? Math.round((pivotsInZone.length / pivotLows.length) * 100) : 0;
+
+  // 3. VOLUME-AT-PRICE (VAP) — 0.5% bins, highest volume = demand zone
+  var bins = {};
+  var binSize = Math.max(0.01, price * 0.005);
+  candles.forEach(function(c) {
+    var bin = +(Math.floor(c.l / binSize) * binSize).toFixed(2);
+    bins[bin] = (bins[bin] || 0) + (c.v || 0);
+  });
+  var sortedBins = Object.keys(bins)
+    .map(function(k) { return { price: parseFloat(k), vol: bins[k] }; })
+    .sort(function(a, b) { return b.vol - a.vol; });
+  var poc = sortedBins[0] ? sortedBins[0].price : price;
+  var distFromPOC = poc > 0 ? Math.abs(price - poc) / price : 1;
+  var vapScore = distFromPOC < 0.01 ? 20 : distFromPOC < 0.025 ? 12 : distFromPOC < 0.05 ? 5 : 0;
+
+  // 4. LIQUIDITY SWEEP DETECTION — wicked below recent low, then reclaimed
+  var lastC = candles[candles.length - 1];
+  var recentLow = Math.min.apply(null, candles.slice(-20).map(function(c) { return c.l; }));
+  var swept = lastC.l < recentLow && lastC.c > recentLow;
+  var sweepScore = swept ? 20 : 0;
+
+  // 5. FIBONACCI RETRACEMENT ZONES
+  var lookback = candles.slice(-50);
+  var rangeHigh = Math.max.apply(null, lookback.map(function(c) { return c.h; }));
+  var rangeLow  = Math.min.apply(null, lookback.map(function(c) { return c.l; }));
+  var range     = rangeHigh - rangeLow;
+  var fibLevels = [0.236, 0.382, 0.500, 0.618, 0.786].map(function(r) {
+    return { ratio: r, price: +(rangeHigh - range * r).toFixed(2), label: Math.round(r*100) + '%' };
+  });
+  var nearFib = fibLevels.find(function(f) { return Math.abs(price - f.price) / price < 0.015; });
+  var fibScore = nearFib ? 12 : 0;
+
+  // 6. PSYCHOLOGICAL ROUND NUMBER PROXIMITY
+  var mag = price < 5 ? 0.5 : price < 20 ? 1 : price < 100 ? 5 : 10;
+  var nearestRound = Math.round(price / mag) * mag;
+  var roundDist = Math.abs(price - nearestRound) / price;
+  var roundScore = roundDist < 0.01 ? 8 : roundDist < 0.025 ? 4 : 0;
+
+  // FINAL BPI SCORE
+  var total = Math.min(100, pivotDensityScore + vapScore + sweepScore + fibScore + roundScore);
+  var label   = total >= 75 ? 'INSTITUTIONAL FLOOR' : total >= 55 ? 'HIGH PROBABILITY DIP' : total >= 35 ? 'POSSIBLE SUPPORT' : 'LOW CONFIDENCE';
+  var verdict = total >= 75 ? 'BUY THE DIP — Institutional demand zone confirmed. Floor is likely in.' :
+                total >= 55 ? 'DIP ENTRY POSSIBLE — Multiple support signals converging. Wait for candle close above zone.' :
+                total >= 35 ? 'CAUTION — Weak support. Risk of lower low. Wait for liquidity sweep confirmation.' :
+                              'DO NOT DIP-BUY — No institutional demand evidence. This may be distribution.';
+
+  return {
+    score: total, label: label, verdict: verdict,
+    demandZone: +(poc).toFixed(2), poc: +(poc).toFixed(2),
+    historicalPivotProb: historicalPivotProb,
+    pivotsInZone: pivotsInZone.length, totalPivots: pivotLows.length,
+    sweepDetected: swept,
+    sweepStrength: swept ? 'CONFIRMED — stops flushed, price reclaimed' : 'Not detected',
+    nearFib: nearFib ? nearFib.label + ' retracement at $' + nearFib.price : null,
+    nearRound: roundDist < 0.025 ? '$' + nearestRound.toFixed(2) + ' round number stop cluster' : null,
+    clusters: sortedBins.slice(0, 5),
+    fibonacci: fibLevels,
+    breakdown: { pivotDensity: pivotDensityScore, vap: vapScore, sweep: sweepScore, fibonacci: fibScore, round: roundScore }
+  };
+}
+
 // ── Yahoo Finance short data (free, no paid API) ─────────────────
 async function getShortData(symbol) {
   try {
@@ -2085,14 +2197,16 @@ app.post('/api/analyze', async function(req, res) {
       getCandles(sym, '1mo', '60m'),
       getCandles(sym, '5d', '60m'),
       getCandles(sym, '2d', '15m'),
-      getFreshNews(sym)
+      getFreshNews(sym),
+      getRawCandles(sym, '3mo', '1d')   // raw array for BPI pivot analysis
     ]);
-    var quote = results[0];
-    var tf1d  = results[1];
-    var tf4h  = results[2];
-    var tf1h  = results[3];
-    var tf15  = results[4];
-    var news  = results[5];
+    var quote    = results[0];
+    var tf1d     = results[1];
+    var tf4h     = results[2];
+    var tf1h     = results[3];
+    var tf15     = results[4];
+    var news     = results[5];
+    var rawDaily = results[6];
     if (!quote) return res.status(404).json({ error: sym + ' not found' });
 
     // Run MMR math engine
@@ -2109,23 +2223,57 @@ app.post('/api/analyze', async function(req, res) {
     };
 
     // ATR-first stop calculation
-    var atr = tf1d ? tf1d.atr : null;
+    var atr    = tf1d ? tf1d.atr : null;
     var levels = calcLevels(quote.price, atr, dilution.stopMultiplier);
 
-    var ANALYZE_PROMPT = 'You are MAVERICK aggressive day trading AI. You receive MMR score (math pre-filter), LuxAlgo signals, and multi-timeframe data.\n' +
+    // Bottom Probability Index
+    var bpi = computeBPI(rawDaily, quote.price);
+
+    var ANALYZE_PROMPT = 'You are MAVERICK aggressive day trading AI v4.0.\n' +
+      'You receive: MMR score, LuxAlgo signals, multi-timeframe data, AND a Bottom Probability Index (BPI).\n\n' +
       'VERDICTS: BUY | DONT_BUY | WATCH\n' +
-      'STOPS: Use ATR-based levels provided. Do NOT use fixed percentages.\n' +
-      'If dilution risk detected, widen stops and note in key_risk.\n' +
-      'LuxAlgo signals are primary technical confirmation. 2+ timeframe alignment = high conviction.\n' +
-      'MMR >= 80 = whale confirmed. MMR 60-79 = elevated interest. MMR < 60 = noise.\n' +
+      'STOPS: Use ATR-based levels. Never fixed percentages.\n' +
+      'MANDATORY BPI ANALYSIS: You MUST include dip_buy_assessment in your JSON.\n' +
+      '- If BPI >= 75: Confirm institutional floor. State the demand zone. High confidence dip buy.\n' +
+      '- If BPI 55-74: Moderate confidence. Wait for sweep-and-reclaim confirmation.\n' +
+      '- If BPI < 55: Do NOT suggest dip-buy. State the risk explicitly.\n' +
+      '- Always reference the specific pivot cluster price and any Fibonacci level detected.\n' +
+      '- If a liquidity sweep was detected (price wicked below recent low then reclaimed), call it out explicitly.\n\n' +
+      'LuxAlgo signals are primary technical confirmation. MMR >= 80 = whale confirmed.\n\n' +
       'RETURN ONLY VALID JSON:\n' +
-      '{"verdict":"BUY|DONT_BUY|WATCH","conviction":0-100,"headline":"one decisive sentence","chart_pattern":"pattern name","timeframe_alignment":"BULLISH|BEARISH|MIXED|NEUTRAL","mmr_assessment":"brief MMR interpretation","reasoning":["bullet1","bullet2","bullet3"],"entry_zone":{"low":0.000,"high":0.000},"stop_loss":0.000,"target_1":0.000,"target_2":0.000,"target_3":0.000,"risk_reward":0.0,"position_size_suggestion":"AGGRESSIVE|STANDARD|SMALL","trade_type":"DAY_TRADE|SWING|SCALP","key_risk":"specific risk with numbers","trigger_to_watch":"exact condition if WATCH","time_horizon":"estimate"}';
+      '{"verdict":"BUY|DONT_BUY|WATCH","conviction":0-100,"headline":"one decisive sentence",' +
+      '"chart_pattern":"pattern name","timeframe_alignment":"BULLISH|BEARISH|MIXED|NEUTRAL",' +
+      '"mmr_assessment":"brief MMR interpretation",' +
+      '"reasoning":["bullet1","bullet2","bullet3"],' +
+      '"entry_zone":{"low":0.000,"high":0.000},"stop_loss":0.000,' +
+      '"target_1":0.000,"target_2":0.000,"target_3":0.000,"risk_reward":0.0,' +
+      '"position_size_suggestion":"AGGRESSIVE|STANDARD|SMALL","trade_type":"DAY_TRADE|SWING|SCALP",' +
+      '"key_risk":"specific risk with numbers","trigger_to_watch":"exact condition if WATCH",' +
+      '"time_horizon":"estimate",' +
+      '"dip_buy_assessment":{"bpi_score":0,"is_dip_buy_opportunity":true,"demand_zone_price":0.000,' +
+      '"stop_cluster_price":0.000,"sweep_detected":true,"bottom_probability_pct":0,' +
+      '"reasoning":"one sentence on why this is or is not the institutional floor"}}';
 
     var payload = {
       ticker: sym,
       mmr: mmr,
       dilution_risk: dilution,
       atr_stop_suggested: levels.stop,
+      bpi: {
+        score: bpi.score,
+        label: bpi.label,
+        verdict: bpi.verdict,
+        demand_zone: bpi.demandZone,
+        sweep_detected: bpi.sweepDetected,
+        sweep_strength: bpi.sweepStrength,
+        near_fibonacci: bpi.nearFib,
+        near_round_number: bpi.nearRound,
+        historical_pivot_probability: bpi.historicalPivotProb,
+        pivots_in_zone: bpi.pivotsInZone,
+        total_pivots: bpi.totalPivots,
+        top_volume_cluster: bpi.clusters[0] ? '$' + bpi.clusters[0].price : null,
+        breakdown: bpi.breakdown
+      },
       quote: { price: quote.price, changePct: quote.changePct, open: quote.open, high: quote.high, low: quote.low, volume: quote.volume, marketCap: quote.marketCap, floatShares: quote.floatShares, sector: quote.sector },
       timeframes: { daily: tf1d || 'unavailable', fourhour: tf4h || 'unavailable', onehour: tf1h || 'unavailable', fifteen: tf15 || 'unavailable' },
       luxAlgo_signals: luxAlgo,
@@ -2137,7 +2285,8 @@ app.post('/api/analyze', async function(req, res) {
 
     res.json({
       ticker: sym, verdict: verdict, mmr: mmr, dilution: dilution, levels: levels,
-      luxAlgo: luxAlgo, data: { quote: quote, timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 }, news: news },
+      bpi: bpi, luxAlgo: luxAlgo,
+      data: { quote: quote, timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 }, news: news },
       timestamp: new Date().toISOString()
     });
   } catch(e) { console.error('Analyze: ' + e.message); res.status(500).json({ error: e.message }); }
