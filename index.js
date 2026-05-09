@@ -135,8 +135,8 @@ async function getQuote(symbol) {
   if (FINNHUB_KEY) {
     try {
       var results = await Promise.all([
-        fetch('https://finnhub.io/api/v1/quote?symbol=' + sym + '&token=' + FINNHUB_KEY),
-        fetch('https://finnhub.io/api/v1/stock/profile2?symbol=' + sym + '&token=' + FINNHUB_KEY)
+        fetch('https://finnhub.io/api/v1/quote?symbol=' + sym + '&token=' + FINNHUB_KEY + '&_=' + Date.now()),
+        fetch('https://finnhub.io/api/v1/stock/profile2?symbol=' + sym + '&token=' + FINNHUB_KEY + '&_=' + Date.now())
       ]);
       var q = await results[0].json();
       var p = await results[1].json();
@@ -644,19 +644,23 @@ async function runSupernova() {
 // AI is never called in continuous scan — math only.
 // =========================================================
 
+// 24/7 intelligent scan intervals — runs on server (zero phone battery impact)
+// Pre-market: 3min  |  Power hour: 90sec  |  Midday: 5min
+// After-hours: 10min  |  Overnight weekday: 20min  |  Weekend: 30min
 function getScanInterval() {
   var et    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   var total = et.getHours() * 60 + et.getMinutes();
   var isWeekday = et.getDay() > 0 && et.getDay() < 6;
-  if (!isWeekday || total < 4*60 || total >= 16*60) return null;
-  if (total < 9.5*60)  return 3;
-  if (total < 11*60)   return 1.5;
-  if (total < 15.5*60) return 4;
-  return 1.5;
+  if (!isWeekday) return 30;          // Weekend: every 30min (light polling)
+  if (total >= 4*60  && total < 9.5*60)  return 3;    // Pre-market: every 3min
+  if (total >= 9.5*60 && total < 11*60)  return 1.5;  // Power hour open: every 90sec
+  if (total >= 11*60 && total < 15.5*60) return 5;    // Midday: every 5min
+  if (total >= 15.5*60 && total < 16*60) return 1.5;  // Power hour close: every 90sec
+  if (total >= 16*60 && total < 20*60)   return 10;   // After-hours: every 10min
+  return 20;                          // Overnight: every 20min
 }
 
 async function continuousScanCycle() {
-  if (!getScanInterval()) return;
   scanCycleCount++;
   var candidates = new Set();
   try {
@@ -737,11 +741,11 @@ async function continuousScanCycle() {
 }
 
 function startContinuousScanner() {
-  console.log('Continuous scanner armed (4am-4pm ET, MMR-driven)');
+  console.log('[Scanner v3.9] 24/7 MMR scanner armed');
   var run = async function() {
     await continuousScanCycle().catch(function(e) { console.error('Scan cycle: ' + e.message); });
     var iv = getScanInterval();
-    setTimeout(run, (iv || 5) * 60 * 1000);
+    setTimeout(run, iv * 60 * 1000);
   };
   setTimeout(run, 30000);
 }
@@ -1873,40 +1877,120 @@ async function runSqueezeScan() {
 }
 
 function startSqueezeScanner() {
-  console.log('[Squeeze v3.7] Scanner armed (4am-4pm ET, every 5min)');
+  console.log('[Squeeze v3.9] 24/7 squeeze scanner armed');
   var run = async function() {
-    var et    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    var total = et.getHours() * 60 + et.getMinutes();
-    var isWD  = et.getDay() > 0 && et.getDay() < 6;
-    if (isWD && total >= 4*60 && total < 16*60) {
-      await runSqueezeScan().catch(function(e) { console.error('[Squeeze] ' + e.message); });
-    }
-    setTimeout(run, 5 * 60 * 1000);
+    // Always scan — interval determines frequency, not on/off
+    await runSqueezeScan().catch(function(e) { console.error('[Squeeze] ' + e.message); });
+    var iv = getScanInterval();
+    // Squeeze scanner is heavier — minimum 5min between runs
+    setTimeout(run, Math.max(5, iv) * 60 * 1000);
   };
   setTimeout(run, 20000);
 }
 
 // ── API: individual squeeze analysis ─────────────────────────────
+// ── COILED SPRING DETECTOR v3.9 ──────────────────────────────────
+// Maverick "Wait and Strike" Protocol
+// Identifies stocks in institutional Order Block zones with volume silence
+// before the inevitable spring release
+
+function detectCoil(quote, tf1d, tf15m) {
+  if (!quote || !tf1d) return { isCoiled: false };
+  var price     = quote.price;
+  var atr1d     = tf1d.atr || price * 0.04;
+  var atr15m    = tf15m && tf15m.atr ? tf15m.atr : atr1d * 0.25;
+  var rvol      = tf1d.relVolume || 1;
+  var low1d     = tf1d.low;
+  var high1d    = tf1d.high;
+
+  // 1. ATR Compression: 15m ATR / 1d ATR — should be < 0.25
+  var atrTightness = atr15m / atr1d;
+
+  // 2. Volume Silence: RVOL < 0.6 — the "Sound of Silence" before the spring
+  var volumeSilent = rvol < 0.6;
+
+  // 3. Zone Check: Price within 2% of recent low (Bullish Order Block)
+  var isInOB = low1d > 0 ? (price / low1d) < 1.04 : false;
+
+  // 4. MMR gate: only valid if underlying momentum exists (MMR >= 55)
+  var mmrCheck = calculateMMR(quote, tf1d, []);
+
+  // Spring compression score (0-100)
+  // Higher = tighter coil = more explosive potential
+  var compression = Math.min(100, Math.round(
+    (1 - Math.min(1, atrTightness / 0.25)) * 50 +     // ATR compression (50pts)
+    (1 - Math.min(1, rvol / 0.6)) * 30 +               // Volume silence (30pts)
+    (isInOB ? 20 : 0)                                   // In zone bonus (20pts)
+  ));
+
+  // Trigger price: high of the current tight range (the "Coil High")
+  // If 15m data available, use 15m high. Otherwise use current high of day
+  var triggerPrice = tf15m && tf15m.high ? +(tf15m.high * 1.001).toFixed(2) : +(high1d * 1.002).toFixed(2);
+
+  // Stop: below Order Block low (1.5x ATR below entry)
+  var stopLoss = +(price - atr1d * 1.5).toFixed(2);
+
+  // Target: 1d ATR × 3 from entry (conservative spring target)
+  var target1  = +(price + atr1d * 2.0).toFixed(2);
+  var target2  = +(price + atr1d * 3.5).toFixed(2);
+
+  var isCoiled = atrTightness < 0.30 && rvol < 0.70 && isInOB && mmrCheck.total >= 55;
+
+  if (isCoiled) {
+    return {
+      isCoiled: true,
+      label: 'COILED SPRING',
+      compression: compression,
+      atrTightness: +(atrTightness * 100).toFixed(1),  // % — lower is tighter
+      rvol: +rvol.toFixed(2),
+      triggerPrice: triggerPrice,
+      stopLoss: stopLoss,
+      target1: target1,
+      target2: target2,
+      orderBlockLow: +low1d.toFixed(2),
+      orderBlockHigh: +(low1d * 1.04).toFixed(2),
+      advice: 'Wait for 1-min candle CLOSE above $' + triggerPrice + ' on RVOL spike >2x. Entry on the break. Stop $' + stopLoss + '. T1: $' + target1 + ' (R:R ' + +((target1-price)/(price-stopLoss)).toFixed(1) + ':1)',
+      exitWarning: 'If price breaks BELOW $' + +low1d.toFixed(2) + ' — spring is broken. Exit immediately.'
+    };
+  }
+  return { isCoiled: false, compression: compression, atrTightness: +(atrTightness*100).toFixed(1), rvol: +rvol.toFixed(2) };
+}
+
 app.post('/api/squeeze-check', async function(req, res) {
   var ticker = req.body.ticker;
   if (!ticker) return res.status(400).json({ error: 'no ticker' });
   var sym = ticker.toUpperCase().trim();
   try {
-    var pr = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getCandles(sym, '5d', '60m'), getShortData(sym)]);
-    var quote3 = pr[0]; var tf1d = pr[1]; var tf1h = pr[2]; var sd = pr[3];
+    var pr = await Promise.all([getQuote(sym), getCandles(sym, '3mo', '1d'), getCandles(sym, '5d', '60m'), getCandles(sym, '2d', '15m'), getShortData(sym)]);
+    var quote3 = pr[0]; var tf1d = pr[1]; var tf1h = pr[2]; var tf15 = pr[3]; var sd = pr[4];
     if (!quote3) return res.status(404).json({ error: sym + ' not found' });
     var phase   = detectSqueezePhase(quote3, tf1d);
     var mmr     = calculateMMR(quote3, tf1d, []);
     var dilute  = await checkDilutionRisk(sym);
     var lux     = tf1d ? luxAlgoSignal(tf1d) : null;
-    var stopCluster    = +(quote3.high * 1.02).toFixed(2);
-    var avgShortEntry  = sd.yearHigh > 0 ? sd.yearHigh * 0.90 : quote3.price * 1.10;
-    var painPct        = +((quote3.price - avgShortEntry) / avgShortEntry * 100).toFixed(1);
-    var ctbProxy       = sd.siPercent > 0 ? Math.round(sd.siPercent * Math.min(phase.rvol / 5, 2) * 10) : 0;
-    res.json({ symbol: sym, price: quote3.price, changePct: quote3.changePct, high: quote3.high, low: quote3.low,
-      floatShares: quote3.floatShares, marketCap: quote3.marketCap, shortName: quote3.shortName,
+    var coil    = detectCoil(quote3, tf1d, tf15);
+    var stopCluster   = +(quote3.high * 1.02).toFixed(2);
+    var avgShortEntry = sd.yearHigh > 0 ? sd.yearHigh * 0.90 : quote3.price * 1.10;
+    var painPct       = +((quote3.price - avgShortEntry) / avgShortEntry * 100).toFixed(1);
+    var ctbProxy      = sd.siPercent > 0 ? Math.round(sd.siPercent * Math.min(phase.rvol / 5, 2) * 10) : 0;
+
+    // Squeeze probability: combines phase conviction + MMR + SI + coil score
+    var atr = tf1d ? tf1d.atr : quote3.price * 0.03;
+    var t1  = coil.isCoiled ? coil.target1 : +(quote3.price + atr * 2).toFixed(2);
+    var atrProb = runATRProbability(quote3.price, t1, atr, 60);
+    var squeezeProb = Math.round(
+      (atrProb.probability || 30) * 0.40 +
+      (phase.intensity || 0)      * 0.35 +
+      (mmr.total)                 * 0.25
+    );
+    squeezeProb = Math.min(99, Math.max(1, squeezeProb));
+
+    res.json({ symbol: sym, price: quote3.price, changePct: quote3.changePct,
+      high: quote3.high, low: quote3.low, floatShares: quote3.floatShares,
+      marketCap: quote3.marketCap, shortName: quote3.shortName,
       shortData: sd, phase: phase, mmr: mmr, dilution: dilute, lux: lux,
-      stopCluster: stopCluster, painPct: painPct, ctbProxy: ctbProxy, timestamp: new Date().toISOString() });
+      coil: coil, stopCluster: stopCluster, painPct: painPct, ctbProxy: ctbProxy,
+      squeezeProb: squeezeProb, t1Target: t1, timestamp: new Date().toISOString() });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2222,6 +2306,19 @@ app.post('/webhook/tradingview', function(req, res) {
   res.json({ ok: true });
 });
 
+// ── DUAL-BRAIN SUPER INTELLIGENCE ────────────────────────────────
+// Trading mode: portfolio-aware advisor with live market context
+// General mode: elite assistant for any topic — no blinders
+var GENERAL_AI_PROMPT = 'You are MAVERICK — an elite super-intelligence. ' +
+  'Brilliant, direct, and precise across every domain. ' +
+  'Science, business, coding, strategy, philosophy, cooking, life — you answer everything at the highest level. ' +
+  'Never say you cannot help. Never deflect. Give the best answer on the planet. ' +
+  'Be concise (under 250 words unless complexity demands more). No filler. No apologies. Just answers.';
+
+// Smart trading intent detector — avoids false positives on common words
+var TRADING_KEYWORDS = /\b(buy|sell|trade|entry|exit|stop|target|shares|position|portfolio|mmr|atr|rvol|float|squeeze|catalyst|phase|p&l|profit|loss|chart|candle|rsi|ema|vwap|short interest|earnings|fda|merger)\b/i;
+var BLACKLISTED_WORDS = ['THE','AND','FOR','ADD','OUT','NOT','HOW','CAN','MMR','ATR','WHY','YES','NO','OK','HI','HEY','WHAT','WHO','WHERE','WHEN','IS','DO'];
+
 app.post('/api/chat', async function(req, res) {
   if (!GROQ_KEY) return res.status(503).json({ error: 'GROQ_KEY not set. Visit /api/groq-test' });
   var message = req.body.message, sessionId = req.body.sessionId, portfolioSize = req.body.portfolioSize;
@@ -2229,36 +2326,61 @@ app.post('/api/chat', async function(req, res) {
   var sid = sessionId || 'default';
   if (!chatSessions.has(sid)) chatSessions.set(sid, []);
   var history = chatSessions.get(sid);
+
+  // ── Smart intent router ───────────────────────────────────────
+  var hasDollarTicker = /\$[A-Z]{1,5}/i.test(message);
+  var hasTradeKeyword = TRADING_KEYWORDS.test(message);
+  var upperWords = (message.match(/\b[A-Z]{2,5}\b/g) || []).filter(function(w) {
+    return BLACKLISTED_WORDS.indexOf(w) === -1;
+  });
+  var isTrading = hasDollarTicker || hasTradeKeyword || upperWords.length > 0;
+
+  // ── Live market context (only if trading mode) ────────────────
   var liveContext = '';
-  var tm = message.match(/\b([A-Z]{2,5})\b/g);
-  var skipWords = ['THE','AND','FOR','BUY','ADD','OUT','NOT','HOW','CAN','MMR','ATR'];
-  if (tm) {
-    for (var i = 0; i < Math.min(tm.length, 2); i++) {
-      if (skipWords.indexOf(tm[i]) !== -1) continue;
+  if (isTrading) {
+    var allTickers = [];
+    if (hasDollarTicker) {
+      var dm = message.match(/\$([A-Z]{1,5})/gi);
+      if (dm) dm.forEach(function(t){ allTickers.push(t.replace('$','').toUpperCase()); });
+    }
+    upperWords.slice(0,2).forEach(function(w){ if (allTickers.indexOf(w)===-1) allTickers.push(w); });
+    for (var i = 0; i < Math.min(allTickers.length, 2); i++) {
       try {
-        var q = await getQuote(tm[i]);
+        var q = await getQuote(allTickers[i]);
         if (q) {
-          liveContext += '\nLIVE ' + tm[i] + ': $' + q.price.toFixed(2) + ', ' + q.changePct.toFixed(2) + '%, H$' + q.high.toFixed(2) + ' L$' + q.low.toFixed(2) + ', Cap' + (q.marketCap ? '$' + (q.marketCap/1e6).toFixed(0) + 'M' : 'n/a') + ', Float' + (q.floatShares ? (q.floatShares/1e6).toFixed(1) + 'M' : 'n/a');
+          liveContext += '\nLIVE ' + allTickers[i] + ': $' + q.price.toFixed(2) +
+            ' (' + (q.changePct>=0?'+':'') + q.changePct.toFixed(2) + '%)' +
+            ' H:$' + q.high.toFixed(2) + ' L:$' + q.low.toFixed(2) +
+            ' Cap:' + (q.marketCap?'$'+(q.marketCap/1e6).toFixed(0)+'M':'n/a') +
+            ' Float:' + (q.floatShares?(q.floatShares/1e6).toFixed(1)+'M':'n/a');
           break;
         }
       } catch(e) {}
     }
   }
+
   var pSize = portfolioSize || 348;
   var ADVISOR_PROMPT = 'You are MAVERICKs personal hedge fund AI advisor. ' +
     'Portfolio: $' + pSize + ' (keep $100 reserve, tradeable: $' + (pSize-100) + ', max per trade: $' + Math.round((pSize-100)*0.35) + '). ' +
     'Phase 2/3 player. Sub-$10 specialist. Aggressive but calculated. Never fights dilution or ATMs. ' +
     'Uses ATR-based stops: Entry minus 1.5x ATR. Uses MMR scoring. ' +
-    'Position sizing: Shares = max_risk divided by (entry minus stop). Max risk = 3% of portfolio. ' +
-    'Direct and decisive. Under 200 words. Exact numbers always. ' +
+    'Position sizing: Shares = max_risk / (entry - stop). Max risk = 3% of portfolio. ' +
+    'Direct and decisive. Under 250 words. Exact numbers always. ' +
     'End BUY answers with the exact Telegram bot command to send.';
-  var messages = [{ role: 'system', content: ADVISOR_PROMPT + '\nPORTFOLIO: $' + pSize + ' | Tradeable: $' + (pSize-100) + ' | Max/trade: $' + Math.round((pSize-100)*0.35) }]
-    .concat(history.slice(-10))
+
+  var systemPrompt = isTrading ? ADVISOR_PROMPT : GENERAL_AI_PROMPT;
+  var systemContext = isTrading
+    ? systemPrompt + '\nPORTFOLIO: $' + pSize + ' | Tradeable: $' + (pSize-100) + ' | Max/trade: $' + Math.round((pSize-100)*0.35)
+    : systemPrompt;
+
+  var messages = [{ role: 'system', content: systemContext }]
+    .concat(history.slice(-12))
     .concat([{ role: 'user', content: message + liveContext }]);
+
   try {
     var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: GROQ_MODELS[0], max_tokens: 500, temperature: 0.3, messages: messages })
+      body: JSON.stringify({ model: GROQ_MODELS[0], max_tokens: 1000, temperature: isTrading ? 0.3 : 0.5, messages: messages })
     });
     if (!r.ok) { var errText = await r.text(); return res.status(503).json({ error: 'Groq ' + r.status + ': ' + errText.slice(0,100) }); }
     var d = await r.json();
@@ -2266,8 +2388,8 @@ app.post('/api/chat', async function(req, res) {
     if (!reply) return res.status(503).json({ error: 'Empty AI response' });
     history.push({ role: 'user', content: message });
     history.push({ role: 'assistant', content: reply });
-    if (history.length > 20) history.splice(0, 2);
-    res.json({ reply: reply, sessionId: sid });
+    if (history.length > 24) history.splice(0, 2);
+    res.json({ reply: reply, sessionId: sid, mode: isTrading ? 'trading' : 'general' });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/chat/clear', function(req, res) { chatSessions.delete(req.body.sessionId || 'default'); res.json({ ok: true }); });
@@ -2299,13 +2421,24 @@ function setupTelegramHandlers() {
     if (m) return { cmd: 'alert', symbol: m[1].toUpperCase(), condition: m[2].toUpperCase(), value: +m[3] };
     m = t.match(/^dive\s+([A-Za-z.]{1,6})/i); if (m) return { cmd: 'dive', symbol: m[1].toUpperCase() };
     m = t.match(/^mmr\s+([A-Za-z.]{1,6})/i); if (m) return { cmd: 'mmr', symbol: m[1].toUpperCase() };
-    m = t.match(/^([A-Z.]{1,6})$/); if (m) return { cmd: 'quote', symbol: m[1] };
+    // Smart quote: $ prefix always = ticker. Bare caps only if not a common word and short (2-5 chars)
+    m = t.match(/^\$([A-Z.]{1,5})$/i);
+    if (m) return { cmd: 'quote', symbol: m[1].toUpperCase() };
+    m = t.match(/^([A-Z.]{2,5})$/);
+    if (m) {
+      var sym = m[1].toUpperCase();
+      var blacklist = ['THE','AND','FOR','BUY','ADD','OUT','NOT','HOW','CAN','MMR','ATR',
+        'WHY','YES','NO','OK','HI','HEY','WHAT','WHO','WHERE','WHEN','IS','DO','GET',
+        'PUT','SET','RUN','USE','SEE','TRY','ASK','HELP','INFO','NEWS','MORE'];
+      if (blacklist.indexOf(sym) === -1) return { cmd: 'quote', symbol: sym };
+    }
     if (/^(news|catalyst)/i.test(t)) return { cmd: 'news' };
     if (/^(status|p&l)/i.test(t)) return { cmd: 'status' };
     if (/^(cancel|clear)/i.test(t)) return { cmd: 'cancel' };
     if (/^(daily|today)/i.test(t)) return { cmd: 'daily' };
     if (/^(weekly)/i.test(t)) return { cmd: 'weekly' };
     if (/^help$/i.test(t)) return { cmd: 'help' };
+    // Everything else routes to super-intelligence chat
     return { cmd: 'chat', text: t };
   }
 
@@ -2508,17 +2641,18 @@ startContinuousScanner();
 startSqueezeScanner();
 
 app.listen(PORT, '0.0.0.0', async function() {
-  console.log('\nMAVERICK TERMINAL v3.7 - Port ' + PORT);
+  console.log('\nMAVERICK TERMINAL v3.9 - Port ' + PORT);
   console.log('   Telegram:        ' + (TELEGRAM_TOKEN ? 'OK' : 'MISSING'));
-  console.log('   Finnhub:         ' + (FINNHUB_KEY    ? 'OK' : 'MISSING'));
+  console.log('   Finnhub:         ' + (FINNHUB_KEY    ? 'OK (fresh, cache-busted)' : 'MISSING'));
   console.log('   Groq AI:         ' + (GROQ_KEY       ? 'OK' : 'MISSING'));
   console.log('   Memory:          ' + (JSONBIN_KEY    ? 'OK' : 'optional'));
   console.log('   MMR Engine:      ACTIVE');
   console.log('   Catalyst v2:     ACTIVE (6 sources, 90s cycle)');
   console.log('   Probability:     ACTIVE (Monte Carlo + LR + ATR)');
-  console.log('   Squeeze v3.7:    ACTIVE (Phase 1/2/3, 5min scan)');
+  console.log('   Squeeze v3.9:    ACTIVE (Phase 1/2/3 + Coiled Spring)');
   console.log('   Pulse Hub:       ACTIVE (MMR heat map)');
   console.log('   Dilution Shield: ACTIVE');
-  console.log('   Scanner:         4am-4pm ET\n');
+  console.log('   Scanner:         24/7 (adaptive intervals)');
+  console.log('   Super Bot:       ACTIVE (dual-brain trading + general AI)\n');
   await initTelegram();
 });
