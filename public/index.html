@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0"/>
-<title>Maverick Terminal v3.5</title>
+<title>Maverick Cockpit 4.0</title>
 <script src="https://s3.tradingview.com/tv.js"></script>
 <style>
 :root{
@@ -420,7 +420,7 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
   </div>
 </div>
 
-<footer>MAVERICK v3.5 · MMR ENGINE · LUXALGO · ATR STOPS · DILUTION SHIELD · GROQ AI · INFORMATIONAL USE ONLY</footer>
+<footer>MAVERICK COCKPIT 4.0 · MMR · LUXALGO · BPI · STRESS TEST · ALT-DATA · MCE · GROQ AI · INFORMATIONAL USE ONLY</footer>
 
 <script>
 var BOT_USERNAME = '';
@@ -899,7 +899,7 @@ function renderAnalysis(data, out){
       var m=data.mmr;
       var mc=m.total>=80?'var(--green)':m.total>=60?'var(--gold)':'var(--red)';
       return '<div style="background:var(--bg);border:1px solid var(--bg3);border-radius:7px;padding:9px;margin-bottom:8px">' +
-        '<div class="lbl" style="margin-bottom:6px;color:var(--muted)">MMR Score (v3.5 Math Engine)</div>' +
+        '<div class="lbl" style="margin-bottom:6px;color:var(--muted)">MMR Score (v4.0 Math Engine)</div>' +
         '<div style="display:flex;align-items:center;gap:10px">' +
         '<div style="font-size:26px;font-weight:900;color:' + mc + '">' + m.total + '</div>' +
         '<div style="font-size:11px;color:' + mc + ';font-weight:700">Grade ' + m.grade + '</div>' +
