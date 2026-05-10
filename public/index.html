@@ -35,9 +35,9 @@ body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;
 @keyframes pulse{0%,100%{opacity:.5;transform:scale(.9)}50%{opacity:1;transform:scale(1.1)}}
 
 /* Tabs */
-.tabs{display:flex;gap:5px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.tabs{display:flex;flex-wrap:wrap;gap:5px;padding:8px 12px 6px;border-bottom:1px solid var(--border)}
 .tabs::-webkit-scrollbar{display:none}
-.tab{flex-shrink:0;background:transparent;border:1px solid var(--border);color:var(--muted);padding:6px 11px;font-size:9px;font-weight:800;letter-spacing:1px;border-radius:6px;cursor:pointer;font-family:monospace;white-space:nowrap}
+.tab{background:transparent;border:1px solid var(--border);color:var(--muted);padding:6px 11px;font-size:9px;font-weight:800;letter-spacing:1px;border-radius:6px;cursor:pointer;font-family:monospace;white-space:nowrap}
 .tab.active{background:rgba(240,180,41,.1);border-color:var(--gold);color:var(--gold)}
 
 /* Cards */
@@ -251,7 +251,7 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
 <div class="hdr">
   <div class="hdr-dot" id="statusDot" style="background:var(--gold);box-shadow:0 0 10px var(--gold)"></div>
   <div>
-    <h1>MAVERICK <span>v3.5</span></h1>
+    <h1>Maverick <span style="color:var(--gold);font-size:0.75em;font-weight:700">Cockpit 4.0</span></h1>
     <div class="hdr-sub">MMR ENGINE · LUXALGO · ATR STOPS · WHALE INTEL</div>
   </div>
   <div class="hdr-time" id="clock">--:-- ET</div>
@@ -619,6 +619,58 @@ function drawBPICanvas(canvasId) {
 }
 
 
+
+// ── Market Correlation Engine Card ───────────────────────────────
+function buildMCECard(mce) {
+  if (!mce) return '';
+  var beta = mce.beta || 1.0;
+  var regime = mce.macroRegime || 'NEUTRAL';
+  var regimeColor = regime === 'DISTRIBUTION' ? 'var(--red)' : regime === 'CAUTION' ? 'var(--gold)' : 'var(--green)';
+  var betaColor = beta > 2.5 ? 'var(--red)' : beta > 1.5 ? 'var(--gold)' : beta < 0.5 ? 'var(--blue)' : 'var(--green)';
+  var sc = mce.scenario || {};
+  return '<div class="mce-card">' +
+    '<div class="lbl" style="color:var(--green);margin-bottom:8px">Market Correlation Engine — Beta &amp; Systemic Risk</div>' +
+    '<div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">' +
+    '<div style="text-align:center;flex-shrink:0">' +
+    '<div class="beta-big" style="color:' + betaColor + '">' + beta.toFixed(2) + '</div>' +
+    '<div style="font-size:8px;color:var(--muted);letter-spacing:1px">BETA</div>' +
+    '</div>' +
+    '<div style="flex:1">' +
+    '<div style="font-size:12px;font-weight:900;color:' + regimeColor + '">' + regime + '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:2px">' + (mce.verdict || '') + '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:2px">SPY: ' + mce.spyTrend + ' · QQQ: ' + mce.qqqTrend + '</div>' +
+    '</div>' +
+    '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-bottom:5px;letter-spacing:.5px">SCENARIO ANALYSIS — WHAT IF SPY MOVES?</div>' +
+    '<div class="scenario-row"><span>SPY -1%</span><span style="color:' + (sc.drop1 < 0 ? 'var(--red)' : 'var(--green)') + '">' + (sc.drop1 >= 0 ? '+' : '') + (sc.drop1 || 0) + '</span></div>' +
+    '<div class="scenario-row"><span>SPY -2%</span><span style="color:var(--red)">' + (sc.drop2 || 0) + '</span></div>' +
+    '<div class="scenario-row"><span>SPY +1%</span><span style="color:var(--green)">+' + (sc.rally1 || 0) + '</span></div>' +
+    (mce.convictionTax < 0 ? '<div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:5px;padding:6px 8px;margin-top:7px;font-size:10px;color:#fca5a5">Conviction Tax: ' + mce.convictionTax + ' pts applied to MMR score — macro headwinds require higher bar</div>' : '') +
+    (mce.isRelativeStrength ? '<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:5px;padding:6px 8px;margin-top:7px;font-size:10px;color:#22c55e">Relative Strength detected — holding while SPY drops. Strongest institutional signal.</div>' : '') +
+    '</div>';
+}
+
+// ── Institutional Alpha Card ──────────────────────────────────────
+function buildAlphaCard(alpha) {
+  if (!alpha) return '';
+  var score = alpha.score || 0;
+  var color = score >= 70 ? 'var(--purple)' : score >= 45 ? 'var(--gold)' : 'var(--muted)';
+  var verdictBg = score >= 70 ? 'rgba(167,139,250,.12)' : score >= 45 ? 'rgba(240,180,41,.1)' : 'var(--bg)';
+  return '<div class="alpha-card">' +
+    '<div class="lbl" style="color:var(--purple);margin-bottom:8px">Institutional Alpha — Whale Signature Audit</div>' +
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:9px">' +
+    '<div><div class="alpha-score-num" style="color:' + color + '">' + score + '</div><div style="font-size:8px;color:var(--muted);letter-spacing:1px">/ 100</div></div>' +
+    '<div style="flex:1"><div style="font-size:13px;font-weight:900;color:' + color + '">' + (alpha.verdict || '') + '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:3px">' + (alpha.action || '') + '</div></div>' +
+    '</div>' +
+    '<div style="background:' + verdictBg + ';border-radius:6px;padding:8px;margin-bottom:7px">' +
+    '<div style="font-size:9px;color:var(--muted);margin-bottom:4px;letter-spacing:.5px">WHALE SIGNALS DETECTED</div>' +
+    (alpha.signals || []).map(function(s) { return '<div class="alpha-signal">' + s + '</div>'; }).join('') +
+    (!(alpha.signals && alpha.signals.length) ? '<div class="alpha-signal">No institutional signatures detected</div>' : '') +
+    '</div>' +
+    '</div>';
+}
+
 // ── Alt-Data Shadow Proxy Card ────────────────────────────────────
 function buildAltDataCard(alt, sym) {
   if (!alt) return '';
@@ -826,6 +878,8 @@ function renderAnalysis(data, out){
     '</div>' +
     planHtml +
     buildStressCard(data.stress, data.macro, data.levels) +
+    buildMCECard(data.mce) +
+    buildAlphaCard(data.instAlpha) +
     buildAltDataCard(data.altData, data.ticker) +
     buildSORPanel(data.data && data.data.quote ? data.data.quote.price : 0, data.levels, data.ticker) +
     buildBPICard(data.bpi, data.ticker) +
@@ -2296,29 +2350,15 @@ function renderMoverList() {
 
 async function loadMovers() {
   try {
-    var results = await Promise.all([
-      fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=day_gainers&_=' + Date.now(), { headers: { 'User-Agent': 'Mozilla/5.0' } }),
-      fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=most_actives&_=' + Date.now(), { headers: { 'User-Agent': 'Mozilla/5.0' } })
-    ]);
-    function parseList(r) {
-      return r.json().then(function(d) {
-        var qs = (d&&d.finance&&d.finance.result&&d.finance.result[0]&&d.finance.result[0].quotes)||[];
-        return qs.filter(function(q){return q.regularMarketPrice>=0.5&&q.regularMarketPrice<=15;})
-          .slice(0,20).map(function(q){
-            var rv = q.regularMarketVolume/(q.averageDailyVolume3Month||1);
-            return { sym:q.symbol, name:(q.shortName||'').slice(0,18), price:q.regularMarketPrice,
-              chg:q.regularMarketChangePercent, rv:+rv.toFixed(1) };
-          });
-      }).catch(function(){return[];});
-    }
-    var g = await parseList(results[0]);
-    var a = await parseList(results[1]);
-    moverData.gainers = g.sort(function(a,b){return b.chg-a.chg;});
-    moverData.active  = a.sort(function(a,b){return b.rv-a.rv;});
+    var r = await fetch('/api/movers');  // Backend proxy — avoids CORS block
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    moverData.gainers = (data.gainers || []).sort(function(a,b){ return b.chg - a.chg; });
+    moverData.active  = (data.active  || []).sort(function(a,b){ return b.rv  - a.rv;  });
     renderMoverList();
   } catch(e) {
     var list = document.getElementById('moverList');
-    if(list) list.innerHTML = '<div style="color:var(--red);font-size:10px;padding:10px">Error loading movers</div>';
+    if (list) list.innerHTML = '<div style="font-size:10px;color:var(--muted);padding:10px">Movers load after market open</div>';
   }
 }
 </script>
@@ -2376,6 +2416,16 @@ canvas{border-radius:6px}
 .stat-row:last-child{border-bottom:none}
 .stat-lbl{color:var(--muted)}
 .stat-val{font-family:monospace;font-weight:700;color:var(--text)}
+/* MCE + INSTITUTIONAL ALPHA */
+.mce-card{background:var(--bg2);border:1px solid rgba(34,197,94,.2);border-radius:9px;padding:11px 13px;margin-bottom:8px}
+.beta-big{font-size:28px;font-weight:900;font-family:monospace;line-height:1}
+.scenario-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--bg3);font-size:10px}
+.scenario-row:last-child{border-bottom:none}
+.alpha-card{background:var(--bg2);border:1px solid rgba(167,139,250,.25);border-radius:9px;padding:11px 13px;margin-bottom:8px}
+.alpha-score-num{font-size:30px;font-weight:900;font-family:monospace;color:var(--purple);line-height:1}
+.alpha-signal{font-size:9px;color:var(--muted);padding:3px 0;border-bottom:1px solid var(--bg3);line-height:1.4}
+.alpha-signal:last-child{border-bottom:none}
+
 </style>
 
 <!-- PROBABILITY TAB -->
