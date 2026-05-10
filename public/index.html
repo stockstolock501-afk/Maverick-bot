@@ -273,13 +273,129 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
 
 <!-- ANALYZE -->
 <div id="tab-analyze">
-  <div class="card card-gold">
-    <div class="lbl">Live AI Analysis</div>
-    <div style="font-size:10px;color:var(--muted);margin-bottom:9px">Finnhub + Yahoo · 4 timeframes · LuxAlgo · Groq AI</div>
-    <input id="ticker" placeholder="Enter ticker (e.g. LFVN, PN, CIFR)" autocomplete="off"/>
-    <button class="btn btn-gold" onclick="runAnalysis()">ANALYZE NOW</button>
+
+  <!-- MAVERICK COCKPIT MISSION CONTROL -->
+  <div style="text-align:center;padding:10px 0 14px;border-bottom:1px solid var(--border);margin-bottom:12px">
+    <div style="font-size:8px;color:var(--muted);letter-spacing:3px;margin-bottom:5px">MAVERICK COCKPIT 4.0</div>
+    <div style="font-size:11px;color:var(--muted)">Two brains. One terminal. <span style="color:var(--gold)">Swim with the whales.</span> <span style="color:#22d3ee">Strike with the sharks.</span></div>
   </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 🦁 LION BRAIN — INSTITUTIONAL SECTION                      -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div style="background:linear-gradient(135deg,rgba(240,180,41,.08),rgba(240,180,41,.02));border:1px solid rgba(240,180,41,.35);border-radius:12px;padding:14px;margin-bottom:12px">
+
+    <!-- Lion Header -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div style="font-size:26px">🦁</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:900;color:#f0b429;letter-spacing:1px">THE LION BRAIN</div>
+        <div style="font-size:9px;color:rgba(240,180,41,.6);margin-top:2px">Institutional Intelligence · Patience · Find the floor before the crowd</div>
+      </div>
+      <div style="background:rgba(240,180,41,.12);border:1px solid rgba(240,180,41,.25);border-radius:6px;padding:4px 10px;font-size:8px;color:#f0b429;font-weight:800;letter-spacing:1px">INSTITUTIONAL GRADE</div>
+    </div>
+
+    <!-- Engine Index -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:11px">
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">📊 STRESS TEST</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">1,000 Monte Carlo paths. Path efficiency. Risk of ruin. Expected value per trade.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">🏦 BPI ENGINE</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Pivot clustering. Volume-at-price. Fibonacci. Institutional floor detection.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">🐋 WHALE ALPHA</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Post-flush V-bottom detection. Valuation gap. Institutional absorption signature.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">📡 GHOST PROTOCOL</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">SEC filing density before news hits. Pre-announcement institutional curiosity detection.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">📐 BETA CORRELATION</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Market regime · SPY/QQQ Beta · Systemic drag scenario analysis.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">🛡 DILUTION SHIELD</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">SEC S-3/424B detection. Stop auto-widened to 2x ATR when dilution detected.</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:8px">
+      <div style="font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:4px">LION ANALYSIS — ENTER TICKER</div>
+      <input id="ticker" placeholder="Ticker — e.g. LFVN, SERV, ATRA" autocomplete="off" style="border-color:rgba(240,180,41,.3)"/>
+    </div>
+    <button class="btn" onclick="runAnalysis()" style="background:linear-gradient(135deg,#f0b429,#cc8f00);color:#000;border:none;font-weight:900;letter-spacing:2px;margin-bottom:0">RUN LION ANALYSIS</button>
+  </div>
+
+  <!-- Analyze Results (both brains render here) -->
   <div id="analyzeResult"></div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 🦈 SHARK BRAIN — RETAIL MOMENTUM SECTION                   -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div style="background:linear-gradient(135deg,rgba(34,211,238,.08),rgba(96,165,250,.04));border:1px solid rgba(34,211,238,.3);border-radius:12px;padding:14px;margin-top:8px">
+
+    <!-- Shark Header -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div style="font-size:26px">🦈</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:900;color:#22d3ee;letter-spacing:1px">THE SHARK BRAIN</div>
+        <div style="font-size:9px;color:rgba(34,211,238,.5);margin-top:2px">Retail Momentum Science · Speed · Strike when the crowd arrives</div>
+      </div>
+      <div style="background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.25);border-radius:6px;padding:4px 10px;font-size:8px;color:#22d3ee;font-weight:800;letter-spacing:1px">MOMENTUM GRADE</div>
+    </div>
+
+    <!-- Engine Index -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:11px">
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">⚡ PHASE VELOCITY</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">How fast is Phase 1→2 transitioning? Fast Break signal detects ignition before breakout.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">🌀 FLOAT EXHAUST</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Liquidity vacuum science. When the float rotates 2x+, sellers are mathematically gone.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">🔬 THE X-RAY</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Order flow delta inside the candle. See if whales are absorbing or dumping in real-time.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">🔥 CROWD HEAT</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Retail timing engine. Fresh crowd = ENTER. Stale crowd = EXIT before the bags drop.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">🛡 REGIME GUARD</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">3-state market regime. Auto-disables longs during Distribution. Never buy a top again.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">💰 SHADOW SCORE</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">SOR savings counter. See exactly how much the terminal saved you today vs market orders.</div>
+      </div>
+    </div>
+
+    <!-- Shark input -->
+    <div style="margin-bottom:8px">
+      <div style="font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:4px">SHARK ANALYSIS — ENTER TICKER</div>
+      <input id="sharkTicker" placeholder="Ticker — e.g. MVIS, GME, LFVN" autocomplete="off" style="border-color:rgba(34,211,238,.3)"/>
+    </div>
+    <button class="btn" onclick="runSharkAnalysis()" style="background:linear-gradient(135deg,#0e7490,#0c4a6e);color:#22d3ee;border:1px solid rgba(34,211,238,.4);font-weight:900;letter-spacing:2px;margin-bottom:8px">RUN SHARK ANALYSIS</button>
+
+    <!-- Shadow Score live counter -->
+    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:7px;padding:8px 12px">
+      <div>
+        <div style="font-size:8px;color:rgba(167,139,250,.7);letter-spacing:1px">SHADOW SCORE — SOR SAVINGS TODAY</div>
+        <div style="font-size:9px;color:var(--muted)">Terminal pays for itself by hiding orders from HFT predators</div>
+      </div>
+      <div class="shadow-savings" style="font-size:20px;font-weight:900;font-family:monospace;color:#a78bfa">$0.00</div>
+    </div>
+  </div>
+
+  <!-- Shark Results -->
+  <div id="sharkResult"></div>
+
 </div>
 
 <!-- CHART -->
@@ -2225,6 +2341,39 @@ var _origRunAnalysis = runAnalysis;
 async function runAnalysis() {
   await _origRunAnalysis();
   // Shark runs as part of analyze now (data.shark is in the response)
+}
+
+
+// Shark Analysis
+document.getElementById('sharkTicker').addEventListener('keydown', function(e){ if(e.key==='Enter') runSharkAnalysis(); });
+
+async function runSharkAnalysis() {
+  var sym = document.getElementById('sharkTicker').value.toUpperCase().trim();
+  if (!sym) return;
+  var out = document.getElementById('sharkResult');
+  out.innerHTML = '<div class="card" style="border-color:rgba(34,211,238,.25)"><div class="loading-box">SHARK BRAIN SCANNING ' + sym + '...</div><div class="loader"><div></div><div></div><div></div></div></div>';
+  try {
+    var r = await fetch('/api/shark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: sym }) });
+    var data = await r.json();
+    if (data.error) { out.innerHTML = '<div class="card"><div style="color:var(--red)">' + data.error + '</div></div>'; return; }
+    out.innerHTML = buildSharkAnalysisResult(data);
+  } catch(e) { out.innerHTML = '<div class="card"><div style="color:var(--red)">Error: ' + e.message + '</div></div>'; }
+}
+
+function buildSharkAnalysisResult(data) {
+  var sc = data.sharkScore || 0;
+  var scoreColor = sc >= 75 ? '#22d3ee' : sc >= 55 ? '#60a5fa' : sc >= 35 ? '#f0b429' : '#3a5570';
+  var html = '<div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.25);border-radius:10px;padding:14px;margin-top:8px">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+  html += '<div><div style="font-size:10px;color:#22d3ee;letter-spacing:1px">🦈 ' + (data.symbol||'') + ' SHARK VERDICT</div>';
+  html += '<div style="font-size:16px;font-weight:900;color:' + scoreColor + ';margin-top:3px">' + (data.verdict||'') + '</div></div>';
+  html += '<div style="text-align:right"><div style="font-size:28px;font-weight:900;font-family:monospace;color:' + scoreColor + '">' + sc + '</div>';
+  html += '<div style="font-size:8px;color:var(--muted)">SHARK SCORE</div></div>';
+  html += '</div>';
+  html += buildSharkSection(data, data.symbol);
+  html += '<button class="btn btn-gold" onclick="document.getElementById('ticker').value='' + (data.symbol||'') + '';runAnalysis()" style="margin-top:8px;padding:10px;font-size:9px">Run Full Lion Analysis on ' + (data.symbol||'') + '</button>';
+  html += '</div>';
+  return html;
 }
 
 // Guard: only bind if element exists (prevents script crash)
