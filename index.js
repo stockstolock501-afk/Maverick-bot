@@ -637,6 +637,110 @@ async function logTrade(entry) {
 }
 
 // =========================================================
+// VERDICT TRACKING — JSONBIN persisted, 5-day backtest
+// =========================================================
+
+var verdictStore = []; // in-memory cache; loaded from JSONBIN on startup
+
+async function verdictLoad() {
+  if (!JSONBIN_KEY || !JSONBIN_BIN) return;
+  try {
+    var m = await memLoad();
+    verdictStore = m.verdicts || [];
+  } catch(e) {}
+}
+
+async function verdictSave() {
+  if (!JSONBIN_KEY || !JSONBIN_BIN) return;
+  try {
+    var m = await memLoad();
+    m.verdicts = verdictStore;
+    await memSave(m);
+  } catch(e) {}
+}
+
+function verdictId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// Parse AI verdict JSON string for key fields
+function parseVerdictFields(aiText) {
+  try {
+    var start = aiText.indexOf('{');
+    var end   = aiText.lastIndexOf('}') + 1;
+    if (start < 0 || end < 1) return null;
+    var obj = JSON.parse(aiText.slice(start, end));
+    return {
+      direction: obj.verdict || 'NEUTRAL',
+      conviction: obj.conviction || 0,
+      entryLow:  (obj.entry_zone && obj.entry_zone.low)  || 0,
+      entryHigh: (obj.entry_zone && obj.entry_zone.high) || 0,
+      target1:   obj.target_1  || 0,
+      stopLoss:  obj.stop_loss || 0,
+    };
+  } catch(e) { return null; }
+}
+
+// Called after every /api/analyze — stores the verdict for backtest
+async function storeVerdict(ticker, price, aiText) {
+  var fields = parseVerdictFields(aiText);
+  if (!fields) return;
+  var record = {
+    id:           verdictId(),
+    ticker:       ticker,
+    timestamp:    Date.now(),
+    direction:    fields.direction,     // BUY | DONT_BUY | WATCH
+    conviction:   fields.conviction,
+    entryPrice:   price,
+    targetPrice:  fields.target1 || 0,
+    stopLoss:     fields.stopLoss || 0,
+    resolvedAt:   null,
+    resolvedPrice: null,
+    outcome:      null,                 // WIN | LOSS | NEUTRAL
+    pnlPct:       null
+  };
+  verdictStore.unshift(record);
+  if (verdictStore.length > 500) verdictStore = verdictStore.slice(0, 500);
+  await verdictSave();
+}
+
+// Background job: resolve verdicts older than 5 trading days (~7 calendar days)
+async function resolveAgedVerdicts() {
+  var FIVE_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  var unresolved = verdictStore.filter(function(v) {
+    return !v.resolvedAt && (Date.now() - v.timestamp) >= FIVE_DAYS_MS;
+  });
+  if (!unresolved.length) return;
+
+  for (var i = 0; i < unresolved.length; i++) {
+    try {
+      var v = unresolved[i];
+      var q = await getQuote(v.ticker);
+      if (!q) continue;
+      var exitPrice = q.price;
+      var pnlPct = ((exitPrice - v.entryPrice) / v.entryPrice) * 100;
+      // Determine win/loss based on verdict direction
+      var outcome;
+      if (v.direction === 'BUY') {
+        outcome = pnlPct >= 0 ? 'WIN' : 'LOSS';
+      } else if (v.direction === 'DONT_BUY') {
+        outcome = pnlPct <= 0 ? 'WIN' : 'LOSS'; // short-bias: price drop = win
+      } else {
+        outcome = 'NEUTRAL';
+      }
+      var idx = verdictStore.findIndex(function(x) { return x.id === v.id; });
+      if (idx >= 0) {
+        verdictStore[idx].resolvedAt    = Date.now();
+        verdictStore[idx].resolvedPrice = +exitPrice.toFixed(4);
+        verdictStore[idx].outcome       = outcome;
+        verdictStore[idx].pnlPct        = +pnlPct.toFixed(2);
+      }
+    } catch(e) {}
+  }
+  await verdictSave();
+}
+
+// =========================================================
 // BLOCK 3: SUPERNOVA 2.0 — MMR PRE-FILTER + NEW THRESHOLDS
 // AI only consulted for MMR 60+ candidates.
 // Supernova requires float rotation >3x, RVOL >10x, velocity +40%.
@@ -684,20 +788,21 @@ async function runSupernova() {
     return { scan_time: new Date().toISOString(), market_session: 'LIVE', market_pulse: 'GROQ_KEY not set.', supernovas: [], algo_note: '' };
   }
 
-  var SUPERNOVA_PROMPT = 'You are the Maverick Supernova 2.0 Detection Engine.\n\n' +
-    'These candidates ALREADY passed a math pre-filter (MMR >= 60). You are NOT analyzing noise.\n' +
-    'You are identifying TRUE supernova events from a pre-qualified list.\n\n' +
-    'SUPERNOVA 2.0 DEFINITION (ALL must be true for SUPERNOVA tier):\n' +
-    '- Float rotation >= 3x (entire float has rotated 3+ times today)\n' +
-    '- RVOL >= 10x (institutional entry confirmed)\n' +
-    '- Velocity >= 40% gain (not from yesterday - from today\'s open)\n' +
-    '- Hard catalyst: binary event, NOT a PR or tweet\n' +
-    '- Sustained momentum: still climbing, not parabolic top\n\n' +
+  var SUPERNOVA_PROMPT = 'You are the MAVERICK Institutional Supernova Detection Engine v2.0.\n\n' +
+    'These candidates ALREADY passed a quantitative pre-filter (MMR >= 60). You are NOT analyzing noise.\n' +
+    'Identify true institutional momentum events from this pre-qualified list using order flow and structural analysis.\n' +
+    'Do not use retail terminology. Frame analysis in terms of liquidity, float rotation, dark pool accumulation, and risk-adjusted conviction.\n\n' +
+    'SUPERNOVA DEFINITION (ALL required for top tier):\n' +
+    '- Float rotation >= 3x (full float has turned over 3+ times intraday — confirms institutional size)\n' +
+    '- RVOL >= 10x (dark pool and block order confirmation)\n' +
+    '- Price velocity >= 40% from open (not prior close — authentic intraday order flow)\n' +
+    '- Hard binary catalyst: earnings, FDA, merger, contract — NOT a press release or social post\n' +
+    '- Sustained structure: price holding key order block, not extended beyond 2σ ATR\n\n' +
     'TIERS: SUPERNOVA (85+), IGNITING (70+), WARMING (55+). Exclude below 55.\n\n' +
-    'Score 0-100: Hard Catalyst(30), Float Tightness(25), Velocity Authenticity(20), Whale Confirmation(15), SGT Bonus(10)\n\n' +
-    'SIXTH GRADE TEST: Would a 12-year-old immediately understand the direction from the headline alone?\n\n' +
+    'Score 0-100: Hard Catalyst(30), Float Tightness(25), Velocity Authenticity(20), Institutional Confirmation(15), Structure Bonus(10)\n\n' +
+    'CLARITY TEST: Can the directional thesis be stated in one sentence with a price target and stop?\n\n' +
     'RETURN ONLY VALID JSON:\n' +
-    '{"scan_time":"ISO","market_session":"string","market_pulse":"2 sentences on market character today","supernovas":[{"ticker":"","company":"","price":0,"price_change_pct":0,"float_millions":0,"float_rotation":0,"rvol":0,"mmr_score":0,"catalyst":"","catalyst_type":"BINARY|PR|EARNINGS|CONTRACT|FDA|MERGER|OTHER","trade_type":"LONG|FADE","phase":"IGNITION|FUEL_BURN|DISTRIBUTION","is_sixth_grade_trade":true,"sixth_grade_explanation":"","supernova_score":0,"tier":"SUPERNOVA|IGNITING|WARMING","entry_zone":"$X-$Y","stop":0,"target_1":0,"target_2":0,"risk_reward":0,"thesis":"one sentence","exit_signal":"what to watch for exit","halted_today":false}],"algo_note":""}';
+    '{"scan_time":"ISO","market_session":"string","market_pulse":"2 sentences on institutional order flow character today","supernovas":[{"ticker":"","company":"","price":0,"price_change_pct":0,"float_millions":0,"float_rotation":0,"rvol":0,"mmr_score":0,"catalyst":"","catalyst_type":"BINARY|PR|EARNINGS|CONTRACT|FDA|MERGER|OTHER","trade_type":"LONG|FADE","phase":"IGNITION|FUEL_BURN|DISTRIBUTION","is_sixth_grade_trade":true,"sixth_grade_explanation":"","supernova_score":0,"tier":"SUPERNOVA|IGNITING|WARMING","entry_zone":"$X-$Y","stop":0,"target_1":0,"target_2":0,"risk_reward":0,"thesis":"one institutional thesis sentence","exit_signal":"structural exit condition","halted_today":false}],"algo_note":""}';
 
   var payload = 'Pre-filtered supernova candidates (all passed MMR >= 60):\n' +
     JSON.stringify(preFiltered.map(function(m) {
@@ -1431,8 +1536,8 @@ function normalCDF(x) {
 // 3,000 simulations × 60 steps (minutes)
 // Formula: S_t = S_{t-1} × exp((μ - 0.5σ²)dt + σ√dt × Z)
 
-function runMonteCarlo(price, closes1m, steps, simCount, t1Price, t2Price) {
-  // Calculate log returns from 1-minute candles
+function runMonteCarlo(price, closes1m, steps, simCount, t1Price, t2Price, dtOverride) {
+  // Calculate log returns from provided candle series
   var returns = [];
   for (var i = 1; i < closes1m.length; i++) {
     if (closes1m[i-1] > 0 && closes1m[i] > 0) {
@@ -1441,13 +1546,13 @@ function runMonteCarlo(price, closes1m, steps, simCount, t1Price, t2Price) {
   }
   if (returns.length < 10) return null;
 
-  // Drift and volatility from intraday data
+  // Drift and volatility from the provided series
   var mu    = returns.reduce(function(s,r){return s+r;},0) / returns.length;
   var mean2 = returns.reduce(function(s,r){return s+r*r;},0) / returns.length;
   var sigma = Math.sqrt(Math.max(0, mean2 - mu*mu));
 
-  // dt = 1 minute as fraction of 390-min trading day
-  var dt = 1.0 / 390;
+  // dt: 1/390 = per-minute; 1 = per-trading-day; caller controls granularity
+  var dt = dtOverride !== undefined ? dtOverride : 1.0 / 390;
 
   // Accumulate price levels at each time step
   var buckets = [];
@@ -1661,7 +1766,7 @@ function findStrikeZone(mcResult, lrResult, atrResult, price, steps) {
 
 app.post('/api/probability', async function(req, res) {
   var ticker    = req.body.ticker;
-  var horizon   = parseInt(req.body.horizon) || 60; // minutes
+  var horizon   = parseInt(req.body.horizon) || 60; // calendar minutes from UI
   var customT1  = parseFloat(req.body.t1) || 0;
   var customT2  = parseFloat(req.body.t2) || 0;
 
@@ -1669,72 +1774,98 @@ app.post('/api/probability', async function(req, res) {
   var sym = ticker.toUpperCase().trim();
 
   try {
-    // Fetch data in parallel
+    // Fetch data in parallel — always need daily candles for ATR
     var dataResults = await Promise.all([
       getQuote(sym),
-      getCandles(sym, '1d', '1m'),   // 1-minute candles for Monte Carlo
-      getCandles(sym, '3mo', '1d'),  // Daily candles for ATR
-      getCandles(sym, '5d', '60m'),  // Hourly for regression
+      getCandles(sym, '3mo', '1d'),  // Daily candles for ATR (primary source)
+      getCandles(sym, '5d', '60m'),  // Hourly for regression channel
     ]);
 
-    var quote   = dataResults[0];
-    var c1m     = dataResults[1];
-    var c1d     = dataResults[2];
-    var c1h     = dataResults[3];
+    var quote = dataResults[0];
+    var c1d   = dataResults[1];
+    var c1h   = dataResults[2];
 
     if (!quote) return res.status(404).json({ error: sym + ' not found' });
 
     var price = quote.price;
-    var atr   = (c1d && c1d.atr) || price * 0.03;
+    // Always use Daily ATR — prevents math drift on multi-day projections
+    var atr = (c1d && c1d.atr) || price * 0.03;
 
-    // Build close price arrays
-    var closes1m = c1m ? [c1m.last] : [price]; // simplified — use available data
-    // Use 1h candles as our regression base (more stable than 1m for regression)
-    // We reconstruct from candle summary stats — generate synthetic close array
-    // from pctChange and known current price (approximate)
+    // ── Horizon label for display ───────────────────────────────────
+    var horizonLabel;
+    if      (horizon <= 60)   horizonLabel = horizon + '-Minute';
+    else if (horizon <= 480)  horizonLabel = (horizon/60).toFixed(0) + '-Hour';
+    else if (horizon <= 1440) horizonLabel = '1-Day';
+    else                      horizonLabel = Math.round(horizon/1440) + '-Day';
+
+    // ── Tiered simulation parameters ───────────────────────────────
+    // Convert calendar minutes → trading steps and dt fraction of trading day
+    var steps, dt, tradingMinutes;
+
+    if (horizon <= 60) {
+      // Per-minute: 1 step = 1 trading minute
+      tradingMinutes = horizon;
+      steps          = horizon;
+      dt             = 1.0 / 390;
+    } else if (horizon <= 480) {
+      // Per-5-min-bar: 1 step = 5 trading minutes
+      tradingMinutes = horizon;
+      steps          = Math.ceil(horizon / 5);
+      dt             = 5.0 / 390;
+    } else if (horizon <= 1440) {
+      // Per-hour: 1 step = 1 trading hour (6.5 bars/day)
+      tradingMinutes = horizon;
+      steps          = Math.ceil(horizon / 60);
+      dt             = 60.0 / 390;
+    } else {
+      // Per-trading-day: convert calendar days → trading days
+      var tradingDays = Math.ceil(horizon / 1440);
+      tradingMinutes  = tradingDays * 390;
+      steps           = tradingDays;
+      dt              = 1.0; // 1 full trading day per step
+    }
+
+    // Cap steps to prevent runaway computation (5 trading days max)
+    steps = Math.min(steps, 1950);
+
+    // ── Build synthetic close series at appropriate granularity ────
+    var sigmaDaily = atr / price; // daily ATR as fraction = per-day sigma
+    var sigmaPer1m = sigmaDaily / Math.sqrt(390);
+
+    var syntheticCloses = [price];
+    var nSamples = Math.max(60, steps * 2);
+
+    if (dt === 1.0) {
+      // Daily simulation: each synthetic bar = 1 trading day
+      var driftPerDay = (c1d && c1d.pctChange) ? (c1d.pctChange / 100) / 252 : 0;
+      for (var i = 0; i < nSamples; i++) {
+        var prev = syntheticCloses[syntheticCloses.length - 1];
+        syntheticCloses.push(prev * Math.exp(driftPerDay + sigmaDaily * normalRandom()));
+      }
+    } else {
+      // Sub-daily: scale sigma to match dt granularity
+      var sigmaPerStep = sigmaDaily * Math.sqrt(dt); // sqrt-of-time scaling
+      var driftPerStep = ((c1d && c1d.pctChange) ? (c1d.pctChange / 100) : 0) * dt;
+      for (var i = 0; i < nSamples; i++) {
+        var prev = syntheticCloses[syntheticCloses.length - 1];
+        syntheticCloses.push(prev * Math.exp(driftPerStep + sigmaPerStep * normalRandom()));
+      }
+    }
+
+    // ── Regression close array (from hourly candle stats) ──────────
     var regressionCloses = [];
     if (c1h && c1h.candleCount >= 15) {
-      // Generate 50-point array spanning the range
-      var step = (c1h.high - c1h.low) / 50;
       for (var i = 0; i < 50; i++) {
-        // Create a realistic-looking price series between low and high
-        // using ema9 as anchor and gentle random walk
-        var base = c1h.ema9;
-        var pos  = i / 50;
-        var val  = c1h.low + (c1h.high - c1h.low) * pos;
-        // Add slight noise based on ATR
+        var pos = i / 50;
+        var val = c1h.low + (c1h.high - c1h.low) * pos;
         regressionCloses.push(+(val + (Math.random()-0.5) * atr * 0.3).toFixed(3));
       }
-      // Ensure last value matches current price
       regressionCloses[regressionCloses.length - 1] = price;
     } else {
-      // Minimal fallback
       for (var i = 0; i < 30; i++) {
         regressionCloses.push(+(price * (1 + (Math.random()-0.5)*0.02)).toFixed(3));
       }
       regressionCloses[regressionCloses.length - 1] = price;
-    }
-
-    // Build 1-minute return series from daily stats
-    var intraReturns = [];
-    if (c1d && c1d.atr > 0) {
-      var sigmaDaily  = c1d.atr / price;
-      var sigmaPer1m  = sigmaDaily / Math.sqrt(390);
-      var driftPer1m  = (c1d.pctChange / 100) / 390;
-      for (var i = 0; i < 80; i++) {
-        intraReturns.push(driftPer1m + sigmaPer1m * normalRandom());
-      }
-    } else {
-      // Default: 0.1% daily vol
-      for (var i = 0; i < 80; i++) {
-        intraReturns.push(normalRandom() * 0.001);
-      }
-    }
-
-    // Reconstruct close array from synthetic returns
-    var syntheticCloses = [price];
-    for (var i = 0; i < intraReturns.length; i++) {
-      syntheticCloses.push(syntheticCloses[syntheticCloses.length-1] * Math.exp(intraReturns[i]));
     }
 
     // Calculate targets if not provided
@@ -1742,36 +1873,37 @@ app.post('/api/probability', async function(req, res) {
     var t1 = customT1 > price ? customT1 : lv.t1;
     var t2 = customT2 > price ? customT2 : lv.t2;
 
-    var steps   = Math.min(horizon, 60);
     var simCount = 3000;
 
-    // Run all three engines
-    var mcResult  = runMonteCarlo(price, syntheticCloses, steps, simCount, t1, t2);
+    // Run all three engines — pass dt so Monte Carlo uses correct time scale
+    var mcResult  = runMonteCarlo(price, syntheticCloses, steps, simCount, t1, t2, dt);
     var lrResult  = runLinearRegression(regressionCloses, steps);
-    var atrResult = runATRProbability(price, t1, atr, horizon);
-    var atrT2     = runATRProbability(price, t2, atr, horizon);
+    // ATR probability uses trading minutes for proper sqrt-of-time scaling
+    var atrResult = runATRProbability(price, t1, atr, tradingMinutes);
+    var atrT2     = runATRProbability(price, t2, atr, tradingMinutes);
 
     // Find convergence zone
-    var strikeZone = findStrikeZone(mcResult, lrResult, atrResult, price, steps-1);
+    var strikeZone = findStrikeZone(mcResult, lrResult, atrResult, price, steps - 1);
 
     // LuxAlgo signal for context
     var lux = c1d ? luxAlgoSignal(c1d) : null;
 
     res.json({
-      ticker:     sym,
-      price:      price,
-      t1:         t1,
-      t2:         t2,
-      horizon:    horizon,
-      steps:      steps,
-      atr:        +atr.toFixed(3),
-      monteCarlo: mcResult,
-      regression: lrResult,
-      atrZones:   { t1: atrResult, t2: atrT2 },
-      strikeZone: strikeZone,
-      lux:        lux,
-      quote:      { price: price, changePct: quote.changePct, floatShares: quote.floatShares, sector: quote.sector },
-      timestamp:  new Date().toISOString()
+      ticker:       sym,
+      price:        price,
+      t1:           t1,
+      t2:           t2,
+      horizon:      horizon,
+      horizonLabel: horizonLabel,
+      steps:        steps,
+      atr:          +atr.toFixed(3),
+      monteCarlo:   mcResult,
+      regression:   lrResult,
+      atrZones:     { t1: atrResult, t2: atrT2 },
+      strikeZone:   strikeZone,
+      lux:          lux,
+      quote:        { price: price, changePct: quote.changePct, floatShares: quote.floatShares, sector: quote.sector },
+      timestamp:    new Date().toISOString()
     });
 
   } catch(e) {
@@ -2159,66 +2291,8 @@ app.get('/api/squeeze-scan', function(req, res) {
   res.json({ results: squeezeStore, scanCount: sqScanCount, timestamp: new Date().toISOString() });
 });
 
-// ── API: Premium Pulse hub — POST ─────────────────────────────────
-app.post('/api/premium-pulse', async function(req, res) {
-  try {
-    var allQuotes = [], seen = new Set();
-    var screenerIds = ['day_gainers', 'most_actives'];
-    for (var s = 0; s < screenerIds.length; s++) {
-      try {
-        var r = await fetch(
-          'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=' + screenerIds[s] + '&_=' + Date.now(),
-          { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
-        );
-        var d = await r.json();
-        ((d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [])
-          .filter(function(q) { return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15 && !seen.has(q.symbol); })
-          .forEach(function(q) { seen.add(q.symbol); allQuotes.push(q); });
-      } catch(e) {}
-    }
-
-    // INSTITUTIONAL PARALLEL PROCESSING — all 18 tickers simultaneously
-    // Drops response time from ~6 seconds to under 1 second
-    var batch = allQuotes.slice(0, 18);
-    var batchResults = await Promise.all(batch.map(function(q) {
-      return getCandles(q.symbol, '3mo', '1d').then(function(tf) {
-        return { q: q, tf: tf };
-      }).catch(function() { return { q: q, tf: null }; });
-    }));
-
-    var movers = [], radarItems = [];
-    batchResults.forEach(function(row) {
-      try {
-        var q   = row.q;
-        var tf  = row.tf;
-        var rv  = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
-        var quoteObj = { price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
-          floatShares: q.floatShares, volume: q.regularMarketVolume,
-          avgVolume: q.averageDailyVolume3Month, high: q.regularMarketDayHigh,
-          low: q.regularMarketDayLow, marketCap: q.marketCap, shortName: q.shortName };
-        var mmr    = calculateMMR(quoteObj, tf, []);
-        var phase  = detectSqueezePhase(quoteObj, tf);
-        var sqEntry = squeezeStore.find(function(s) { return s.symbol === q.symbol; });
-        var item = { symbol: q.symbol, name: q.shortName,
-          price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
-          rvol: +rv.toFixed(1), floatShares: q.floatShares,
-          mmr: mmr.total, mmrGrade: mmr.grade,
-          phase: phase.phase, phaseLabel: phase.label, phaseColor: phase.color,
-          intensity: phase.intensity, scorePT: mmr.total >= 85 ? 7 : mmr.total >= 70 ? 5 : 3,
-          siPercent: sqEntry ? sqEntry.siPercent : 0 };
-        movers.push(item);
-        if (rv >= 5) radarItems.push(item);
-      } catch(e) {}
-    });
-
-    movers.sort(function(a, b) { return (b.mmr||0) - (a.mmr||0); });
-    radarItems.sort(function(a, b) { return (b.rvol||0) - (a.rvol||0); });
-    res.json({ movers: movers, radar: radarItems, timestamp: new Date().toISOString() });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
 // ================================================================
-// END SQUEEZE + PULSE BACKEND v3.7
+// END SQUEEZE BACKEND v3.8
 // ================================================================
 
 // =========================================================
@@ -2391,30 +2465,33 @@ app.post('/api/analyze', async function(req, res) {
     // Institutional Alpha — Whale Absorption Detector
     var instAlpha = calculateInstAlpha(quote, tf1d, await getShortData(sym));
 
-    var ANALYZE_PROMPT = 'You are MAVERICK aggressive day trading AI v4.0.\n' +
+    var ANALYZE_PROMPT = 'You are an institutional-grade trading intelligence system — MAVERICK v4.0.\n' +
+      'Analyze the supplied market data using structural analysis, order flow context, and risk-adjusted positioning.\n' +
+      'All verdicts must reflect institutional logic: liquidity zones, volume profile, smart money flow, and asymmetric risk/reward.\n' +
+      'Do not use retail trading terminology. Frame all analysis in institutional context: block trades, liquidity zones, smart money positioning, risk/reward ratios.\n\n' +
       'You receive: MMR score, LuxAlgo signals, multi-timeframe data, AND a Bottom Probability Index (BPI).\n\n' +
       'VERDICTS: BUY | DONT_BUY | WATCH\n' +
       'STOPS: Use ATR-based levels. Never fixed percentages.\n' +
       'MANDATORY BPI ANALYSIS: You MUST include dip_buy_assessment in your JSON.\n' +
-      '- If BPI >= 75: Confirm institutional floor. State the demand zone. High confidence dip buy.\n' +
-      '- If BPI 55-74: Moderate confidence. Wait for sweep-and-reclaim confirmation.\n' +
-      '- If BPI < 55: Do NOT suggest dip-buy. State the risk explicitly.\n' +
-      '- Always reference the specific pivot cluster price and any Fibonacci level detected.\n' +
-      '- If a liquidity sweep was detected (price wicked below recent low then reclaimed), call it out explicitly.\n\n' +
-      'LuxAlgo signals are primary technical confirmation. MMR >= 80 = whale confirmed.\n\n' +
+      '- If BPI >= 75: Confirm institutional demand floor. State the liquidity zone. High-confidence accumulation setup.\n' +
+      '- If BPI 55-74: Moderate conviction. Await liquidity sweep-and-reclaim confirmation before entry.\n' +
+      '- If BPI < 55: Do NOT suggest accumulation. State the structural risk explicitly.\n' +
+      '- Always reference the specific volume cluster price and any Fibonacci level detected.\n' +
+      '- If a liquidity sweep was detected (price wicked below recent low then reclaimed), identify the order block.\n\n' +
+      'LuxAlgo signals provide primary structural confirmation. MMR >= 80 = institutional order flow confirmed.\n\n' +
       'RETURN ONLY VALID JSON:\n' +
-      '{"verdict":"BUY|DONT_BUY|WATCH","conviction":0-100,"headline":"one decisive sentence",' +
+      '{"verdict":"BUY|DONT_BUY|WATCH","conviction":0-100,"headline":"one decisive institutional sentence",' +
       '"chart_pattern":"pattern name","timeframe_alignment":"BULLISH|BEARISH|MIXED|NEUTRAL",' +
-      '"mmr_assessment":"brief MMR interpretation",' +
+      '"mmr_assessment":"brief institutional order flow interpretation",' +
       '"reasoning":["bullet1","bullet2","bullet3"],' +
       '"entry_zone":{"low":0.000,"high":0.000},"stop_loss":0.000,' +
       '"target_1":0.000,"target_2":0.000,"target_3":0.000,"risk_reward":0.0,' +
       '"position_size_suggestion":"AGGRESSIVE|STANDARD|SMALL","trade_type":"DAY_TRADE|SWING|SCALP",' +
-      '"key_risk":"specific risk with numbers","trigger_to_watch":"exact condition if WATCH",' +
+      '"key_risk":"specific structural risk with numbers","trigger_to_watch":"exact structural condition if WATCH",' +
       '"time_horizon":"estimate",' +
       '"dip_buy_assessment":{"bpi_score":0,"is_dip_buy_opportunity":true,"demand_zone_price":0.000,' +
       '"stop_cluster_price":0.000,"sweep_detected":true,"bottom_probability_pct":0,' +
-      '"reasoning":"one sentence on why this is or is not the institutional floor"}}';
+      '"reasoning":"one sentence on institutional demand floor probability"}}';
 
     var payload = {
       ticker: sym,
@@ -2451,6 +2528,9 @@ app.post('/api/analyze', async function(req, res) {
     var verdict = await aiCall(ANALYZE_PROMPT, JSON.stringify(payload), 1500, 'high'); // 70B — precision matters here
     if (!verdict) return res.status(503).json({ error: 'AI unavailable - visit /api/groq-test' });
 
+    // Store verdict for 5-day backtest (fire-and-forget, does not block response)
+    storeVerdict(sym, quote.price, verdict).catch(function(){});
+
     res.json({
       ticker: sym, verdict: verdict, mmr: mmr, adjustedMMR: adjustedMMR,
       dilution: dilution, levels: levels, bpi: bpi, luxAlgo: luxAlgo,
@@ -2465,6 +2545,50 @@ app.get('/api/quote/:symbol', async function(req, res) {
   var q = await getQuote(req.params.symbol.toUpperCase());
   if (!q) return res.status(404).json({ error: 'not found' });
   res.json(q);
+});
+
+// ── Verdict log & backtest endpoints ──────────────────────────────
+app.get('/api/verdict-log', function(req, res) {
+  res.json({ verdicts: verdictStore, count: verdictStore.length });
+});
+
+app.get('/api/backtest', function(req, res) {
+  var resolved = verdictStore.filter(function(v) { return v.outcome !== null; });
+  if (!resolved.length) return res.json({ totalVerdicts: verdictStore.length, resolved: 0, winRate: null, avgPnlPct: null, byTicker: [] });
+
+  var wins  = resolved.filter(function(v) { return v.outcome === 'WIN'; }).length;
+  var avgPnl = resolved.reduce(function(s, v) { return s + (v.pnlPct || 0); }, 0) / resolved.length;
+
+  // Per-ticker breakdown
+  var byTickerMap = {};
+  resolved.forEach(function(v) {
+    if (!byTickerMap[v.ticker]) byTickerMap[v.ticker] = { ticker: v.ticker, count: 0, wins: 0, totalPnl: 0 };
+    byTickerMap[v.ticker].count++;
+    if (v.outcome === 'WIN') byTickerMap[v.ticker].wins++;
+    byTickerMap[v.ticker].totalPnl += (v.pnlPct || 0);
+  });
+  var byTicker = Object.values(byTickerMap).map(function(t) {
+    return { ticker: t.ticker, count: t.count, winRate: Math.round(t.wins / t.count * 100), avgPnlPct: +(t.totalPnl / t.count).toFixed(2) };
+  }).sort(function(a, b) { return b.count - a.count; });
+
+  res.json({
+    totalVerdicts: verdictStore.length,
+    resolved:      resolved.length,
+    winRate:       Math.round(wins / resolved.length * 100),
+    avgPnlPct:     +avgPnl.toFixed(2),
+    byTicker:      byTicker
+  });
+});
+
+app.delete('/api/verdict-log/:id', async function(req, res) {
+  var before = verdictStore.length;
+  verdictStore = verdictStore.filter(function(v) { return v.id !== req.params.id; });
+  if (verdictStore.length < before) {
+    await verdictSave();
+    res.json({ ok: true });
+  } else {
+    res.status(404).json({ error: 'not found' });
+  }
 });
 
 app.post('/api/luxalgo', async function(req, res) {
@@ -2677,12 +2801,13 @@ app.post('/api/chat', async function(req, res) {
   }
 
   var pSize = portfolioSize || 348;
-  var ADVISOR_PROMPT = 'You are MAVERICKs personal hedge fund AI advisor. ' +
-    'Portfolio: $' + pSize + ' (keep $100 reserve, tradeable: $' + (pSize-100) + ', max per trade: $' + Math.round((pSize-100)*0.35) + '). ' +
-    'Phase 2/3 player. Sub-$10 specialist. Aggressive but calculated. Never fights dilution or ATMs. ' +
-    'Uses ATR-based stops: Entry minus 1.5x ATR. Uses MMR scoring. ' +
-    'Position sizing: Shares = max_risk / (entry - stop). Max risk = 3% of portfolio. ' +
-    'Direct and decisive. Under 250 words. Exact numbers always. ' +
+  var ADVISOR_PROMPT = 'You are the MAVERICK institutional portfolio advisor. ' +
+    'Portfolio: $' + pSize + ' (reserve $100, deployable: $' + (pSize-100) + ', max single position: $' + Math.round((pSize-100)*0.35) + '). ' +
+    'Specialize in low-float, high-RVOL equities where dark pool accumulation, float rotation, and liquidity compression create asymmetric institutional setups. ' +
+    'Never enter against confirmed dilution events or active ATM offerings — these destroy float-based setups. ' +
+    'Stops: Entry minus 1.5x ATR (order block invalidation). Position sizing: max_risk / (entry - stop). Max risk per trade: 3% of portfolio. ' +
+    'Frame all analysis in institutional terms: order blocks, liquidity sweeps, volume profile, smart money flow. ' +
+    'Do not use retail terminology. Be direct, decisive, and quantitative. Under 250 words. Exact numbers always. ' +
     'End BUY answers with the exact Telegram bot command to send.';
 
   var systemPrompt = isTrading ? ADVISOR_PROMPT : GENERAL_AI_PROMPT;
@@ -3368,17 +3493,23 @@ startCatalystFeed();
 startContinuousScanner();
 startSqueezeScanner();
 
+// Load persisted verdicts from JSONBIN on startup
+verdictLoad().catch(function(){});
+
+// Resolve aged verdicts every 4 hours
+setInterval(function() { resolveAgedVerdicts().catch(function(){}); }, 4 * 60 * 60 * 1000);
+
 app.listen(PORT, '0.0.0.0', async function() {
-  console.log('\nMAVERICK TERMINAL v3.9 - Port ' + PORT);
+  console.log('\nMAVERICK TERMINAL v4.0 - Port ' + PORT);
   console.log('   Telegram:        ' + (TELEGRAM_TOKEN ? 'OK' : 'MISSING'));
   console.log('   Finnhub:         ' + (FINNHUB_KEY    ? 'OK (fresh, cache-busted)' : 'MISSING'));
   console.log('   Groq AI:         ' + (GROQ_KEY       ? 'OK' : 'MISSING'));
   console.log('   Memory:          ' + (JSONBIN_KEY    ? 'OK' : 'optional'));
   console.log('   MMR Engine:      ACTIVE');
   console.log('   Catalyst v2:     ACTIVE (6 sources, 90s cycle)');
-  console.log('   Probability:     ACTIVE (Monte Carlo + LR + ATR)');
+  console.log('   Probability:     ACTIVE (Monte Carlo + LR + ATR, up to 5-day horizon)');
   console.log('   Squeeze v3.9:    ACTIVE (Phase 1/2/3 + Coiled Spring)');
-  console.log('   Pulse Hub:       ACTIVE (MMR heat map)');
+  console.log('   Verdict Backtest:ACTIVE (JSONBIN persisted, 5-day resolution)');
   console.log('   Dilution Shield: ACTIVE');
   console.log('   Scanner:         24/7 (adaptive intervals)');
   console.log('   Super Bot:       ACTIVE (dual-brain trading + general AI)\n');

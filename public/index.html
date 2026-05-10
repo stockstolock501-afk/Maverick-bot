@@ -214,16 +214,6 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
 /* MACRO RIBBON */
 .macro-ribbon{display:flex;align-items:center;gap:7px;background:rgba(0,0,0,.25);border-radius:6px;padding:7px 10px;margin-bottom:8px;font-size:10px}
 .macro-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-/* TOP GAINERS LIST */
-.mover-list{margin-top:8px}
-.mover-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--bg3);cursor:pointer}
-.mover-row:last-child{border-bottom:none}
-.mover-row:active{opacity:.8}
-.mover-sym{font-size:14px;font-weight:900;color:#fff;font-family:monospace;width:55px}
-.mover-name{font-size:9px;color:var(--muted);flex:1;margin:0 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.mover-price{font-size:12px;font-family:monospace;font-weight:700;color:var(--text);width:50px;text-align:right}
-.mover-chg{font-size:11px;font-family:monospace;font-weight:900;width:52px;text-align:right}
-.mover-vol{font-size:9px;color:var(--muted);width:38px;text-align:right}
 
 /* ALT-DATA SHADOW PROXY */
 .alt-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
@@ -266,7 +256,6 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
   <button class="tab" data-tab="signals">SIGNALS</button>
   <button class="tab" data-tab="catalyst">CATALYST</button>
   <button class="tab" data-tab="squeeze">SQUEEZE</button>
-  <button class="tab" data-tab="pulse">PULSE</button>
   <button class="tab" data-tab="prob">PROBABILITY</button>
   <button class="tab" data-tab="advisor">ADVISOR</button>
 </div>
@@ -417,6 +406,16 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
       <button onclick="sendChat()" style="background:linear-gradient(135deg,#7c3aed,#4c1d95);border:none;border-radius:8px;color:#fff;padding:10px 14px;cursor:pointer;font-size:14px;height:55px;flex-shrink:0">GO</button>
     </div>
     <div style="font-size:8px;color:var(--bg3);text-align:center;margin-top:4px">Enter to send · Knows your portfolio and trading style</div>
+  </div>
+
+  <!-- Verdict Backtest Panel -->
+  <div class="card" style="margin-top:12px;border-color:rgba(167,139,250,.2)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="lbl" style="margin:0;color:var(--purple)">AI Verdict Backtest</div>
+      <button onclick="loadBacktest()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:9px">REFRESH</button>
+    </div>
+    <div id="backtestSummary" style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"></div>
+    <div id="backtestTable" style="font-size:10px;color:var(--muted)">Loading verdict history...</div>
   </div>
 </div>
 
@@ -1461,6 +1460,71 @@ function clearChat(){
   fetch('/api/chat/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:chatSessionId})}).catch(function(){});
   showWelcome();
 }
+
+async function loadBacktest() {
+  var sumEl = document.getElementById('backtestSummary');
+  var tblEl = document.getElementById('backtestTable');
+  try {
+    var [btRes, logRes] = await Promise.all([
+      fetch('/api/backtest').then(function(r){return r.json();}),
+      fetch('/api/verdict-log').then(function(r){return r.json();})
+    ]);
+
+    // Summary cards
+    var wRate = btRes.winRate !== null ? btRes.winRate + '%' : 'n/a';
+    var avgP  = btRes.avgPnlPct !== null ? (btRes.avgPnlPct >= 0 ? '+' : '') + btRes.avgPnlPct + '%' : 'n/a';
+    sumEl.innerHTML =
+      '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;flex:1">' +
+      '<div style="font-size:18px;font-weight:900;color:var(--purple)">' + btRes.totalVerdicts + '</div>' +
+      '<div style="font-size:8px;color:var(--muted)">TOTAL VERDICTS</div></div>' +
+      '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;flex:1">' +
+      '<div style="font-size:18px;font-weight:900;color:' + (btRes.winRate >= 50 ? 'var(--green)' : 'var(--red)') + '">' + wRate + '</div>' +
+      '<div style="font-size:8px;color:var(--muted)">WIN RATE</div></div>' +
+      '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;flex:1">' +
+      '<div style="font-size:18px;font-weight:900;color:' + (btRes.avgPnlPct >= 0 ? 'var(--green)' : 'var(--red)') + '">' + avgP + '</div>' +
+      '<div style="font-size:8px;color:var(--muted)">AVG P&L</div></div>';
+
+    // Verdict table
+    var verdicts = (logRes.verdicts || []).slice(0, 30);
+    if (!verdicts.length) {
+      tblEl.innerHTML = '<div style="text-align:center;padding:16px;color:var(--muted)">No verdicts recorded yet. Run an analysis to start tracking.</div>';
+      return;
+    }
+    var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:9px">' +
+      '<thead><tr style="color:var(--muted);border-bottom:1px solid var(--border)">' +
+      '<th style="text-align:left;padding:5px 4px">TICKER</th>' +
+      '<th style="text-align:left;padding:5px 4px">DATE</th>' +
+      '<th style="text-align:center;padding:5px 4px">VERDICT</th>' +
+      '<th style="text-align:right;padding:5px 4px">ENTRY</th>' +
+      '<th style="text-align:right;padding:5px 4px">EXIT</th>' +
+      '<th style="text-align:right;padding:5px 4px">P&L</th>' +
+      '<th style="text-align:center;padding:5px 4px">OUTCOME</th>' +
+      '</tr></thead><tbody>';
+    verdicts.forEach(function(v) {
+      var dt    = new Date(v.timestamp).toLocaleDateString();
+      var vClr  = v.direction === 'BUY' ? 'var(--green)' : v.direction === 'DONT_BUY' ? 'var(--red)' : 'var(--muted)';
+      var oClr  = v.outcome === 'WIN' ? 'var(--green)' : v.outcome === 'LOSS' ? 'var(--red)' : 'var(--muted)';
+      html += '<tr style="border-bottom:1px solid rgba(255,255,255,.04)">' +
+        '<td style="padding:5px 4px;font-weight:900;color:#fff">' + v.ticker + '</td>' +
+        '<td style="padding:5px 4px;color:var(--muted)">' + dt + '</td>' +
+        '<td style="padding:5px 4px;text-align:center;color:' + vClr + ';font-weight:700">' + v.direction + '</td>' +
+        '<td style="padding:5px 4px;text-align:right;font-family:monospace">$' + (v.entryPrice || '').toFixed(2) + '</td>' +
+        '<td style="padding:5px 4px;text-align:right;font-family:monospace">' + (v.resolvedPrice ? '$' + v.resolvedPrice : '—') + '</td>' +
+        '<td style="padding:5px 4px;text-align:right;font-family:monospace;color:' + (v.pnlPct >= 0 ? 'var(--green)' : 'var(--red)') + '">' + (v.pnlPct !== null ? (v.pnlPct >= 0 ? '+' : '') + v.pnlPct + '%' : '—') + '</td>' +
+        '<td style="padding:5px 4px;text-align:center;color:' + oClr + ';font-weight:700">' + (v.outcome || 'PENDING') + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    tblEl.innerHTML = html;
+  } catch(e) {
+    if (tblEl) tblEl.innerHTML = '<div style="color:var(--red);font-size:10px">Error loading backtest: ' + e.message + '</div>';
+  }
+}
+
+// Auto-load backtest when advisor tab is activated
+document.querySelector('[data-tab="advisor"]').addEventListener('click', function() {
+  setTimeout(loadBacktest, 200);
+});
 </script>
 <!-- ================================================================ -->
 <!-- MAVERICK CATALYST INTELLIGENCE FEED v2                          -->
@@ -1835,11 +1899,7 @@ setTimeout(function() {
 }, 2000);
 </script>
 <!-- ================================================================ -->
-<!-- MAVERICK SQUEEZE + PREMIUM PULSE TABS v3.7 — BRILLIANT UI      -->
-<!-- Add to .tabs div:                                               -->
-<!--   <button class="tab" data-tab="squeeze">SQUEEZE</button>      -->
-<!--   <button class="tab" data-tab="pulse">PULSE</button>          -->
-<!-- Paste this entire block BEFORE </body>                          -->
+<!-- MAVERICK SQUEEZE TAB v3.9                                      -->
 <!-- ================================================================ -->
 
 <style>
@@ -1891,41 +1951,6 @@ setTimeout(function() {
 .spring-bar{height:100%;background:linear-gradient(90deg,#f0b429,#cc8f00);border-radius:4px;transition:width 1s ease}
 .spring-text{font-size:8px;color:var(--muted);letter-spacing:.5px;margin-bottom:4px}
 
-/* ════════════════════════════════════════════════════════════
-   PULSE HUB
-   ════════════════════════════════════════════════════════════ */
-
-/* Whale radar tape */
-.radar-outer{background:#050b12;overflow:hidden;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);border-top:1px solid rgba(255,255,255,.05);margin-bottom:10px}
-.radar-track{display:inline-flex;white-space:nowrap;animation:radarScroll 30s linear infinite}
-.radar-track:hover{animation-play-state:paused}
-.radar-item{display:inline-flex;align-items:center;gap:6px;padding:0 20px;font-size:9px;font-weight:800;font-family:monospace;border-right:1px solid rgba(255,255,255,.06)}
-@keyframes radarScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
-
-/* Heat tiles */
-.pulse-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
-.pulse-tile{border-radius:9px;padding:11px 8px 9px;text-align:center;cursor:pointer;position:relative;border:1px solid var(--border);background:var(--bg2);transition:transform .12s}
-.pulse-tile:active{transform:scale(.95)}
-.pt-p0{background:var(--bg2);border-color:var(--border)}
-.pt-p05{background:linear-gradient(135deg,rgba(96,165,250,.1),transparent);border-color:rgba(96,165,250,.3)}
-.pt-p1{background:linear-gradient(135deg,rgba(240,180,41,.18),rgba(240,180,41,.05));border-color:rgba(240,180,41,.5)}
-.pt-p2{background:linear-gradient(135deg,rgba(34,197,94,.2),rgba(34,197,94,.06));border-color:rgba(34,197,94,.5);box-shadow:0 0 14px rgba(34,197,94,.12)}
-.pt-p3{background:linear-gradient(135deg,rgba(239,68,68,.14),rgba(239,68,68,.04));border-color:rgba(239,68,68,.3)}
-
-.tile-sym{display:block;font-weight:900;color:#fff;line-height:1.1;margin-bottom:5px}
-.tile-chg{font-size:9px;font-family:monospace;font-weight:700;margin-bottom:3px}
-.tile-mmr{font-size:8px;font-weight:700;margin-bottom:2px}
-.tile-rv{font-size:8px;color:var(--muted)}
-.trophy{position:absolute;top:4px;right:5px;font-size:10px}
-.phase-pip{position:absolute;top:5px;left:5px;width:5px;height:5px;border-radius:50%}
-
-/* Timer + legend row */
-.pulse-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.pulse-legend{display:flex;gap:8px;font-size:8px;color:var(--muted)}
-.pleg{display:flex;align-items:center;gap:3px}
-.pleg-dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0}
-.pulse-timer-txt{font-family:monospace;font-size:9px;color:var(--gold)}
-
 /* Phase guide cards */
 .phase-guide{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .pg-card{border-radius:7px;padding:9px 11px;border:1px solid}
@@ -1973,56 +1998,6 @@ setTimeout(function() {
   </div>
 </div>
 
-<!-- ════════════════════════════════════════════ PULSE TAB ════ -->
-<div id="tab-pulse" class="hidden">
-
-  <!-- Whale Radar Tape (always visible at top) -->
-  <div class="radar-outer">
-    <div class="radar-track" id="pulseRadar">
-      <span class="radar-item" style="color:#1a3050">WHALE RADAR — PREMIUM AREA $0.50-$15 — RVOL 5x+ — SCANNING...</span>
-      <span class="radar-item" style="color:#1a3050">WHALE RADAR — PREMIUM AREA $0.50-$15 — RVOL 5x+ — SCANNING...</span>
-    </div>
-  </div>
-
-  <!-- Header row -->
-  <div class="pulse-hdr">
-    <div class="pulse-legend">
-      <span class="pleg"><span class="pleg-dot" style="background:#f0b429"></span>Phase 1</span>
-      <span class="pleg"><span class="pleg-dot" style="background:#22c55e"></span>Phase 2</span>
-      <span class="pleg"><span class="pleg-dot" style="background:#ef4444"></span>Climax</span>
-      <span class="pleg"><span class="pleg-dot" style="background:var(--border)"></span>Neutral</span>
-    </div>
-    <div class="pulse-timer-txt">Refresh: <span id="pulseTimerNum">30</span>s</div>
-  </div>
-
-  <!-- Heat Grid card -->
-  <div class="card" style="border-color:rgba(240,180,41,.2);padding:10px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div class="lbl" style="margin:0">MMR Heat Map · Squeeze Overlay</div>
-      <span id="pulseScanTime" style="font-size:8px;color:var(--muted)">--</span>
-    </div>
-    <div class="pulse-grid" id="pulseGrid">
-      <div style="grid-column:span 3;text-align:center;padding:30px;color:var(--muted);font-size:11px;letter-spacing:1px">INITIALIZING PULSE HUB...</div>
-    </div>
-  </div>
-
-  <button class="btn btn-dark" style="font-size:9px;padding:9px" onclick="loadPulse()">FORCE REFRESH NOW</button>
-
-  <!-- Top Movers List -->
-  <div class="card" style="margin-top:8px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div class="lbl" style="margin:0">Top Movers — Premium Area $0.50-$15</div>
-      <span id="moverTime" style="font-size:8px;color:var(--muted)">--</span>
-    </div>
-    <div style="display:flex;gap:5px;margin-bottom:8px">
-      <button class="cat-filter-btn active" id="moverTabG" onclick="switchMoverTab('gainers',this)">TOP GAINERS</button>
-      <button class="cat-filter-btn" id="moverTabA" onclick="switchMoverTab('active',this)">MOST ACTIVE</button>
-    </div>
-    <div class="mover-list" id="moverList">
-      <div style="text-align:center;padding:20px;font-size:10px;color:var(--muted)">Loading movers...</div>
-    </div>
-  </div>
-</div>
 
 <script>
 // ════════════════════════════════════════════════════════════
@@ -2038,18 +2013,9 @@ if (sqTickerEl) {
 // Use addEventListener — cannot be overwritten by onclick assignments
 // This is additive on top of the tab show/hide system
 var sqTabBtn = document.querySelector('[data-tab="squeeze"]');
-var pTabBtn  = document.querySelector('[data-tab="pulse"]');
 if (sqTabBtn) {
   sqTabBtn.addEventListener('click', function() {
     setTimeout(function() { if (typeof loadSqueezeScan === 'function') loadSqueezeScan(); }, 80);
-  });
-}
-if (pTabBtn) {
-  pTabBtn.addEventListener('click', function() {
-    setTimeout(function() {
-      if (typeof loadPulse === 'function') loadPulse();
-      if (typeof startPulseTimer === 'function') startPulseTimer();
-    }, 80);
   });
 }
 
@@ -2178,8 +2144,7 @@ function buildSqueezeCard(data, isDeep) {
 
     '<div style="display:flex;gap:6px;margin-top:10px">' +
     '<button class="btn btn-gold" onclick="goAnalyze(\''+(data.symbol||'')+'\')" style="flex:1;padding:9px;font-size:9px;margin-bottom:0">Full Analysis</button>' +
-    '<button class="btn btn-dark" onclick="loadPulse();document.querySelector(\'[data-tab=pulse]\').click()" style="flex:1;padding:9px;font-size:9px;margin-bottom:0">Pulse Hub</button>' +
-    '<a href="'+tgLink+'" target="_blank" style="text-decoration:none;flex-shrink:0"><button class="btn btn-tg" style="padding:9px;margin-bottom:0;border-radius:7px;height:100%;font-size:10px">TG</button></a>' +
+    '<a href="'+tgLink+'" target="_blank" style="text-decoration:none;flex:1"><button class="btn btn-tg" style="padding:9px;margin-bottom:0;border-radius:7px;width:100%;font-size:10px">TG Alert</button></a>' +
     '</div>' +
     '</div>';
 }
@@ -2232,144 +2197,6 @@ async function loadSqueezeScan() {
   } catch(e) { out.innerHTML='<div class="card"><div style="color:var(--red)">'+e.message+'</div></div>'; }
 }
 
-// ════════════════════════════════════════════════════════════
-// PULSE TAB
-// ════════════════════════════════════════════════════════════
-
-var pulseCD = 30, pulseTmr = null;
-
-function startPulseTimer() {
-  if (pulseTmr) clearInterval(pulseTmr);
-  pulseCD = 30;
-  pulseTmr = setInterval(function() {
-    pulseCD--;
-    var el = document.getElementById('pulseTimerNum');
-    if (el) el.textContent = pulseCD;
-    if (pulseCD <= 0) { pulseCD = 30; loadPulse(); }
-  }, 1000);
-}
-
-async function loadPulse() {
-  loadMovers();
-  var grid  = document.getElementById('pulseGrid');
-  var radar = document.getElementById('pulseRadar');
-  var scanT = document.getElementById('pulseScanTime');
-  try {
-    var r = await fetch('/api/premium-pulse', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
-    var data = await r.json();
-    var movers = data.movers || [];
-    var radarItems = data.radar || [];
-    if (scanT) scanT.textContent = 'Updated: '+new Date().toLocaleTimeString();
-
-    // Radar tape
-    if (radarItems.length > 0 && radar) {
-      var ri2 = radarItems.concat(radarItems);
-      radar.innerHTML = ri2.map(function(item) {
-        var rc = item.phase===1?'#f0b429':item.phase===2?'#22c55e':item.phase===3?'#ef4444':'#3a5570';
-        return '<span class="radar-item" style="color:'+rc+'">' +
-          '$'+item.symbol+' &nbsp;' +
-          '<span style="color:#3a5570">RVOL</span> '+item.rvol+'x &nbsp;' +
-          (item.changePct>=0?'+':'')+item.changePct.toFixed(1)+'% &nbsp;' +
-          (item.phase>=1?'P'+item.phase:'')+
-          '</span>';
-      }).join('');
-    }
-
-    // Tiles
-    if (!movers.length) {
-      if (grid) grid.innerHTML = '<div style="grid-column:span 3;text-align:center;padding:30px;color:var(--muted)">No premium movers found. Market may be closed or quiet.</div>';
-      return;
-    }
-    var html = '';
-    movers.forEach(function(m) {
-      var mmrT   = m.mmr || 0;
-      var phase  = m.phase || 0;
-      var color  = m.phaseColor || 'var(--border)';
-      var tCls   = phase===1?'pt-p1':phase===2?'pt-p2':phase===3?'pt-p3':phase===0.5?'pt-p05':'pt-p0';
-      var dotClr = phase===1?'#f0b429':phase===2?'#22c55e':phase===3?'#ef4444':phase===0.5?'#60a5fa':'transparent';
-      var isPerfect = mmrT >= 85 && phase <= 2;
-      // Font scales with MMR: 60→12px, 100→18px
-      var symSz = Math.round(Math.max(11, Math.min(18, 12 + (mmrT - 60) * 0.15)));
-      var chgClr = m.changePct >= 0 ? 'var(--green)' : 'var(--red)';
-      var mmrClr = mmrT >= 80 ? 'var(--gold)' : mmrT >= 60 ? 'var(--blue)' : 'var(--muted)';
-
-      // Mini gauge inside tile
-      var tileRot = 45 + ((m.intensity||0) / 100 * 180);
-      var gaugeMini = '<div style="position:relative;width:36px;height:20px;overflow:hidden;margin:0 auto 5px">' +
-        '<div style="position:absolute;top:0;left:0;width:36px;height:36px;border:3px solid #1a2a3a;border-radius:50%;border-bottom-color:transparent;border-left-color:transparent;transform:rotate(45deg)"></div>' +
-        '<div style="position:absolute;top:0;left:0;width:36px;height:36px;border:3px solid '+color+';border-radius:50%;border-bottom-color:transparent;border-left-color:transparent;transform:rotate('+tileRot+'deg);transition:transform 1s cubic-bezier(.34,1.1,.64,1)"></div>' +
-        '</div>';
-
-      html += '<div class="pulse-tile '+tCls+'" onclick="quickDive(\''+m.symbol+'\')">' +
-        '<div class="phase-pip" style="background:'+dotClr+'"></div>' +
-        (isPerfect?'<div class="trophy">🏆</div>':'') +
-        gaugeMini +
-        '<span class="tile-sym" style="font-size:'+symSz+'px">'+m.symbol+'</span>' +
-        '<div class="tile-chg" style="color:'+chgClr+'">'+(m.changePct>=0?'+':'')+m.changePct.toFixed(1)+'%</div>' +
-        '<div class="tile-mmr" style="color:'+mmrClr+'">MMR '+mmrT+'</div>' +
-        '<div class="tile-rv" style="color:'+(m.rvol>=5?'var(--purple)':'var(--muted)')+'">'+m.rvol+'x vol</div>' +
-        '</div>';
-    });
-    if (grid) grid.innerHTML = html;
-
-  } catch(e) {
-    if (grid) grid.innerHTML = '<div style="grid-column:span 3;padding:20px;color:var(--red);text-align:center;font-size:11px">Error: '+e.message+'</div>';
-  }
-}
-
-function quickDive(sym) {
-  goAnalyze(sym);
-}
-
-// Top movers list
-var currentMoverTab = 'gainers';
-var moverData = { gainers: [], active: [] };
-
-function switchMoverTab(tab, btn) {
-  currentMoverTab = tab;
-  document.querySelectorAll('.cat-filter-btn').forEach(function(b){ if(b.id==='moverTabG'||b.id==='moverTabA') b.classList.remove('active'); });
-  if(btn) btn.classList.add('active');
-  renderMoverList();
-}
-
-function renderMoverList() {
-  var list = document.getElementById('moverList');
-  var tm   = document.getElementById('moverTime');
-  if (!list) return;
-  var items = moverData[currentMoverTab] || [];
-  if (!items.length) {
-    list.innerHTML = '<div style="text-align:center;padding:16px;font-size:10px;color:var(--muted)">No movers found. Market may be closed.</div>';
-    return;
-  }
-  var html = '';
-  items.forEach(function(m) {
-    var chgColor = m.chg >= 0 ? 'var(--green)' : 'var(--red)';
-    var rvColor  = m.rv >= 5 ? 'var(--purple)' : m.rv >= 2 ? 'var(--gold)' : 'var(--muted)';
-    html += '<div class="mover-row" onclick="goAnalyze('' + m.sym + '')">' +
-      '<span class="mover-sym">' + m.sym + '</span>' +
-      '<span class="mover-name">' + (m.name||'') + '</span>' +
-      '<span class="mover-price">$' + m.price.toFixed(2) + '</span>' +
-      '<span class="mover-chg" style="color:' + chgColor + '">' + (m.chg>=0?'+':'') + m.chg.toFixed(1) + '%</span>' +
-      '<span class="mover-vol" style="color:' + rvColor + '">' + m.rv.toFixed(1) + 'x</span>' +
-      '</div>';
-  });
-  list.innerHTML = html;
-  if (tm) tm.textContent = 'Live · ' + new Date().toLocaleTimeString();
-}
-
-async function loadMovers() {
-  try {
-    var r = await fetch('/api/movers');  // Backend proxy — avoids CORS block
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    var data = await r.json();
-    moverData.gainers = (data.gainers || []).sort(function(a,b){ return b.chg - a.chg; });
-    moverData.active  = (data.active  || []).sort(function(a,b){ return b.rv  - a.rv;  });
-    renderMoverList();
-  } catch(e) {
-    var list = document.getElementById('moverList');
-    if (list) list.innerHTML = '<div style="font-size:10px;color:var(--muted);padding:10px">Movers load after market open</div>';
-  }
-}
 </script>
 <!-- ================================================================ -->
 <!-- MAVERICK PROBABILITY ENSEMBLE TAB                              -->
@@ -2457,11 +2284,17 @@ canvas{border-radius:6px}
         <input id="probT2" placeholder="Auto from ATR" type="number" step="0.01" style="margin:0;padding:8px;font-size:12px;border-color:rgba(96,165,250,.3)"/>
       </div>
       <div style="flex:1">
-        <div style="font-size:8px;color:var(--muted);margin-bottom:3px">Horizon (min)</div>
+        <div style="font-size:8px;color:var(--muted);margin-bottom:3px">Horizon</div>
         <select id="probHorizon" style="margin:0;padding:8px;font-size:12px;border-color:rgba(167,139,250,.3)">
           <option value="15">15 min</option>
           <option value="30">30 min</option>
           <option value="60" selected>60 min</option>
+          <option value="120">2 Hours</option>
+          <option value="240">4 Hours</option>
+          <option value="1440">1 Day</option>
+          <option value="2880">2 Days</option>
+          <option value="4320">3 Days</option>
+          <option value="7200">5 Days</option>
         </select>
       </div>
     </div>
@@ -2521,11 +2354,14 @@ function renderProbability(data, out) {
   var t2    = data.t2;
   var steps = data.steps;
 
-  // Build step labels (every 5 minutes)
+  var horizonLabel = data.horizonLabel || (data.horizon + '-Minute');
+
+  // Build step labels — scale label frequency to step count
   var labels = [];
+  var labelEvery = Math.max(1, Math.floor(steps / 10));
   for (var i = 0; i <= steps; i++) {
     if (i === 0) labels.push('Now');
-    else if (i % 5 === 0) labels.push('+' + i + 'm');
+    else if (i % labelEvery === 0) labels.push('+' + i);
     else labels.push('');
   }
 
@@ -2589,9 +2425,9 @@ function renderProbability(data, out) {
     '<div style="font-size:10px;color:var(--muted);margin-top:2px">' + (mc ? mc.simCount.toLocaleString() : '0') + ' simulations · Gold = likely path · Band = 5th–95th percentile</div></div>' +
     '<span class="engine-badge badge-mc">MONTE CARLO</span></div>' +
     '<div class="chart-wrap"><canvas id="chartMC"></canvas></div>' +
-    (mc ? '<div class="stat-row"><span class="stat-lbl">Drift (μ per min)</span><span class="stat-val" style="color:' + (mc.mu>=0?'var(--green)':'var(--red)') + '">' + (mc.mu>=0?'+':'') + mc.mu + '</span></div>' +
-    '<div class="stat-row"><span class="stat-lbl">Volatility (σ per min)</span><span class="stat-val">' + mc.sigma + '</span></div>' +
-    '<div class="stat-row"><span class="stat-lbl">Median projected price (60m)</span><span class="stat-val">$' + mc.p50[steps] + '</span></div>' +
+    (mc ? '<div class="stat-row"><span class="stat-lbl">Drift (μ per step)</span><span class="stat-val" style="color:' + (mc.mu>=0?'var(--green)':'var(--red)') + '">' + (mc.mu>=0?'+':'') + mc.mu + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Volatility (σ per step)</span><span class="stat-val">' + mc.sigma + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Median projected price (' + horizonLabel + ')</span><span class="stat-val">$' + mc.p50[steps] + '</span></div>' +
     '<div class="stat-row"><span class="stat-lbl">5th pct (worst case)</span><span class="stat-val red">$' + mc.p5[steps] + '</span></div>' +
     '<div class="stat-row"><span class="stat-lbl">95th pct (best case)</span><span class="stat-val green">$' + mc.p95[steps] + '</span></div>' : '') +
     '</div>';
@@ -2606,21 +2442,21 @@ function renderProbability(data, out) {
     (lr ? '<div class="stat-row"><span class="stat-lbl">Trend direction</span><span class="stat-val">' + lr.trendDir + '</span></div>' +
     '<div class="stat-row"><span class="stat-lbl">Channel std dev (σ)</span><span class="stat-val">$' + lr.stdDev + '</span></div>' +
     '<div class="stat-row"><span class="stat-lbl">Price deviation from trend</span><span class="stat-val">' + lr.deviation + 'σ</span></div>' +
-    '<div class="stat-row"><span class="stat-lbl">Projected price (60m)</span><span class="stat-val">$' + lr.projectedEnd + '</span></div>' : '<div style="font-size:11px;color:var(--muted)">Insufficient candle data for regression</div>') +
+    '<div class="stat-row"><span class="stat-lbl">Projected price (' + horizonLabel + ')</span><span class="stat-val">$' + lr.projectedEnd + '</span></div>' : '<div style="font-size:11px;color:var(--muted)">Insufficient candle data for regression</div>') +
     '</div>';
 
   // Chart 3: ATR Probability Zones + Histogram
   html += '<div class="engine-section">' +
     '<div class="engine-header">' +
     '<div><div class="lbl" style="margin:0">Engine 3 — ATR Probability Zones</div>' +
-    '<div style="font-size:10px;color:var(--muted);margin-top:2px">Price distribution at ' + data.horizon + 'min · Purple = 1σ · Outer = 2σ</div></div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:2px">' + horizonLabel + ' price distribution · Purple = 1σ · Outer = 2σ</div></div>' +
     '<span class="engine-badge badge-atr">ATR ZONES</span></div>' +
     '<div class="chart-wrap"><canvas id="chartATR"></canvas></div>';
 
   // Histogram
   if (mc && mc.histogram) {
     var maxCount = Math.max.apply(null, mc.histogram.map(function(b){return b.count;}));
-    html += '<div style="margin-top:8px"><div style="font-size:9px;color:var(--muted);margin-bottom:4px">Monte Carlo end-price distribution (' + data.horizon + 'min)</div>' +
+    html += '<div style="margin-top:8px"><div style="font-size:9px;color:var(--muted);margin-bottom:4px">Monte Carlo end-price distribution (' + horizonLabel + ')</div>' +
       '<div class="hist-wrap">' +
       mc.histogram.map(function(b) {
         var h = Math.round((b.count / maxCount) * 36);
