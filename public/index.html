@@ -291,12 +291,12 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
       <button onclick="loadTVChart()" style="background:var(--gold);border:none;border-radius:6px;color:#000;padding:8px 14px;cursor:pointer;font-family:monospace;font-size:10px;font-weight:900;flex-shrink:0">GO</button>
     </div>
     <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px" id="tfBtns">
-      <button class="tf-btn" onclick="setTf('1')">1m</button>
-      <button class="tf-btn active" onclick="setTf('5')">5m</button>
-      <button class="tf-btn" onclick="setTf('15')">15m</button>
-      <button class="tf-btn" onclick="setTf('60')">1H</button>
-      <button class="tf-btn" onclick="setTf('D')">Day</button>
-      <button class="tf-btn" onclick="setTf('W')">Week</button>
+      <button class="tf-btn" onclick="setTf('1',this)">1m</button>
+      <button class="tf-btn active" onclick="setTf('5',this)">5m</button>
+      <button class="tf-btn" onclick="setTf('15',this)">15m</button>
+      <button class="tf-btn" onclick="setTf('60',this)">1H</button>
+      <button class="tf-btn" onclick="setTf('D',this)">Day</button>
+      <button class="tf-btn" onclick="setTf('W',this)">Week</button>
     </div>
   </div>
   <div class="tv-container">
@@ -929,19 +929,23 @@ function loadChartFor(sym){
 // ============================================================
 document.getElementById('chartSym').addEventListener('keydown',function(e){if(e.key==='Enter')loadTVChart();});
 
+function tfLabel(tf){
+  return tf === 'D' ? 'Day' : tf === 'W' ? 'Week' : tf + 'min';
+}
+
 function loadTVChart(){
   var sym = document.getElementById('chartSym').value.toUpperCase().trim();
   if(!sym) return;
   currentTicker = sym;
-  document.getElementById('chartLabel').textContent = sym + ' · ' + currentChartTf + 'min';
+  document.getElementById('chartLabel').textContent = sym + ' · ' + tfLabel(currentChartTf);
   renderTVChart(sym, currentChartTf);
   loadChartLux(sym);
 }
 
-function setTf(tf){
+function setTf(tf, btn){
   currentChartTf = tf;
   document.querySelectorAll('.tf-btn').forEach(function(b){b.classList.remove('active');});
-  event.target.classList.add('active');
+  if(btn) btn.classList.add('active');
   var sym = document.getElementById('chartSym').value.toUpperCase().trim();
   if(sym) renderTVChart(sym, tf);
 }
@@ -1881,6 +1885,11 @@ setTimeout(function() {
 /* Scan list */
 .sq-list-card{background:var(--bg2);border:1px solid;border-left:4px solid;border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:background .15s}
 .sq-list-card:active{opacity:.8}
+
+/* Coiled spring compression meter */
+.spring-meter-wrap{height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden;margin:6px 0 4px}
+.spring-bar{height:100%;background:linear-gradient(90deg,#f0b429,#cc8f00);border-radius:4px;transition:width 1s ease}
+.spring-text{font-size:8px;color:var(--muted);letter-spacing:.5px;margin-bottom:4px}
 
 /* ════════════════════════════════════════════════════════════
    PULSE HUB
