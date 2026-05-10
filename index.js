@@ -2385,6 +2385,12 @@ app.post('/api/analyze', async function(req, res) {
     // Alt-Data Shadow Layer
     var altData = await getAltPulse(sym, news, tf1d);
 
+    // Market Correlation Engine — Beta + Systemic Risk
+    var mce = await computeMCE(sym, quote.price, true);
+
+    // Institutional Alpha — Whale Absorption Detector
+    var instAlpha = calculateInstAlpha(quote, tf1d, await getShortData(sym));
+
     var ANALYZE_PROMPT = 'You are MAVERICK aggressive day trading AI v4.0.\n' +
       'You receive: MMR score, LuxAlgo signals, multi-timeframe data, AND a Bottom Probability Index (BPI).\n\n' +
       'VERDICTS: BUY | DONT_BUY | WATCH\n' +
@@ -2448,7 +2454,7 @@ app.post('/api/analyze', async function(req, res) {
     res.json({
       ticker: sym, verdict: verdict, mmr: mmr, adjustedMMR: adjustedMMR,
       dilution: dilution, levels: levels, bpi: bpi, luxAlgo: luxAlgo,
-      stress: stress, macro: macro, altData: altData,
+      stress: stress, macro: macro, altData: altData, mce: mce, instAlpha: instAlpha,
       data: { quote: quote, timeframes: { daily: tf1d, fourhour: tf4h, onehour: tf1h, fifteen: tf15 }, news: news },
       timestamp: new Date().toISOString()
     });
@@ -2893,6 +2899,190 @@ async function sorNextPiece(chatId) {
     msg += '\nNext piece in ' + sor.intervalSec + ' seconds\nReply: next — when ready for piece ' + (session.piece + 1);
   }
   tgSend(chatId, msg);
+}
+
+// ── /api/movers — browser-safe endpoint (avoids CORS on Yahoo Finance) ────────
+app.get('/api/movers', async function(req, res) {
+  try {
+    var allItems = { gainers: [], active: [] };
+    var screeners = [{ id: 'day_gainers', key: 'gainers' }, { id: 'most_actives', key: 'active' }];
+    for (var s = 0; s < screeners.length; s++) {
+      try {
+        var r = await fetch(
+          'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=' + screeners[s].id + '&_=' + Date.now(),
+          { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
+        );
+        var d = await r.json();
+        var qs = (d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [];
+        allItems[screeners[s].key] = qs
+          .filter(function(q) { return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15; })
+          .slice(0, 20)
+          .map(function(q) {
+            var rv = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
+            return { sym: q.symbol, name: (q.shortName || '').slice(0, 20),
+              price: q.regularMarketPrice, chg: q.regularMarketChangePercent,
+              rv: +rv.toFixed(1), cap: q.marketCap, vol: q.regularMarketVolume };
+          });
+      } catch(e) {}
+    }
+    res.json(allItems);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ================================================================
+// MARKET CORRELATION ENGINE (MCE) v4.7 — Beta & Systemic Risk
+// Answers: "If SPY drops 2%, how much does this stock lose?"
+// ================================================================
+
+function calculateBeta(tickerReturns, spyReturns) {
+  if (!tickerReturns || !spyReturns || tickerReturns.length < 10) return 1.0;
+  var n = Math.min(tickerReturns.length, spyReturns.length);
+  if (n < 5) return 1.0;
+  // Align the arrays
+  var t = tickerReturns.slice(-n);
+  var s = spyReturns.slice(-n);
+  // Mean
+  var tMean = t.reduce(function(a,b){ return a+b; }, 0) / n;
+  var sMean = s.reduce(function(a,b){ return a+b; }, 0) / n;
+  // Covariance and variance
+  var cov = 0, sVar = 0;
+  for (var i = 0; i < n; i++) {
+    cov  += (t[i] - tMean) * (s[i] - sMean);
+    sVar += (s[i] - sMean) * (s[i] - sMean);
+  }
+  if (sVar === 0) return 1.0;
+  return +(cov / sVar).toFixed(2);
+}
+
+async function computeMCE(tickerSym, tickerPrice, tickerCandles) {
+  try {
+    // Fetch SPY and QQQ candles (30 days, 1d)
+    var spyTf  = await getCandles('SPY',  '3mo', '1d');
+    var qqqTf  = await getCandles('QQQ',  '3mo', '1d');
+    if (!spyTf || !qqqTf) return null;
+
+    // Build return series from daily closes
+    var rawSpy = await getRawCandles('SPY', '3mo', '1d');
+    var rawTk  = tickerCandles ? await getRawCandles(tickerSym, '3mo', '1d') : null;
+
+    var spyReturns = [], tkReturns = [];
+    if (rawSpy && rawSpy.length > 2) {
+      for (var i = 1; i < rawSpy.length; i++) {
+        if (rawSpy[i-1].c) spyReturns.push((rawSpy[i].c - rawSpy[i-1].c) / rawSpy[i-1].c);
+      }
+    }
+    if (rawTk && rawTk.length > 2) {
+      for (var i = 1; i < rawTk.length; i++) {
+        if (rawTk[i-1].c) tkReturns.push((rawTk[i].c - rawTk[i-1].c) / rawTk[i-1].c);
+      }
+    }
+
+    var beta = tkReturns.length > 5 ? calculateBeta(tkReturns, spyReturns) : 1.0;
+    beta = Math.max(-5, Math.min(10, beta)); // Cap outliers
+
+    // Scenario: SPY drops 2% — what happens to this ticker?
+    var spyDrop1  = -0.01;
+    var spyDrop2  = -0.02;
+    var spyRally1 = +0.01;
+    var drop1Proj  = +(tickerPrice * beta * spyDrop1).toFixed(2);
+    var drop2Proj  = +(tickerPrice * beta * spyDrop2).toFixed(2);
+    var rally1Proj = +(tickerPrice * beta * spyRally1).toFixed(2);
+
+    // Relative Strength: is ticker holding while SPY drops?
+    var spyChg = spyTf.pctChange || 0;
+    var qqqChg = qqqTf.pctChange || 0;
+    var spyDown = spyChg < -0.5;
+    var isRelStrong = spyDown && (tickerPrice > 0); // holds while market drops
+
+    // Distribution check: SPY below 20-day EMA?
+    var spyBearish  = spyTf.trend === 'DOWN' && spyTf.rsi < 52;
+    var qqqBearish  = qqqTf.trend === 'DOWN' && qqqTf.rsi < 52;
+    var macroRegime = spyBearish && qqqBearish ? 'DISTRIBUTION' : spyBearish || qqqBearish ? 'CAUTION' : 'EXPANSION';
+    var convictionTax = macroRegime === 'DISTRIBUTION' ? -20 : macroRegime === 'CAUTION' ? -10 : 0;
+
+    var verdict;
+    if (macroRegime === 'DISTRIBUTION' && beta > 1.5) verdict = 'HIGH SYSTEMIC RISK — wait for SPY stabilization';
+    else if (macroRegime === 'DISTRIBUTION') verdict = 'MACRO HEADWINDS — reduce size';
+    else if (beta > 2.5) verdict = 'HIGH BETA — volatile to market moves';
+    else if (beta < 0.5) verdict = 'LOW CORRELATION — relatively independent';
+    else verdict = 'MACRO NEUTRAL';
+
+    return {
+      beta: beta,
+      macroRegime: macroRegime,
+      convictionTax: convictionTax,
+      spyTrend: spyTf.trend + ' RSI:' + spyTf.rsi,
+      qqqTrend: qqqTf.trend + ' RSI:' + qqqTf.rsi,
+      spyChg: +spyChg.toFixed(2), qqqChg: +qqqChg.toFixed(2),
+      scenario: { drop1: drop1Proj, drop2: drop2Proj, rally1: rally1Proj },
+      isRelativeStrength: isRelStrong,
+      verdict: verdict
+    };
+  } catch(e) { console.error('MCE: ' + e.message); return null; }
+}
+
+// ================================================================
+// INSTITUTIONAL ALPHA ENGINE v4.7 — Whale Absorption Detector
+// Identifies "Post-Flush V-Bottoms" and valuation gaps where
+// whales absorb retail panic to build massive positions
+// ================================================================
+
+function calculateInstAlpha(quote, tf1d, shortData) {
+  var score = 0;
+  var signals = [];
+  var price = quote.price || 0;
+
+  // 1. ABSORPTION CHECK — price rising DESPITE bearish trend (V-Bottom)
+  // The LFVN Maneuver: stock surges after earnings miss = whale absorption
+  var changePct = quote.changePct || 0;
+  var trend     = tf1d ? tf1d.trend : 'UNKNOWN';
+  if (changePct > 5 && trend === 'DOWN') {
+    score += 40;
+    signals.push('V-Bottom absorption — rising against trend (+' + changePct.toFixed(1) + '%)');
+  } else if (changePct > 8) {
+    score += 20;
+    signals.push('Strong momentum — sustained buying');
+  }
+
+  // 2. VALUATION ARBITRAGE — P/E vs sector average
+  // If we have market cap and estimating earnings from sector data
+  var marketCap = quote.marketCap || 0;
+  if (marketCap > 0) {
+    // Small cap discount threshold: market cap < $500M on sub-$10 stock = undervalued
+    if (marketCap < 200e6) { score += 25; signals.push('Micro-cap discount (MCap $' + (marketCap/1e6).toFixed(0) + 'M)'); }
+    else if (marketCap < 500e6) { score += 15; signals.push('Small-cap value zone'); }
+  }
+
+  // 3. SHORT SQUEEZE SETUP as whale proxy
+  // High SI% + price rising = shorts covering = institutional pushing price
+  if (shortData) {
+    var si = shortData.siPercent || 0;
+    if (si > 20 && changePct > 3) { score += 20; signals.push('Short squeeze fuel (' + si + '% SI + rising)'); }
+    else if (si > 10) { score += 8; signals.push('Elevated SI ' + si + '% — potential squeeze'); }
+    // DTC > 5 days is very hard to cover
+    if (shortData.dtc > 5) { score += 10; signals.push('DTC ' + shortData.dtc + 'd — escape velocity difficult'); }
+  }
+
+  // 4. FLOAT ROTATION — institutional signature
+  var floatShares = quote.floatShares || 0;
+  var volume      = quote.volume || 0;
+  if (floatShares > 0) {
+    var rotation = volume / floatShares;
+    if (rotation > 2) { score += 20; signals.push('Float rotation ' + rotation.toFixed(1) + 'x — institutional velocity'); }
+    else if (rotation > 0.8) { score += 10; signals.push('Float rotation ' + rotation.toFixed(1) + 'x'); }
+    // Micro float — whales can move this easily
+    if (floatShares < 5e6) { score += 15; signals.push('Micro float ' + (floatShares/1e6).toFixed(1) + 'M — highly manipulable'); }
+    else if (floatShares < 20e6) { score += 8; signals.push('Small float ' + (floatShares/1e6).toFixed(1) + 'M'); }
+  }
+
+  score = Math.min(100, score);
+  var verdict = score >= 70 ? 'INSTITUTIONAL ACCUMULATION' : score >= 45 ? 'POSSIBLE WHALE INTEREST' : 'RETAIL NOISE';
+  var reason  = signals.length ? signals[0] : 'No absorption signals detected';
+  var action  = score >= 70 ? 'SWIM WITH WHALES — entry supported by institutional evidence' :
+                score >= 45 ? 'WATCH ONLY — wait for volume confirmation' :
+                              'PASS — insufficient whale footprint';
+
+  return { score: score, verdict: verdict, reason: reason, action: action, signals: signals };
 }
 
 app.post('/api/sor', async function(req, res) {
