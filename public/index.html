@@ -214,6 +214,16 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
 /* MACRO RIBBON */
 .macro-ribbon{display:flex;align-items:center;gap:7px;background:rgba(0,0,0,.25);border-radius:6px;padding:7px 10px;margin-bottom:8px;font-size:10px}
 .macro-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+/* TOP GAINERS LIST */
+.mover-list{margin-top:8px}
+.mover-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--bg3);cursor:pointer}
+.mover-row:last-child{border-bottom:none}
+.mover-row:active{opacity:.8}
+.mover-sym{font-size:14px;font-weight:900;color:#fff;font-family:monospace;width:55px}
+.mover-name{font-size:9px;color:var(--muted);flex:1;margin:0 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mover-price{font-size:12px;font-family:monospace;font-weight:700;color:var(--text);width:50px;text-align:right}
+.mover-chg{font-size:11px;font-family:monospace;font-weight:900;width:52px;text-align:right}
+.mover-vol{font-size:9px;color:var(--muted);width:38px;text-align:right}
 
 /* ALT-DATA SHADOW PROXY */
 .alt-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
@@ -262,13 +272,129 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
 
 <!-- ANALYZE -->
 <div id="tab-analyze">
-  <div class="card card-gold">
-    <div class="lbl">Live AI Analysis</div>
-    <div style="font-size:10px;color:var(--muted);margin-bottom:9px">Finnhub + Yahoo · 4 timeframes · LuxAlgo · Groq AI</div>
-    <input id="ticker" placeholder="Enter ticker (e.g. LFVN, PN, CIFR)" autocomplete="off"/>
-    <button class="btn btn-gold" onclick="runAnalysis()">ANALYZE NOW</button>
+
+  <!-- MAVERICK COCKPIT MISSION CONTROL -->
+  <div style="text-align:center;padding:10px 0 14px;border-bottom:1px solid var(--border);margin-bottom:12px">
+    <div style="font-size:8px;color:var(--muted);letter-spacing:3px;margin-bottom:5px">MAVERICK COCKPIT 4.0</div>
+    <div style="font-size:11px;color:var(--muted)">Two brains. One terminal. <span style="color:var(--gold)">Swim with the whales.</span> <span style="color:#22d3ee">Strike with the sharks.</span></div>
   </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 🦁 LION BRAIN — INSTITUTIONAL SECTION                      -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div style="background:linear-gradient(135deg,rgba(240,180,41,.08),rgba(240,180,41,.02));border:1px solid rgba(240,180,41,.35);border-radius:12px;padding:14px;margin-bottom:12px">
+
+    <!-- Lion Header -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div style="font-size:26px">🦁</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:900;color:#f0b429;letter-spacing:1px">THE LION BRAIN</div>
+        <div style="font-size:9px;color:rgba(240,180,41,.6);margin-top:2px">Institutional Intelligence · Patience · Find the floor before the crowd</div>
+      </div>
+      <div style="background:rgba(240,180,41,.12);border:1px solid rgba(240,180,41,.25);border-radius:6px;padding:4px 10px;font-size:8px;color:#f0b429;font-weight:800;letter-spacing:1px">INSTITUTIONAL GRADE</div>
+    </div>
+
+    <!-- Engine Index -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:11px">
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">📊 STRESS TEST</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">1,000 Monte Carlo paths. Path efficiency. Risk of ruin. Expected value per trade.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">🏦 BPI ENGINE</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Pivot clustering. Volume-at-price. Fibonacci. Institutional floor detection.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">🐋 WHALE ALPHA</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Post-flush V-bottom detection. Valuation gap. Institutional absorption signature.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">📡 GHOST PROTOCOL</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">SEC filing density before news hits. Pre-announcement institutional curiosity detection.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">📐 BETA CORRELATION</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Market regime · SPY/QQQ Beta · Systemic drag scenario analysis.</div>
+      </div>
+      <div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#f0b429;font-weight:700;margin-bottom:2px">🛡 DILUTION SHIELD</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">SEC S-3/424B detection. Stop auto-widened to 2x ATR when dilution detected.</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:8px">
+      <div style="font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:4px">LION ANALYSIS — ENTER TICKER</div>
+      <input id="ticker" placeholder="Ticker — e.g. LFVN, SERV, ATRA" autocomplete="off" style="border-color:rgba(240,180,41,.3)"/>
+    </div>
+    <button class="btn" onclick="runAnalysis()" style="background:linear-gradient(135deg,#f0b429,#cc8f00);color:#000;border:none;font-weight:900;letter-spacing:2px;margin-bottom:0">RUN LION ANALYSIS</button>
+  </div>
+
+  <!-- Analyze Results (both brains render here) -->
   <div id="analyzeResult"></div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 🦈 SHARK BRAIN — RETAIL MOMENTUM SECTION                   -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div style="background:linear-gradient(135deg,rgba(34,211,238,.08),rgba(96,165,250,.04));border:1px solid rgba(34,211,238,.3);border-radius:12px;padding:14px;margin-top:8px">
+
+    <!-- Shark Header -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div style="font-size:26px">🦈</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:900;color:#22d3ee;letter-spacing:1px">THE SHARK BRAIN</div>
+        <div style="font-size:9px;color:rgba(34,211,238,.5);margin-top:2px">Retail Momentum Science · Speed · Strike when the crowd arrives</div>
+      </div>
+      <div style="background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.25);border-radius:6px;padding:4px 10px;font-size:8px;color:#22d3ee;font-weight:800;letter-spacing:1px">MOMENTUM GRADE</div>
+    </div>
+
+    <!-- Engine Index -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:11px">
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">⚡ PHASE VELOCITY</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">How fast is Phase 1→2 transitioning? Fast Break signal detects ignition before breakout.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">🌀 FLOAT EXHAUST</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Liquidity vacuum science. When the float rotates 2x+, sellers are mathematically gone.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">🔬 THE X-RAY</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Order flow delta inside the candle. See if whales are absorbing or dumping in real-time.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">🔥 CROWD HEAT</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">Retail timing engine. Fresh crowd = ENTER. Stale crowd = EXIT before the bags drop.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">🛡 REGIME GUARD</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">3-state market regime. Auto-disables longs during Distribution. Never buy a top again.</div>
+      </div>
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.15);border-radius:7px;padding:8px">
+        <div style="font-size:9px;color:#22d3ee;font-weight:700;margin-bottom:2px">💰 SHADOW SCORE</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.4">SOR savings counter. See exactly how much the terminal saved you today vs market orders.</div>
+      </div>
+    </div>
+
+    <!-- Shark input -->
+    <div style="margin-bottom:8px">
+      <div style="font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:4px">SHARK ANALYSIS — ENTER TICKER</div>
+      <input id="sharkTicker" placeholder="Ticker — e.g. MVIS, GME, LFVN" autocomplete="off" style="border-color:rgba(34,211,238,.3)"/>
+    </div>
+    <button class="btn" onclick="runSharkAnalysis()" style="background:linear-gradient(135deg,#0e7490,#0c4a6e);color:#22d3ee;border:1px solid rgba(34,211,238,.4);font-weight:900;letter-spacing:2px;margin-bottom:8px">RUN SHARK ANALYSIS</button>
+
+    <!-- Shadow Score live counter -->
+    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:7px;padding:8px 12px">
+      <div>
+        <div style="font-size:8px;color:rgba(167,139,250,.7);letter-spacing:1px">SHADOW SCORE — SOR SAVINGS TODAY</div>
+        <div style="font-size:9px;color:var(--muted)">Terminal pays for itself by hiding orders from HFT predators</div>
+      </div>
+      <div class="shadow-savings" style="font-size:20px;font-weight:900;font-family:monospace;color:#a78bfa">$0.00</div>
+    </div>
+  </div>
+
+  <!-- Shark Results -->
+  <div id="sharkResult"></div>
+
 </div>
 
 <!-- CHART -->
@@ -280,12 +406,12 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
       <button onclick="loadTVChart()" style="background:var(--gold);border:none;border-radius:6px;color:#000;padding:8px 14px;cursor:pointer;font-family:monospace;font-size:10px;font-weight:900;flex-shrink:0">GO</button>
     </div>
     <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px" id="tfBtns">
-      <button class="tf-btn" onclick="setTf('1',this)">1m</button>
-      <button class="tf-btn active" onclick="setTf('5',this)">5m</button>
-      <button class="tf-btn" onclick="setTf('15',this)">15m</button>
-      <button class="tf-btn" onclick="setTf('60',this)">1H</button>
-      <button class="tf-btn" onclick="setTf('D',this)">Day</button>
-      <button class="tf-btn" onclick="setTf('W',this)">Week</button>
+      <button class="tf-btn" onclick="setTf('1')">1m</button>
+      <button class="tf-btn active" onclick="setTf('5')">5m</button>
+      <button class="tf-btn" onclick="setTf('15')">15m</button>
+      <button class="tf-btn" onclick="setTf('60')">1H</button>
+      <button class="tf-btn" onclick="setTf('D')">Day</button>
+      <button class="tf-btn" onclick="setTf('W')">Week</button>
     </div>
   </div>
   <div class="tv-container">
@@ -407,15 +533,17 @@ footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-
     </div>
     <div style="font-size:8px;color:var(--bg3);text-align:center;margin-top:4px">Enter to send · Knows your portfolio and trading style</div>
   </div>
+</div>
 
-  <!-- Verdict Backtest Panel -->
-  <div class="card" style="margin-top:12px;border-color:rgba(167,139,250,.2)">
+<!-- Verdict Backtest Panel — shown inside advisor tab -->
+<div id="backtestPanel" style="display:none;margin-top:6px">
+  <div class="card" style="border-color:rgba(240,180,41,.25);background:linear-gradient(135deg,rgba(240,180,41,.04),transparent)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div class="lbl" style="margin:0;color:var(--purple)">AI Verdict Backtest</div>
-      <button onclick="loadBacktest()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:9px">REFRESH</button>
+      <div class="lbl" style="color:var(--gold);margin:0">AI Verdict Backtest</div>
+      <button onclick="loadBacktest()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 9px;cursor:pointer;font-size:9px">REFRESH</button>
     </div>
-    <div id="backtestSummary" style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"></div>
-    <div id="backtestTable" style="font-size:10px;color:var(--muted)">Loading verdict history...</div>
+    <div id="backtestSummary" style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap"></div>
+    <div id="backtestTable"></div>
   </div>
 </div>
 
@@ -456,7 +584,11 @@ document.querySelectorAll('.tab').forEach(function(t){
     t.classList.add('active');
     document.getElementById('tab-'+t.dataset.tab).classList.remove('hidden');
     if(t.dataset.tab==='signals') loadSignals();
-    if(t.dataset.tab==='advisor' && !document.getElementById('chatHistory').children.length) showWelcome();
+    if(t.dataset.tab==='advisor') {
+      if (!document.getElementById('chatHistory').children.length) showWelcome();
+      document.getElementById('backtestPanel').style.display = '';
+      loadBacktest();
+    }
   };
 });
 
@@ -618,6 +750,182 @@ function drawBPICanvas(canvasId) {
 }
 
 
+
+
+// ================================================================
+// SHARK BRAIN CARD BUILDERS — Retail Momentum Science v5.0
+// ================================================================
+
+function buildRegimeBanner(regime) {
+  if (!regime) return '';
+  var r = regime.regime || 'NEUTRAL';
+  var cls = r === 'EXPANSION' ? 'rb-expansion' : r === 'DISTRIBUTION' ? 'rb-distribution' :
+            r === 'CAUTION' ? 'rb-caution' : r === 'RANGING' ? 'rb-ranging' : 'rb-neutral';
+  var dotColor = r === 'EXPANSION' ? '#22c55e' : r === 'DISTRIBUTION' ? '#ef4444' :
+                 r === 'CAUTION' ? '#f0b429' : r === 'RANGING' ? '#60a5fa' : '#3a5570';
+  var icon = r === 'EXPANSION' ? '✦' : r === 'DISTRIBUTION' ? '⚠' : r === 'CAUTION' ? '◈' : '◎';
+  var lockMsg = !regime.longEnabled ? ' · LONG SIGNALS DISABLED' : '';
+  return '<div class="regime-banner ' + cls + '">' +
+    '<div class="regime-dot" style="background:' + dotColor + '"></div>' +
+    '<span><strong>REGIME GUARD:</strong> ' + r + lockMsg + '</span>' +
+    '<span style="margin-left:auto;font-size:9px">' + (regime.detail || '') + '</span>' +
+    '</div>';
+}
+
+function buildShadowScoreBanner(score) {
+  return '<div class="shadow-score-banner">' +
+    '<div><div style="font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:2px">SHADOW SCORE — SOR SAVINGS TODAY</div>' +
+    '<div style="font-size:10px;color:rgba(167,139,250,.6)">Smart Order Router: hiding your footprint from HFT predators</div></div>' +
+    '<div class="shadow-savings">$' + (score || '0.00') + '</div>' +
+    '</div>';
+}
+
+function buildSharkSection(shark, sym) {
+  if (!shark) return '';
+  var pv  = shark.phaseVelocity  || {};
+  var fe  = shark.floatExhaustion || {};
+  var xr  = shark.xray           || {};
+  var ch  = shark.crowdHeat      || {};
+  var sc  = shark.score          || 0;
+
+  var scoreColor = sc >= 75 ? '#22d3ee' : sc >= 55 ? '#60a5fa' : sc >= 35 ? '#f0b429' : '#3a5570';
+  var sharkVerdict = sc >= 75 ? 'STRIKE — Full Shark conditions' : sc >= 55 ? 'CIRCLING — Conditions building' :
+                     sc >= 35 ? 'HUNTING — Watch closely' : 'COLD WATERS — Stand down';
+
+  // Phase Velocity gauge
+  var vPct = pv.velocity || 0;
+  var vColor = vPct >= 65 ? '#22d3ee' : vPct >= 45 ? '#60a5fa' : vPct >= 25 ? '#f0b429' : '#3a5570';
+  var velCard = '<div class="card" style="margin-bottom:8px;padding:11px 13px">' +
+    '<div class="lbl" style="color:#22d3ee;margin-bottom:7px">Feature A: Phase Transition Velocity</div>' +
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">' +
+    '<div style="flex:1">' +
+    '<div style="font-size:13px;font-weight:900;color:' + vColor + '">' + (pv.label || 'NEUTRAL') + '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:2px">' + (pv.detail || '') + '</div>' +
+    '</div>' +
+    '<div style="text-align:right"><div style="font-size:22px;font-weight:900;font-family:monospace;color:' + vColor + '">' + vPct + '</div>' +
+    '<div style="font-size:8px;color:var(--muted)">VELOCITY</div></div>' +
+    '</div>' +
+    '<div class="velocity-gauge"><div class="velocity-fill" style="width:' + vPct + '%;background:' + vColor + '"></div></div>' +
+    '<div style="display:flex;gap:10px;margin-top:6px;font-size:9px">' +
+    '<span style="color:var(--muted)">RVOL: <strong style="color:' + vColor + '">' + (pv.rvolScore||0) + 'pts</strong></span>' +
+    '<span style="color:var(--muted)">RSI: <strong>' + (pv.rsiScore||0) + 'pts</strong></span>' +
+    '<span style="color:var(--muted)">Price/HOD: <strong>' + (pv.priceScore||0) + 'pts</strong></span>' +
+    (pv.isFastBreak ? '<span style="color:#22d3ee;font-weight:900">FAST BREAK DETECTED</span>' : '') +
+    '</div>' +
+    '</div>';
+
+  // Float Exhaustion
+  var fr = fe.floatRotation || 0;
+  var fColor = fe.extremeVacuum ? '#ef4444' : fe.vacuum ? '#22d3ee' : fr >= 0.8 ? '#f0b429' : '#3a5570';
+  var fLabel = fe.extremeVacuum ? 'EXTREME VACUUM' : fe.vacuum ? 'LIQUIDITY VACUUM' : 'NORMAL';
+  var fPct = Math.min(100, fe.score || 0);
+  // Vacuum ring SVG
+  var fCirc = 2 * Math.PI * 22;
+  var fDash = (fPct / 100) * fCirc;
+  var floatCard = '<div class="card" style="margin-bottom:8px;padding:11px 13px">' +
+    '<div class="lbl" style="color:#22d3ee;margin-bottom:7px">Float Exhaustion Model — Liquidity Vacuum Detector</div>' +
+    '<div style="display:flex;gap:12px;align-items:center">' +
+    '<div class="vacuum-ring">' +
+    '<svg width="52" height="52" viewBox="0 0 52 52"><circle cx="26" cy="26" r="22" fill="none" stroke="var(--bg3)" stroke-width="4"/>' +
+    '<circle cx="26" cy="26" r="22" fill="none" stroke="' + fColor + '" stroke-width="4" stroke-dasharray="' + fDash.toFixed(1) + ' ' + fCirc.toFixed(1) + '" stroke-linecap="round"/></svg>' +
+    '<div class="vacuum-center" style="color:' + fColor + '">' + fPct + '</div></div>' +
+    '<div style="flex:1"><div style="font-size:12px;font-weight:900;color:' + fColor + '">' + (fe.label || 'NORMAL') + '</div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:3px">' + (fe.detail || '') + '</div>' +
+    (fe.minutesToExhaust ? '<div style="font-size:10px;color:' + fColor + ';margin-top:4px;font-weight:700">Est. full exhaust: ~' + fe.minutesToExhaust + 'min at current rate</div>' : '') +
+    '</div>' +
+    '</div>' +
+    '</div>';
+
+  // X-Ray Order Flow
+  var xd = xr.delta || 0;
+  var xColor = xd >= 20 ? '#22c55e' : xd <= -20 ? '#ef4444' : '#6b87a0';
+  var buyW = Math.max(5, xr.buyPressure || 50);
+  var sellW = Math.max(5, xr.sellPressure || 50);
+  var xrayCard = '<div class="card" style="margin-bottom:8px;padding:11px 13px">' +
+    '<div class="lbl" style="color:#22d3ee;margin-bottom:5px">The X-Ray — Order Flow Delta Inside the Candle</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-bottom:7px">Don't just watch the price. See if Whales are absorbing or dumping in real-time.</div>' +
+    '<div style="font-size:13px;font-weight:900;color:' + xColor + ';margin-bottom:6px">' + (xr.label || 'SCANNING...') + '</div>' +
+    '<div class="xray-bar-wrap">' +
+    '<div class="xray-buy" style="width:' + buyW + '%"><div style="font-size:8px;color:#fff;padding:3px 5px;white-space:nowrap">' + buyW + '% BUY</div></div>' +
+    '<div class="xray-sell" style="width:' + sellW + '%"><div style="font-size:8px;color:#fff;padding:3px 5px;white-space:nowrap;float:right">' + sellW + '% SELL</div></div>' +
+    '</div>' +
+    '<div style="display:flex;justify-content:space-between;margin-top:5px;font-size:9px">' +
+    '<span style="color:var(--green)">Aggressive Buyers: ' + (xr.aggressiveBuy ? Math.round(xr.aggressiveBuy/1000) + 'K' : 'n/a') + '</span>' +
+    '<span style="color:' + xColor + ';font-weight:700">Delta: ' + (xd >= 0 ? '+' : '') + xd + '</span>' +
+    '<span style="color:var(--red)">Aggressive Sellers: ' + (xr.aggressiveSell ? Math.round(xr.aggressiveSell/1000) + 'K' : 'n/a') + '</span>' +
+    '</div>' +
+    (xr.tickCount < 5 ? '<div style="font-size:9px;color:var(--muted);margin-top:5px">Tick data builds during live market hours. Richer on active names.</div>' : '') +
+    '</div>';
+
+  // Crowd Heat
+  var hv = ch.heat || 0;
+  var hClass = hv >= 80 ? 'heat-inferno' : hv >= 60 ? 'heat-hot' : hv >= 40 ? 'heat-warm' : 'heat-cold';
+  var hColor = hv >= 80 ? '#ff6b00' : hv >= 60 ? '#ef4444' : hv >= 40 ? '#f0b429' : '#3a5570';
+  var crowdCard = '<div class="card" style="margin-bottom:8px;padding:11px 13px">' +
+    '<div class="lbl" style="color:#22d3ee;margin-bottom:7px">Crowd Heat — Retail Timing Engine</div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+    '<div><div style="font-size:12px;font-weight:900;color:' + hColor + '">' + (ch.label || '') + '</div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:2px">' + (ch.detail || '') + '</div></div>' +
+    '<div style="text-align:right;flex-shrink:0"><div style="font-size:22px;font-weight:900;font-family:monospace;color:' + hColor + '">' + hv + '</div>' +
+    '<div style="font-size:8px;color:var(--muted)">HEAT</div></div>' +
+    '</div>' +
+    '<div class="heat-thermo"><div class="heat-bar"><div class="heat-fill ' + hClass + '" style="width:' + hv + '%"></div></div></div>' +
+    '<div style="background:' + hColor + '15;border:1px solid ' + hColor + '30;border-radius:5px;padding:6px 9px;margin-top:6px;font-size:10px;color:' + hColor + '">' +
+    '<strong>Action:</strong> ' + (ch.action || '') + '</div>' +
+    '</div>';
+
+  return '<div class="brain-section">' +
+    '<div class="brain-section-header shark-header">' +
+    '<div class="brain-icon">🦈</div>' +
+    '<div><div class="brain-title">SHARK BRAIN — Retail Momentum Science</div>' +
+    '<div class="brain-subtitle">Kinetic energy · Crowd timing · Order flow · Float exhaustion · Regime guard</div></div>' +
+    '<div class="brain-score"><div class="brain-score-num shark-score-col">' + sc + '</div><div style="font-size:7px;color:rgba(34,211,238,.5);letter-spacing:1px">SHARK SCORE</div></div>' +
+    '</div>' +
+    '<div style="background:' + (sc >= 55 ? 'rgba(34,211,238,.06)' : 'var(--bg2)') + ';border:1px solid ' + (sc >= 55 ? 'rgba(34,211,238,.25)' : 'var(--border)') + ';border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
+    '<div style="font-size:13px;font-weight:900;color:' + scoreColor + '">' + sharkVerdict + '</div>' +
+    '<div style="font-size:9px;color:var(--muted);margin-top:3px">Phase velocity + Float exhaustion + Order flow + Crowd timing · Pure momentum science</div>' +
+    '</div>' +
+    velCard + floatCard + xrayCard + crowdCard +
+    '</div>';
+}
+
+function buildGhostProtocol(alt) {
+  if (!alt) return '';
+  var color = alt.curiosity === 'SPIKING' ? 'var(--purple)' : alt.curiosity === 'ELEVATED' ? 'var(--blue)' : 'var(--muted)';
+  return '<div class="ghost-card">' +
+    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px">' +
+    '<div class="ghost-dot"></div>' +
+    '<div class="lbl" style="margin:0;color:var(--purple)">Ghost Protocol — Pre-News Detection</div>' +
+    '</div>' +
+    '<div style="font-size:9px;color:rgba(167,139,250,.5);margin-bottom:8px">We track the Invisible Signals. Abnormal SEC filing density BEFORE the news hits the public wires.</div>' +
+    '<div style="display:flex;gap:8px">' +
+    '<div style="flex:1;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);border-radius:6px;padding:7px;text-align:center">' +
+    '<div style="font-size:8px;color:var(--muted)">INST. CURIOSITY</div>' +
+    '<div style="font-size:13px;font-weight:900;color:' + color + '">' + (alt.curiosity || 'STABLE') + '</div>' +
+    '<div style="font-size:8px;color:var(--muted);margin-top:2px">' + (alt.curiosityDetail || '').slice(0,35) + '</div>' +
+    '</div>' +
+    '<div style="flex:1;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);border-radius:6px;padding:7px;text-align:center">' +
+    '<div style="font-size:8px;color:var(--muted)">CROWD RISK</div>' +
+    '<div style="font-size:13px;font-weight:900;color:' + (alt.crowdRisk === 'OVERCROWDED' ? 'var(--red)' : 'var(--green)') + '">' + (alt.crowdRisk || 'CLEAN') + '</div>' +
+    '<div style="font-size:8px;color:var(--muted);margin-top:2px">Ghost Score: ' + (alt.total || 0) + '</div>' +
+    '</div>' +
+    '</div>' +
+    '<div style="margin-top:7px;font-size:10px;font-style:italic;color:var(--muted)">Shadow Verdict: <strong style="color:#fff">' + (alt.verdict || 'NEUTRAL') + '</strong></div>' +
+    '</div>';
+}
+
+function buildLionSection(data) {
+  var mmr = data.mmr || {};
+  var sc  = mmr.total || 0;
+  var scoreColor = sc >= 80 ? '#f0b429' : sc >= 60 ? '#fb923c' : '#3a5570';
+  return '<div class="brain-section">' +
+    '<div class="brain-section-header lion-header">' +
+    '<div class="brain-icon">🦁</div>' +
+    '<div><div class="brain-title">LION BRAIN — Institutional Intelligence</div>' +
+    '<div class="brain-subtitle">Patience · BPI floors · Whale absorption · Beta correlation · Alt-data</div></div>' +
+    '<div class="brain-score"><div class="brain-score-num lion-score">' + sc + '</div><div style="font-size:7px;color:rgba(240,180,41,.5);letter-spacing:1px">MMR SCORE</div></div>' +
+    '</div>';
+}
 
 // ── Market Correlation Engine Card ───────────────────────────────
 function buildMCECard(mce) {
@@ -861,7 +1169,12 @@ function renderAnalysis(data, out){
     tf15.trend ? ('15m:' + tf15.trend + ' RSI:' + tf15.rsi) : null,
   ].filter(Boolean).join(' | ');
 
+  // Regime banner (across both brains — affects all verdicts)
+  var regimeBanner = buildRegimeBanner(data.shark ? data.shark.regime : null);
+  var shadowBanner = buildShadowScoreBanner('0.00'); // Starts at 0, updates via /api/shadow-score
+
   out.innerHTML =
+    regimeBanner +
     '<div class="verdict-box v' + v.verdict + '">' +
     '<div class="v-action">' + alabel + '</div>' +
     '<div class="v-headline">' + (v.headline||'') + '</div>' +
@@ -876,12 +1189,15 @@ function renderAnalysis(data, out){
     (tfSummary ? '<div style="font-size:9px;color:var(--muted);margin-top:8px;font-family:monospace">' + tfSummary + '</div>' : '') +
     '</div>' +
     planHtml +
+    buildLionSection(data) +
     buildStressCard(data.stress, data.macro, data.levels) +
     buildMCECard(data.mce) +
     buildAlphaCard(data.instAlpha) +
-    buildAltDataCard(data.altData, data.ticker) +
     buildSORPanel(data.data && data.data.quote ? data.data.quote.price : 0, data.levels, data.ticker) +
     buildBPICard(data.bpi, data.ticker) +
+    buildGhostProtocol(data.altData) +
+    '</div>' +
+    buildSharkSection(data.shark, data.ticker) +
     '<div class="card"><div class="lbl">Live Data <span style="color:var(--muted);font-size:8px">· ' + (q.source||'live').toUpperCase() + '</span></div>' +
     '<div class="g3">' +
     '<div class="metric"><div class="ml">Price</div><div class="mv">$' + (q.price||'?') + '</div></div>' +
@@ -928,23 +1244,19 @@ function loadChartFor(sym){
 // ============================================================
 document.getElementById('chartSym').addEventListener('keydown',function(e){if(e.key==='Enter')loadTVChart();});
 
-function tfLabel(tf){
-  return tf === 'D' ? 'Day' : tf === 'W' ? 'Week' : tf + 'min';
-}
-
 function loadTVChart(){
   var sym = document.getElementById('chartSym').value.toUpperCase().trim();
   if(!sym) return;
   currentTicker = sym;
-  document.getElementById('chartLabel').textContent = sym + ' · ' + tfLabel(currentChartTf);
+  document.getElementById('chartLabel').textContent = sym + ' · ' + currentChartTf + 'min';
   renderTVChart(sym, currentChartTf);
   loadChartLux(sym);
 }
 
-function setTf(tf, btn){
+function setTf(tf){
   currentChartTf = tf;
   document.querySelectorAll('.tf-btn').forEach(function(b){b.classList.remove('active');});
-  if(btn) btn.classList.add('active');
+  event.target.classList.add('active');
   var sym = document.getElementById('chartSym').value.toUpperCase().trim();
   if(sym) renderTVChart(sym, tf);
 }
@@ -1462,69 +1774,51 @@ function clearChat(){
 }
 
 async function loadBacktest() {
-  var sumEl = document.getElementById('backtestSummary');
-  var tblEl = document.getElementById('backtestTable');
   try {
-    var [btRes, logRes] = await Promise.all([
-      fetch('/api/backtest').then(function(r){return r.json();}),
-      fetch('/api/verdict-log').then(function(r){return r.json();})
-    ]);
-
-    // Summary cards
-    var wRate = btRes.winRate !== null ? btRes.winRate + '%' : 'n/a';
-    var avgP  = btRes.avgPnlPct !== null ? (btRes.avgPnlPct >= 0 ? '+' : '') + btRes.avgPnlPct + '%' : 'n/a';
-    sumEl.innerHTML =
+    var r = await fetch('/api/backtest');
+    var d = await r.json();
+    var s = document.getElementById('backtestSummary');
+    if (!s) return;
+    s.innerHTML =
       '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;flex:1">' +
-      '<div style="font-size:18px;font-weight:900;color:var(--purple)">' + btRes.totalVerdicts + '</div>' +
-      '<div style="font-size:8px;color:var(--muted)">TOTAL VERDICTS</div></div>' +
+        '<div style="font-size:18px;font-weight:900;color:var(--text)">' + d.total + '</div>' +
+        '<div style="font-size:8px;color:var(--muted)">VERDICTS</div></div>' +
       '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;flex:1">' +
-      '<div style="font-size:18px;font-weight:900;color:' + (btRes.winRate >= 50 ? 'var(--green)' : 'var(--red)') + '">' + wRate + '</div>' +
-      '<div style="font-size:8px;color:var(--muted)">WIN RATE</div></div>' +
+        '<div style="font-size:18px;font-weight:900;color:var(--green)">' + (d.winRate !== null ? d.winRate + '%' : '—') + '</div>' +
+        '<div style="font-size:8px;color:var(--muted)">WIN RATE</div></div>' +
       '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;flex:1">' +
-      '<div style="font-size:18px;font-weight:900;color:' + (btRes.avgPnlPct >= 0 ? 'var(--green)' : 'var(--red)') + '">' + avgP + '</div>' +
-      '<div style="font-size:8px;color:var(--muted)">AVG P&L</div></div>';
-
-    // Verdict table
-    var verdicts = (logRes.verdicts || []).slice(0, 30);
-    if (!verdicts.length) {
-      tblEl.innerHTML = '<div style="text-align:center;padding:16px;color:var(--muted)">No verdicts recorded yet. Run an analysis to start tracking.</div>';
+        '<div style="font-size:18px;font-weight:900;color:' + (d.avgPnlPct >= 0 ? 'var(--green)' : 'var(--red)') + '">' + (d.avgPnlPct >= 0 ? '+' : '') + d.avgPnlPct + '%</div>' +
+        '<div style="font-size:8px;color:var(--muted)">AVG P&L</div></div>';
+    var tb = document.getElementById('backtestTable');
+    if (!tb) return;
+    if (!d.recent || !d.recent.length) {
+      tb.innerHTML = '<div style="font-size:10px;color:var(--muted);text-align:center;padding:12px">No verdicts yet — run ANALYZE on any ticker to start tracking</div>';
       return;
     }
-    var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:9px">' +
-      '<thead><tr style="color:var(--muted);border-bottom:1px solid var(--border)">' +
-      '<th style="text-align:left;padding:5px 4px">TICKER</th>' +
-      '<th style="text-align:left;padding:5px 4px">DATE</th>' +
-      '<th style="text-align:center;padding:5px 4px">VERDICT</th>' +
-      '<th style="text-align:right;padding:5px 4px">ENTRY</th>' +
-      '<th style="text-align:right;padding:5px 4px">EXIT</th>' +
-      '<th style="text-align:right;padding:5px 4px">P&L</th>' +
-      '<th style="text-align:center;padding:5px 4px">OUTCOME</th>' +
-      '</tr></thead><tbody>';
-    verdicts.forEach(function(v) {
-      var dt    = new Date(v.timestamp).toLocaleDateString();
-      var vClr  = v.direction === 'BUY' ? 'var(--green)' : v.direction === 'DONT_BUY' ? 'var(--red)' : 'var(--muted)';
-      var oClr  = v.outcome === 'WIN' ? 'var(--green)' : v.outcome === 'LOSS' ? 'var(--red)' : 'var(--muted)';
-      html += '<tr style="border-bottom:1px solid rgba(255,255,255,.04)">' +
-        '<td style="padding:5px 4px;font-weight:900;color:#fff">' + v.ticker + '</td>' +
-        '<td style="padding:5px 4px;color:var(--muted)">' + dt + '</td>' +
-        '<td style="padding:5px 4px;text-align:center;color:' + vClr + ';font-weight:700">' + v.direction + '</td>' +
-        '<td style="padding:5px 4px;text-align:right;font-family:monospace">$' + (v.entryPrice || '').toFixed(2) + '</td>' +
-        '<td style="padding:5px 4px;text-align:right;font-family:monospace">' + (v.resolvedPrice ? '$' + v.resolvedPrice : '—') + '</td>' +
-        '<td style="padding:5px 4px;text-align:right;font-family:monospace;color:' + (v.pnlPct >= 0 ? 'var(--green)' : 'var(--red)') + '">' + (v.pnlPct !== null ? (v.pnlPct >= 0 ? '+' : '') + v.pnlPct + '%' : '—') + '</td>' +
-        '<td style="padding:5px 4px;text-align:center;color:' + oClr + ';font-weight:700">' + (v.outcome || 'PENDING') + '</td>' +
+    var rows = d.recent.map(function(v) {
+      var dt = new Date(v.timestamp).toLocaleDateString();
+      var oc = v.outcome === 'WIN' ? 'var(--green)' : v.outcome === 'LOSS' ? 'var(--red)' : 'var(--muted)';
+      var vc = v.verdict === 'LONG' ? 'var(--green)' : v.verdict === 'SHORT' ? 'var(--red)' : 'var(--muted)';
+      return '<tr style="border-bottom:1px solid var(--border)">' +
+        '<td style="padding:5px 4px;font-weight:900">' + v.ticker + '</td>' +
+        '<td style="padding:5px 4px;font-size:9px;color:var(--muted)">' + dt + '</td>' +
+        '<td style="padding:5px 4px;color:' + vc + ';font-weight:700">' + v.verdict + '</td>' +
+        '<td style="padding:5px 4px">$' + v.priceAtVerdict + '</td>' +
+        '<td style="padding:5px 4px;color:' + oc + ';font-weight:700">' + (v.outcome || '⏳') + '</td>' +
+        '<td style="padding:5px 4px;color:' + (v.pnlPct >= 0 ? 'var(--green)' : 'var(--red)') + '">' + (v.pnlPct !== null ? (v.pnlPct >= 0 ? '+' : '') + v.pnlPct + '%' : '—') + '</td>' +
         '</tr>';
-    });
-    html += '</tbody></table></div>';
-    tblEl.innerHTML = html;
-  } catch(e) {
-    if (tblEl) tblEl.innerHTML = '<div style="color:var(--red);font-size:10px">Error loading backtest: ' + e.message + '</div>';
-  }
+    }).join('');
+    tb.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:10px">' +
+      '<thead><tr style="border-bottom:1px solid var(--border)">' +
+      '<th style="padding:4px;text-align:left;color:var(--muted);font-size:8px">TICKER</th>' +
+      '<th style="padding:4px;text-align:left;color:var(--muted);font-size:8px">DATE</th>' +
+      '<th style="padding:4px;text-align:left;color:var(--muted);font-size:8px">VERDICT</th>' +
+      '<th style="padding:4px;text-align:left;color:var(--muted);font-size:8px">ENTRY</th>' +
+      '<th style="padding:4px;text-align:left;color:var(--muted);font-size:8px">OUTCOME</th>' +
+      '<th style="padding:4px;text-align:left;color:var(--muted);font-size:8px">P&L</th>' +
+      '</thead><tbody>' + rows + '</tbody></table>';
+  } catch(e) {}
 }
-
-// Auto-load backtest when advisor tab is activated
-document.querySelector('[data-tab="advisor"]').addEventListener('click', function() {
-  setTimeout(loadBacktest, 200);
-});
 </script>
 <!-- ================================================================ -->
 <!-- MAVERICK CATALYST INTELLIGENCE FEED v2                          -->
@@ -1899,7 +2193,11 @@ setTimeout(function() {
 }, 2000);
 </script>
 <!-- ================================================================ -->
-<!-- MAVERICK SQUEEZE TAB v3.9                                      -->
+<!-- MAVERICK SQUEEZE + PREMIUM PULSE TABS v3.7 — BRILLIANT UI      -->
+<!-- Add to .tabs div:                                               -->
+<!--   <button class="tab" data-tab="squeeze">SQUEEZE</button>      -->
+<!--   <button class="tab" data-tab="pulse">PULSE</button>          -->
+<!-- Paste this entire block BEFORE </body>                          -->
 <!-- ================================================================ -->
 
 <style>
@@ -1946,10 +2244,40 @@ setTimeout(function() {
 .sq-list-card{background:var(--bg2);border:1px solid;border-left:4px solid;border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:background .15s}
 .sq-list-card:active{opacity:.8}
 
-/* Coiled spring compression meter */
-.spring-meter-wrap{height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden;margin:6px 0 4px}
-.spring-bar{height:100%;background:linear-gradient(90deg,#f0b429,#cc8f00);border-radius:4px;transition:width 1s ease}
-.spring-text{font-size:8px;color:var(--muted);letter-spacing:.5px;margin-bottom:4px}
+/* ════════════════════════════════════════════════════════════
+   PULSE HUB
+   ════════════════════════════════════════════════════════════ */
+
+/* Whale radar tape */
+.radar-outer{background:#050b12;overflow:hidden;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);border-top:1px solid rgba(255,255,255,.05);margin-bottom:10px}
+.radar-track{display:inline-flex;white-space:nowrap;animation:radarScroll 30s linear infinite}
+.radar-track:hover{animation-play-state:paused}
+.radar-item{display:inline-flex;align-items:center;gap:6px;padding:0 20px;font-size:9px;font-weight:800;font-family:monospace;border-right:1px solid rgba(255,255,255,.06)}
+@keyframes radarScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+
+/* Heat tiles */
+.pulse-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.pulse-tile{border-radius:9px;padding:11px 8px 9px;text-align:center;cursor:pointer;position:relative;border:1px solid var(--border);background:var(--bg2);transition:transform .12s}
+.pulse-tile:active{transform:scale(.95)}
+.pt-p0{background:var(--bg2);border-color:var(--border)}
+.pt-p05{background:linear-gradient(135deg,rgba(96,165,250,.1),transparent);border-color:rgba(96,165,250,.3)}
+.pt-p1{background:linear-gradient(135deg,rgba(240,180,41,.18),rgba(240,180,41,.05));border-color:rgba(240,180,41,.5)}
+.pt-p2{background:linear-gradient(135deg,rgba(34,197,94,.2),rgba(34,197,94,.06));border-color:rgba(34,197,94,.5);box-shadow:0 0 14px rgba(34,197,94,.12)}
+.pt-p3{background:linear-gradient(135deg,rgba(239,68,68,.14),rgba(239,68,68,.04));border-color:rgba(239,68,68,.3)}
+
+.tile-sym{display:block;font-weight:900;color:#fff;line-height:1.1;margin-bottom:5px}
+.tile-chg{font-size:9px;font-family:monospace;font-weight:700;margin-bottom:3px}
+.tile-mmr{font-size:8px;font-weight:700;margin-bottom:2px}
+.tile-rv{font-size:8px;color:var(--muted)}
+.trophy{position:absolute;top:4px;right:5px;font-size:10px}
+.phase-pip{position:absolute;top:5px;left:5px;width:5px;height:5px;border-radius:50%}
+
+/* Timer + legend row */
+.pulse-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.pulse-legend{display:flex;gap:8px;font-size:8px;color:var(--muted)}
+.pleg{display:flex;align-items:center;gap:3px}
+.pleg-dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0}
+.pulse-timer-txt{font-family:monospace;font-size:9px;color:var(--gold)}
 
 /* Phase guide cards */
 .phase-guide{display:flex;flex-direction:column;gap:6px;margin-top:8px}
@@ -2003,6 +2331,62 @@ setTimeout(function() {
 // ════════════════════════════════════════════════════════════
 // SQUEEZE + PULSE TAB ACTIVATION — v4.6 BULLETPROOF
 // ════════════════════════════════════════════════════════════
+
+
+// Shadow Score — loads from server and updates every minute
+async function loadShadowScore() {
+  try {
+    var r = await fetch('/api/shadow-score');
+    var d = await r.json();
+    // Update all shadow score banners on page
+    document.querySelectorAll('.shadow-savings').forEach(function(el) {
+      el.textContent = '$' + (d.today || '0.00');
+    });
+  } catch(e) {}
+}
+// Update on load and every 60 seconds
+setTimeout(loadShadowScore, 2000);
+setInterval(loadShadowScore, 60000);
+
+// Add Shark mode to tab clicks — auto-run Shark analysis when analyze runs
+var _origRunAnalysis = runAnalysis;
+async function runAnalysis() {
+  await _origRunAnalysis();
+  // Shark runs as part of analyze now (data.shark is in the response)
+}
+
+
+// Shark Analysis
+document.getElementById('sharkTicker').addEventListener('keydown', function(e){ if(e.key==='Enter') runSharkAnalysis(); });
+
+async function runSharkAnalysis() {
+  var sym = document.getElementById('sharkTicker').value.toUpperCase().trim();
+  if (!sym) return;
+  var out = document.getElementById('sharkResult');
+  out.innerHTML = '<div class="card" style="border-color:rgba(34,211,238,.25)"><div class="loading-box">SHARK BRAIN SCANNING ' + sym + '...</div><div class="loader"><div></div><div></div><div></div></div></div>';
+  try {
+    var r = await fetch('/api/shark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: sym }) });
+    var data = await r.json();
+    if (data.error) { out.innerHTML = '<div class="card"><div style="color:var(--red)">' + data.error + '</div></div>'; return; }
+    out.innerHTML = buildSharkAnalysisResult(data);
+  } catch(e) { out.innerHTML = '<div class="card"><div style="color:var(--red)">Error: ' + e.message + '</div></div>'; }
+}
+
+function buildSharkAnalysisResult(data) {
+  var sc = data.sharkScore || 0;
+  var scoreColor = sc >= 75 ? '#22d3ee' : sc >= 55 ? '#60a5fa' : sc >= 35 ? '#f0b429' : '#3a5570';
+  var html = '<div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.25);border-radius:10px;padding:14px;margin-top:8px">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+  html += '<div><div style="font-size:10px;color:#22d3ee;letter-spacing:1px">🦈 ' + (data.symbol||'') + ' SHARK VERDICT</div>';
+  html += '<div style="font-size:16px;font-weight:900;color:' + scoreColor + ';margin-top:3px">' + (data.verdict||'') + '</div></div>';
+  html += '<div style="text-align:right"><div style="font-size:28px;font-weight:900;font-family:monospace;color:' + scoreColor + '">' + sc + '</div>';
+  html += '<div style="font-size:8px;color:var(--muted)">SHARK SCORE</div></div>';
+  html += '</div>';
+  html += buildSharkSection(data, data.symbol);
+  html += '<button class="btn btn-gold" onclick="document.getElementById(\'ticker\').value=\'' + (data.symbol||'') + '\';runAnalysis()" style="margin-top:8px;padding:10px;font-size:9px">Run Full Lion Analysis on ' + (data.symbol||'') + '</button>';
+  html += '</div>';
+  return html;
+}
 
 // Guard: only bind if element exists (prevents script crash)
 var sqTickerEl = document.getElementById('sqTicker');
@@ -2144,7 +2528,7 @@ function buildSqueezeCard(data, isDeep) {
 
     '<div style="display:flex;gap:6px;margin-top:10px">' +
     '<button class="btn btn-gold" onclick="goAnalyze(\''+(data.symbol||'')+'\')" style="flex:1;padding:9px;font-size:9px;margin-bottom:0">Full Analysis</button>' +
-    '<a href="'+tgLink+'" target="_blank" style="text-decoration:none;flex:1"><button class="btn btn-tg" style="padding:9px;margin-bottom:0;border-radius:7px;width:100%;font-size:10px">TG Alert</button></a>' +
+    '<a href="'+tgLink+'" target="_blank" style="flex:1;text-decoration:none"><button class="btn btn-tg" style="padding:9px;margin-bottom:0;border-radius:7px;width:100%;font-size:9px">Set TG Alert</button></a>' +
     '</div>' +
     '</div>';
 }
@@ -2197,6 +2581,57 @@ async function loadSqueezeScan() {
   } catch(e) { out.innerHTML='<div class="card"><div style="color:var(--red)">'+e.message+'</div></div>'; }
 }
 
+
+
+// Top movers list (used by squeeze scan)
+var currentMoverTab = 'gainers';
+var moverData = { gainers: [], active: [] };
+
+function switchMoverTab(tab, btn) {
+  currentMoverTab = tab;
+  document.querySelectorAll('.cat-filter-btn').forEach(function(b){ if(b.id==='moverTabG'||b.id==='moverTabA') b.classList.remove('active'); });
+  if(btn) btn.classList.add('active');
+  renderMoverList();
+}
+
+function renderMoverList() {
+  var list = document.getElementById('moverList');
+  var tm   = document.getElementById('moverTime');
+  if (!list) return;
+  var items = moverData[currentMoverTab] || [];
+  if (!items.length) {
+    list.innerHTML = '<div style="text-align:center;padding:16px;font-size:10px;color:var(--muted)">No movers found. Market may be closed.</div>';
+    return;
+  }
+  var html = '';
+  items.forEach(function(m) {
+    var chgColor = m.chg >= 0 ? 'var(--green)' : 'var(--red)';
+    var rvColor  = m.rv >= 5 ? 'var(--purple)' : m.rv >= 2 ? 'var(--gold)' : 'var(--muted)';
+    html += '<div class="mover-row" onclick="goAnalyze('' + m.sym + '')">' +
+      '<span class="mover-sym">' + m.sym + '</span>' +
+      '<span class="mover-name">' + (m.name||'') + '</span>' +
+      '<span class="mover-price">$' + m.price.toFixed(2) + '</span>' +
+      '<span class="mover-chg" style="color:' + chgColor + '">' + (m.chg>=0?'+':'') + m.chg.toFixed(1) + '%</span>' +
+      '<span class="mover-vol" style="color:' + rvColor + '">' + m.rv.toFixed(1) + 'x</span>' +
+      '</div>';
+  });
+  list.innerHTML = html;
+  if (tm) tm.textContent = 'Live · ' + new Date().toLocaleTimeString();
+}
+
+async function loadMovers() {
+  try {
+    var r = await fetch('/api/movers');  // Backend proxy — avoids CORS block
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    moverData.gainers = (data.gainers || []).sort(function(a,b){ return b.chg - a.chg; });
+    moverData.active  = (data.active  || []).sort(function(a,b){ return b.rv  - a.rv;  });
+    renderMoverList();
+  } catch(e) {
+    var list = document.getElementById('moverList');
+    if (list) list.innerHTML = '<div style="font-size:10px;color:var(--muted);padding:10px">Movers load after market open</div>';
+  }
+}
 </script>
 <!-- ================================================================ -->
 <!-- MAVERICK PROBABILITY ENSEMBLE TAB                              -->
@@ -2262,6 +2697,69 @@ canvas{border-radius:6px}
 .alpha-signal{font-size:9px;color:var(--muted);padding:3px 0;border-bottom:1px solid var(--bg3);line-height:1.4}
 .alpha-signal:last-child{border-bottom:none}
 
+/* ════════════════════════════════════════════════════════
+   LION vs SHARK DUAL-BRAIN ARCHITECTURE v5.0
+   ════════════════════════════════════════════════════════ */
+
+/* Section dividers */
+.brain-section{margin:12px 0 8px}
+.brain-section-header{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;margin-bottom:8px;position:relative;overflow:hidden}
+.lion-header{background:linear-gradient(135deg,rgba(240,180,41,.12),rgba(240,180,41,.04));border:1px solid rgba(240,180,41,.3)}
+.shark-header{background:linear-gradient(135deg,rgba(34,211,238,.1),rgba(96,165,250,.06));border:1px solid rgba(34,211,238,.25)}
+.brain-icon{font-size:20px;flex-shrink:0}
+.brain-title{font-size:11px;font-weight:900;letter-spacing:2px}
+.lion-header .brain-title{color:#f0b429}
+.shark-header .brain-title{color:#22d3ee}
+.brain-subtitle{font-size:9px;margin-top:1px}
+.lion-header .brain-subtitle{color:rgba(240,180,41,.6)}
+.shark-header .brain-subtitle{color:rgba(34,211,238,.5)}
+.brain-score{margin-left:auto;text-align:right;flex-shrink:0}
+.brain-score-num{font-size:22px;font-weight:900;font-family:monospace;line-height:1}
+.lion-score{color:#f0b429}
+.shark-score-col{color:#22d3ee}
+
+/* Shark velocity gauge */
+.velocity-gauge{position:relative;height:8px;background:rgba(34,211,238,.1);border-radius:4px;overflow:hidden;margin:5px 0}
+.velocity-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,#22d3ee,#60a5fa);transition:width 1s ease}
+
+/* X-Ray order flow bars */
+.xray-bar-wrap{display:flex;height:20px;border-radius:4px;overflow:hidden;gap:2px;margin:6px 0}
+.xray-buy{background:rgba(34,197,94,.6);flex-shrink:0;border-radius:3px 0 0 3px}
+.xray-sell{background:rgba(239,68,68,.5);flex-shrink:0;border-radius:0 3px 3px 0}
+.xray-neutral{background:rgba(255,255,255,.1);flex:1}
+
+/* Regime banner */
+.regime-banner{display:flex;align-items:center;gap:8px;padding:7px 11px;border-radius:7px;margin-bottom:7px;font-size:10px}
+.rb-expansion{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#22c55e}
+.rb-distribution{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#ef4444}
+.rb-caution{background:rgba(240,180,41,.1);border:1px solid rgba(240,180,41,.3);color:#f0b429}
+.rb-ranging{background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.3);color:#60a5fa}
+.rb-neutral{background:var(--bg2);border:1px solid var(--border);color:var(--muted)}
+.regime-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+/* Shadow Score counter */
+.shadow-score-banner{display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg,rgba(167,139,250,.08),transparent);border:1px solid rgba(167,139,250,.2);border-radius:7px;padding:8px 11px;margin-bottom:7px}
+.shadow-savings{font-size:18px;font-weight:900;font-family:monospace;color:#a78bfa}
+
+/* Crowd heat thermometer */
+.heat-thermo{display:flex;align-items:center;gap:8px;margin:5px 0}
+.heat-bar{flex:1;height:7px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.06)}
+.heat-fill{height:100%;border-radius:4px;transition:width 1s ease}
+.heat-cold{background:#3a5570}
+.heat-warm{background:#f0b429}
+.heat-hot{background:linear-gradient(90deg,#f0b429,#ef4444)}
+.heat-inferno{background:linear-gradient(90deg,#ef4444,#ff6b00);box-shadow:0 0 8px rgba(255,107,0,.4)}
+
+/* Float exhaustion vacuum indicator */
+.vacuum-ring{width:52px;height:52px;position:relative;flex-shrink:0}
+.vacuum-ring svg{position:absolute;top:0;left:0;transform:rotate(-90deg)}
+.vacuum-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:900;font-family:monospace;color:#22d3ee}
+
+/* Ghost Protocol card */
+.ghost-card{background:linear-gradient(135deg,rgba(167,139,250,.08),transparent);border:1px solid rgba(167,139,250,.2);border-radius:9px;padding:11px 13px;margin-bottom:8px}
+.ghost-dot{width:6px;height:6px;border-radius:50%;background:#a78bfa;animation:ghostPulse 2s ease-in-out infinite;flex-shrink:0}
+@keyframes ghostPulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.3)}}
+
 </style>
 
 <!-- PROBABILITY TAB -->
@@ -2284,7 +2782,7 @@ canvas{border-radius:6px}
         <input id="probT2" placeholder="Auto from ATR" type="number" step="0.01" style="margin:0;padding:8px;font-size:12px;border-color:rgba(96,165,250,.3)"/>
       </div>
       <div style="flex:1">
-        <div style="font-size:8px;color:var(--muted);margin-bottom:3px">Horizon</div>
+        <div style="font-size:8px;color:var(--muted);margin-bottom:3px">Horizon (min)</div>
         <select id="probHorizon" style="margin:0;padding:8px;font-size:12px;border-color:rgba(167,139,250,.3)">
           <option value="15">15 min</option>
           <option value="30">30 min</option>
@@ -2354,14 +2852,11 @@ function renderProbability(data, out) {
   var t2    = data.t2;
   var steps = data.steps;
 
-  var horizonLabel = data.horizonLabel || (data.horizon + '-Minute');
-
-  // Build step labels — scale label frequency to step count
+  // Build step labels (every 5 minutes)
   var labels = [];
-  var labelEvery = Math.max(1, Math.floor(steps / 10));
   for (var i = 0; i <= steps; i++) {
     if (i === 0) labels.push('Now');
-    else if (i % labelEvery === 0) labels.push('+' + i);
+    else if (i % 5 === 0) labels.push('+' + i + 'm');
     else labels.push('');
   }
 
@@ -2425,9 +2920,9 @@ function renderProbability(data, out) {
     '<div style="font-size:10px;color:var(--muted);margin-top:2px">' + (mc ? mc.simCount.toLocaleString() : '0') + ' simulations · Gold = likely path · Band = 5th–95th percentile</div></div>' +
     '<span class="engine-badge badge-mc">MONTE CARLO</span></div>' +
     '<div class="chart-wrap"><canvas id="chartMC"></canvas></div>' +
-    (mc ? '<div class="stat-row"><span class="stat-lbl">Drift (μ per step)</span><span class="stat-val" style="color:' + (mc.mu>=0?'var(--green)':'var(--red)') + '">' + (mc.mu>=0?'+':'') + mc.mu + '</span></div>' +
-    '<div class="stat-row"><span class="stat-lbl">Volatility (σ per step)</span><span class="stat-val">' + mc.sigma + '</span></div>' +
-    '<div class="stat-row"><span class="stat-lbl">Median projected price (' + horizonLabel + ')</span><span class="stat-val">$' + mc.p50[steps] + '</span></div>' +
+    (mc ? '<div class="stat-row"><span class="stat-lbl">Drift (μ per min)</span><span class="stat-val" style="color:' + (mc.mu>=0?'var(--green)':'var(--red)') + '">' + (mc.mu>=0?'+':'') + mc.mu + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Volatility (σ per min)</span><span class="stat-val">' + mc.sigma + '</span></div>' +
+    '<div class="stat-row"><span class="stat-lbl">Median projected price (' + (data.horizonLabel || '60m') + ')</span><span class="stat-val">$' + mc.p50[steps] + '</span></div>' +
     '<div class="stat-row"><span class="stat-lbl">5th pct (worst case)</span><span class="stat-val red">$' + mc.p5[steps] + '</span></div>' +
     '<div class="stat-row"><span class="stat-lbl">95th pct (best case)</span><span class="stat-val green">$' + mc.p95[steps] + '</span></div>' : '') +
     '</div>';
@@ -2442,21 +2937,21 @@ function renderProbability(data, out) {
     (lr ? '<div class="stat-row"><span class="stat-lbl">Trend direction</span><span class="stat-val">' + lr.trendDir + '</span></div>' +
     '<div class="stat-row"><span class="stat-lbl">Channel std dev (σ)</span><span class="stat-val">$' + lr.stdDev + '</span></div>' +
     '<div class="stat-row"><span class="stat-lbl">Price deviation from trend</span><span class="stat-val">' + lr.deviation + 'σ</span></div>' +
-    '<div class="stat-row"><span class="stat-lbl">Projected price (' + horizonLabel + ')</span><span class="stat-val">$' + lr.projectedEnd + '</span></div>' : '<div style="font-size:11px;color:var(--muted)">Insufficient candle data for regression</div>') +
+    '<div class="stat-row"><span class="stat-lbl">Projected price (' + (data.horizonLabel || '60m') + ')</span><span class="stat-val">$' + lr.projectedEnd + '</span></div>' : '<div style="font-size:11px;color:var(--muted)">Insufficient candle data for regression</div>') +
     '</div>';
 
   // Chart 3: ATR Probability Zones + Histogram
   html += '<div class="engine-section">' +
     '<div class="engine-header">' +
     '<div><div class="lbl" style="margin:0">Engine 3 — ATR Probability Zones</div>' +
-    '<div style="font-size:10px;color:var(--muted);margin-top:2px">' + horizonLabel + ' price distribution · Purple = 1σ · Outer = 2σ</div></div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:2px">Price distribution · ' + (data.horizonLabel || data.horizon + 'min') + ' · Purple = 1σ · Outer = 2σ</div></div>' +
     '<span class="engine-badge badge-atr">ATR ZONES</span></div>' +
     '<div class="chart-wrap"><canvas id="chartATR"></canvas></div>';
 
   // Histogram
   if (mc && mc.histogram) {
     var maxCount = Math.max.apply(null, mc.histogram.map(function(b){return b.count;}));
-    html += '<div style="margin-top:8px"><div style="font-size:9px;color:var(--muted);margin-bottom:4px">Monte Carlo end-price distribution (' + horizonLabel + ')</div>' +
+    html += '<div style="margin-top:8px"><div style="font-size:9px;color:var(--muted);margin-bottom:4px">Monte Carlo end-price distribution (' + (data.horizonLabel || data.horizon + 'min') + ')</div>' +
       '<div class="hist-wrap">' +
       mc.histogram.map(function(b) {
         var h = Math.round((b.count / maxCount) * 36);
@@ -2673,4 +3168,4 @@ function renderATRChart(atr, atrValue, price, t1, t2, horizon) {
 }
 </script>
 </body>
-                                               </html>
+</html>
