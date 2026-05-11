@@ -2374,44 +2374,43 @@ app.post('/api/analyze', async function(req, res) {
     // Run MMR math engine
     var mmr = calculateMMR(quote, tf1d, news);
 
-    // Run dilution shield
-    var dilution = await checkDilutionRisk(sym);
-
-    // LuxAlgo signals
+    // LuxAlgo signals (sync)
     var luxAlgo = {
       daily:    tf1d  ? luxAlgoSignal(tf1d)  : null,
       fourhour: tf4h  ? luxAlgoSignal(tf4h)  : null,
       onehour:  tf1h  ? luxAlgoSignal(tf1h)  : null
     };
 
-    // ATR-first stop calculation
-    var atr    = tf1d ? tf1d.atr : null;
-    var levels = calcLevels(quote.price, atr, dilution.stopMultiplier);
-
-    // Bottom Probability Index
+    // ATR + BPI (sync, no network)
+    var atr = tf1d ? tf1d.atr : null;
     var bpi = computeBPI(rawDaily, quote.price);
 
-    // Macro Correlation Shield
-    var macro = await getMacroSentiment();
+    // Run all independent async fetches in parallel (saves ~15s vs sequential)
+    var p2 = await Promise.all([
+      checkDilutionRisk(sym),
+      getMacroSentiment(),
+      getAltPulse(sym, news, tf1d),
+      computeMCE(sym, quote.price, true),
+      getShortData(sym),
+      detectRegime()
+    ]);
+    var dilution  = p2[0];
+    var macro     = p2[1];
+    var altData   = p2[2];
+    var mce       = p2[3];
+    var shortData = p2[4];
+    var regime    = p2[5];
+
+    // Sync calculations that depend on the parallel batch
     var adjustedMMR = Math.min(100, Math.max(0, mmr.total + macro.penalty));
+    var levels  = calcLevels(quote.price, atr, dilution.stopMultiplier);
+    var stress  = runStressTest(quote.price, levels.stop, levels.t1, levels.t2, atr || quote.price * 0.03, 348, null);
+    var instAlpha = calculateInstAlpha(quote, tf1d, shortData);
 
-    // Stress Test — 1,000 Monte Carlo paths
-    var stress = runStressTest(quote.price, levels.stop, levels.t1, levels.t2, atr || quote.price * 0.03, 348, null);
-
-    // Alt-Data Shadow Layer
-    var altData = await getAltPulse(sym, news, tf1d);
-
-    // Market Correlation Engine — Beta + Systemic Risk
-    var mce = await computeMCE(sym, quote.price, true);
-
-    // Institutional Alpha — Whale Absorption Detector
-    var instAlpha = calculateInstAlpha(quote, tf1d, await getShortData(sym));
-
-    // ── SHARK ENGINES (Retail Momentum) ──────────────────────────
+    // ── SHARK ENGINES (Retail Momentum) — regime already fetched above ──
     var phaseVelocity  = calculatePhaseVelocity(quote, tf15, tf1h);
     var floatExhaustion = calculateFloatExhaustion(quote, tf15, tf1h);
     var xray           = calculateXRay(sym, quote.price);
-    var regime         = await detectRegime();
     var crowdHeat      = calculateCrowdHeat(quote, news, tf15);
 
     // Shark composite score
@@ -2736,14 +2735,8 @@ app.post('/api/chat', async function(req, res) {
     .concat([{ role: 'user', content: message + liveContext }]);
 
   try {
-    var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST', headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: isTrading ? GROQ_MODELS_HEAVY[0] : GROQ_MODELS_LIGHT[0], max_tokens: 1000, temperature: isTrading ? 0.3 : 0.5, messages: messages })
-    });
-    if (!r.ok) { var errText = await r.text(); return res.status(503).json({ error: 'Groq ' + r.status + ': ' + errText.slice(0,100) }); }
-    var d = await r.json();
-    var reply = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
-    if (!reply) return res.status(503).json({ error: 'Empty AI response' });
+    var reply = await groqChat(messages, 1000, !isTrading);
+    if (!reply) return res.status(503).json({ error: 'AI unavailable — all keys rate limited. Try again in 30 seconds.' });
     history.push({ role: 'user', content: message });
     history.push({ role: 'assistant', content: reply });
     if (history.length > 24) history.splice(0, 2);
@@ -3742,7 +3735,7 @@ app.listen(PORT, '0.0.0.0', async function() {
   console.log('   Catalyst v2:     ACTIVE (6 sources, 90s cycle)');
   console.log('   Probability:     ACTIVE (Monte Carlo + LR + ATR)');
   console.log('   Squeeze v3.9:    ACTIVE (Phase 1/2/3 + Coiled Spring)');
-  console.log('   Pulse Hub:       ACTIVE (MMR heat map)');
+  console.log('   Shark Brain:     ACTIVE (Phase Velocity + Float + X-Ray + Crowd Heat)');
   console.log('   Dilution Shield: ACTIVE');
   console.log('   Scanner:         24/7 (adaptive intervals)');
   console.log('   Super Bot:       ACTIVE (dual-brain trading + general AI)\n');
