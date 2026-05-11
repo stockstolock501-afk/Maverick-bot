@@ -52,13 +52,17 @@ async function groqCall(system, user, maxTokens, useLightModel) {
     var key = GROQ_KEYS[groqKeyIdx % GROQ_KEYS.length];
     for (var mi = 0; mi < models.length; mi++) {
       var model = models[mi];
+      var ctrl = new AbortController();
+      var tId = setTimeout(function() { ctrl.abort(); }, 10000);
       try {
         var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
           body: JSON.stringify({ model: model, max_tokens: maxTokens, temperature: 0.25,
-            messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
+            messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+          signal: ctrl.signal
         });
+        clearTimeout(tId);
         if (r.status === 429) {
           console.log('[AI] Groq key ' + groqKeyIdx + ' rate limited. Rotating...');
           groqKeyIdx = (groqKeyIdx + 1) % GROQ_KEYS.length;
@@ -72,7 +76,11 @@ async function groqCall(system, user, maxTokens, useLightModel) {
         var m = cleaned.match(/\{[\s\S]*\}/);
         if (!m) continue;
         return JSON.parse(m[0]);
-      } catch(e) { console.error('Groq [' + model + ']: ' + e.message); }
+      } catch(e) {
+        clearTimeout(tId);
+        if (e.name === 'AbortError') { console.log('[AI] Groq [' + model + '] timed out (10s), trying next'); }
+        else { console.error('Groq [' + model + ']: ' + e.message); }
+      }
     }
   }
   console.error('[AI] All Groq keys/models exhausted');
@@ -127,18 +135,22 @@ async function groqChat(messages, maxTokens, useLightModel) {
   for (var ki = 0; ki < keys.length; ki++) {
     var key = keys[(groqKeyIdx + ki) % keys.length];
     for (var mi = 0; mi < models.length; mi++) {
+      var ctrl2 = new AbortController();
+      var tId2 = setTimeout(function() { ctrl2.abort(); }, 10000);
       try {
         var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: models[mi], max_tokens: maxTokens, temperature: 0.4, messages: messages })
+          body: JSON.stringify({ model: models[mi], max_tokens: maxTokens, temperature: 0.4, messages: messages }),
+          signal: ctrl2.signal
         });
+        clearTimeout(tId2);
         if (r.status === 429) { groqKeyIdx = (groqKeyIdx+1) % keys.length; break; }
         if (!r.ok) continue;
         var d = await r.json();
         var txt = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
         if (txt) return txt;
-      } catch(e) {}
+      } catch(e) { clearTimeout(tId2); }
     }
   }
   return null;
