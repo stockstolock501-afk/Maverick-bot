@@ -1,1 +1,1 @@
-placeholder_js
+PLACEHOLDER_JS
