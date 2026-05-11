@@ -1,173 +1,192 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MAVERICK ELITE v4.9</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background-color: #0d1117; color: #e6edf3; font-family: 'Inter', sans-serif; }
-        .maverick-card { background: #161b22; border: 1px solid #30363d; border-radius: 4px; }
-        .tab-active { border-bottom: 2px solid #f0b429; color: #f0b429; }
-        .glow-gold { box-shadow: 0 0 15px rgba(240, 180, 41, 0.1); }
-        .ticker-tape { animation: scroll 30s linear infinite; white-space: nowrap; }
-        @keyframes scroll { from { transform: translateX(100%); } to { transform: translateX(-100%); } }
-    </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0"/>
+<title>Maverick Cockpit 4.0</title>
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0f1923;
+  --bg2:#162030;
+  --bg3:#1e2d40;
+  --border:#243548;
+  --text:#d4e0ed;
+  --muted:#6b87a0;
+  --gold:#f0b429;
+  --green:#22c55e;
+  --red:#ef4444;
+  --blue:#60a5fa;
+  --purple:#a78bfa;
+  --orange:#fb923c;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;padding:12px;min-height:100vh}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* Header */
+.hdr{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+.hdr-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;animation:pulse 2s ease-in-out infinite}
+.hdr h1{color:#fff;font-size:17px;font-weight:900}
+.hdr h1 span{color:var(--gold)}
+.hdr-sub{font-size:8px;color:#2a4060;letter-spacing:2px;margin-top:2px}
+.hdr-time{margin-left:auto;font-size:9px;color:var(--border);font-family:monospace}
+@keyframes pulse{0%,100%{opacity:.5;transform:scale(.9)}50%{opacity:1;transform:scale(1.1)}}
+
+/* Tabs */
+.tabs{display:flex;flex-wrap:wrap;gap:5px;padding:8px 12px 6px;border-bottom:1px solid var(--border)}
+.tab{background:transparent;border:1px solid var(--border);color:var(--muted);padding:6px 11px;font-size:9px;font-weight:800;letter-spacing:1px;border-radius:6px;cursor:pointer;font-family:monospace;white-space:nowrap}
+.tab.active{background:rgba(240,180,41,.1);border-color:var(--gold);color:var(--gold)}
+
+/* Cards */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:13px;margin-bottom:10px}
+.lbl{font-size:9px;color:var(--muted);letter-spacing:2px;font-weight:700;text-transform:uppercase;margin-bottom:8px}
+
+input,select,textarea{background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 12px;font-family:monospace;font-size:13px;width:100%;margin-bottom:7px}
+.btn{border:none;border-radius:7px;padding:12px;font-family:monospace;font-size:10px;font-weight:900;cursor:pointer;width:100%;letter-spacing:2px;margin-bottom:7px}
+.btn-gold{background:linear-gradient(135deg,#f0b429,#cc8f00);color:#000}
+.btn-dark{background:var(--bg3);border:1px solid var(--border);color:var(--muted);font-size:9px}
+.btn-tg{background:#229ED9;color:#fff;border:none}
+
+/* Verdicts */
+.verdict-box{padding:16px;border-radius:10px;margin-bottom:12px;border:2px solid}
+.vBUY{background:linear-gradient(135deg,#001a0a,#000d05);border-color:var(--green);box-shadow:0 0 24px rgba(34,197,94,.12)}
+.vDONT_BUY{background:linear-gradient(135deg,#1a0505,#0d0202);border-color:var(--red)}
+.vWATCH{background:linear-gradient(135deg,#1a1400,#0d0b00);border-color:var(--gold)}
+.v-action{font-size:22px;font-weight:900;letter-spacing:2px}
+.conv-bar{height:5px;background:var(--bg3);border-radius:3px;margin-top:10px;overflow:hidden}
+.conv-fill{height:100%;border-radius:3px}
+
+/* Grids */
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:9px}
+.metric{background:var(--bg);border:1px solid var(--bg3);border-radius:6px;padding:7px}
+.ml{font-size:8px;color:#3a5570;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
+.mv{font-size:13px;font-weight:700;font-family:monospace;color:var(--text)}
+
+/* BPI & Probability Styles */
+.bpi-card{border-radius:9px;padding:12px 14px;margin-bottom:9px;border:1px solid}
+.bpi-high{background:linear-gradient(135deg,rgba(34,197,94,.08),transparent);border-color:rgba(34,197,94,.35)}
+.prob-hero{background:linear-gradient(135deg,#0a0f1e,#0f1830);border:1px solid rgba(167,139,250,.2);border-radius:12px;padding:14px;margin-bottom:10px}
+.chart-wrap{position:relative;height:200px;margin-bottom:8px}
+
+/* Shadow Layer */
+.alt-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+.alt-stat{background:#0a111a;border:1px solid var(--border);padding:9px;border-radius:7px;text-align:center}
+
+.hidden{display:none}
+footer{margin-top:12px;font-size:8px;color:var(--bg3);text-align:center;padding-bottom:28px}
+</style>
 </head>
-<body class="flex flex-col h-screen">
+<body>
 
-    <header class="p-4 border-b border-[#30363d] flex justify-between items-center bg-[#0d1117] sticky top-0 z-50">
-        <h1 class="text-xl font-bold tracking-tighter">MAVERICK <span class="text-[#f0b429]">ELITE</span></h1>
-        <div id="connectionStatus" class="text-[10px] bg-green-900/30 text-green-400 px-2 py-1 rounded border border-green-800 uppercase font-mono">System Live</div>
-    </header>
+<div class="hdr">
+  <div class="hdr-dot" id="statusDot" style="background:var(--gold)"></div>
+  <div>
+    <h1>Maverick <span>Cockpit 4.0</span></h1>
+    <div class="hdr-sub">MMR ENGINE · LUXALGO · ATR STOPS · WHALE INTEL</div>
+  </div>
+  <div class="hdr-time" id="clock">--:-- ET</div>
+</div>
 
-    <nav class="flex border-b border-[#30363d] bg-[#161b22] text-[10px] font-bold uppercase tracking-widest">
-        <button onclick="showTab('audit')" id="tab-audit" class="flex-1 py-3 tab-active">Audit</button>
-        <button onclick="showTab('scanners')" id="tab-scanners" class="flex-1 py-3">Scanners</button>
-        <button onclick="showTab('pulse')" id="tab-pulse" class="flex-1 py-3">Pulse</button>
-        <button onclick="showTab('catalyst')" id="tab-catalyst" class="flex-1 py-3">Catalyst</button>
-    </nav>
+<div class="tabs" id="tabBar">
+  <button class="tab active" data-tab="analyze">ANALYZE</button>
+  <button class="tab" data-tab="chart">CHART</button>
+  <button class="tab" data-tab="whales">WHALES</button>
+  <button class="tab" data-tab="perfect">PERFECT</button>
+  <button class="tab" data-tab="supernova">SUPERNOVA</button>
+  <button class="tab" data-tab="signals">SIGNALS</button>
+  <button class="tab" data-tab="catalyst">CATALYST</button>
+  <button class="tab" data-tab="squeeze">SQUEEZE</button>
+  <button class="tab" data-tab="pulse">PULSE</button>
+  <button class="tab" data-tab="prob">PROBABILITY</button>
+  <button class="tab" data-tab="advisor">ADVISOR</button>
+</div>
 
-    <main class="flex-grow overflow-y-auto p-4 space-y-4">
+<div id="tab-analyze">
+  <div class="card" style="border-color:var(--gold)">
+    <div class="lbl" style="color:var(--gold)">Lion Brain Audit</div>
+    <input id="ticker" placeholder="ENTER TICKER (e.g. LFVN)"/>
+    <button class="btn btn-gold" onclick="runAnalysis()">RUN LION ANALYSIS</button>
+  </div>
+  <div id="analyzeResult"></div>
+</div>
 
-        <div id="view-audit" class="tab-view space-y-4">
-            <div class="flex gap-2">
-                <input type="text" id="tickerInput" placeholder="SYMBOL" class="bg-[#0d1117] border border-[#30363d] rounded p-3 flex-grow uppercase font-mono text-lg outline-none focus:border-[#f0b429]">
-                <button onclick="auditTape()" class="bg-[#f0b429] text-black font-black px-6 rounded uppercase italic text-sm">Audit</button>
-            </div>
+<div id="tab-chart" class="hidden"><div id="tv_chart_content"></div></div>
+<div id="tab-whales" class="hidden"><div id="whaleResult"></div></div>
+<div id="tab-prob" class="hidden"><div id="probResult"></div></div>
+<div id="tab-squeeze" class="hidden"><div id="sqScanOut"></div></div>
+<div id="tab-pulse" class="hidden"><div id="pulseGrid"></div></div>
 
-            <div class="grid grid-cols-2 gap-3">
-                <div class="maverick-card p-4 border-t-4 border-[#f0b429]">
-                    <div class="text-[10px] text-gray-500 font-bold uppercase">Lion Brain (BPI)</div>
-                    <div id="bpiDisplay" class="text-2xl font-mono mt-1">--</div>
-                    <div id="bpiLabel" class="text-[9px] text-gray-400 mt-1 uppercase">Awaiting Tape...</div>
-                </div>
-                <div class="maverick-card p-4 border-t-4 border-[#60a5fa]">
-                    <div class="text-[10px] text-gray-500 font-bold uppercase">Shark (Momentum)</div>
-                    <div id="sharkDisplay" class="text-2xl font-mono mt-1">--</div>
-                    <div id="sharkLabel" class="text-[9px] text-gray-400 mt-1 uppercase">Cold Waters</div>
-                </div>
-            </div>
+<script>
+// ── CORE SYSTEM LOGIC ─────────────────────────────────────────────
+var BOT_USERNAME = '';
+var chatSessionId = 'session_' + Date.now();
 
-            <div id="verdictBox" class="maverick-card p-4 hidden">
-                <div class="text-[10px] text-[#f0b429] font-bold uppercase mb-2">Institutional Verdict</div>
-                <div id="verdictText" class="text-xs leading-relaxed text-gray-300 italic">--</div>
-            </div>
-        </div>
+// Clock
+function tick(){
+  var et = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+  document.getElementById('clock').textContent = String(et.getHours()).padStart(2,'0') + ':' + String(et.getMinutes()).padStart(2,'0') + ' ET';
+}
+setInterval(tick, 30000); tick();
 
-        <div id="view-scanners" class="tab-view hidden space-y-4">
-            <div class="maverick-card overflow-hidden">
-                <div class="bg-[#1c2128] p-2 text-[9px] font-bold uppercase tracking-widest border-b border-[#30363d] text-blue-400">Squeeze Radar (Phase 1 & 2)</div>
-                <div id="squeezeList" class="divide-y divide-[#30363d]">
-                    <div class="p-4 text-center text-xs text-gray-500">Scanning for Coiled Springs...</div>
-                </div>
-            </div>
-        </div>
+// Tab Switching
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('[id^=tab-]').forEach(x => x.classList.add('hidden'));
+    t.classList.add('active');
+    document.getElementById('tab-' + t.dataset.tab).classList.remove('hidden');
+  }
+});
 
-        <div id="view-pulse" class="tab-view hidden space-y-4">
-             <div class="maverick-card p-4 text-center border-dashed border-2 border-[#30363d]">
-                <div class="text-xs font-bold text-[#f0b429] uppercase mb-1">Market Sentiment</div>
-                <div id="macroRegime" class="text-sm font-mono tracking-tighter">FETCHING MACRO...</div>
-             </div>
-             <div id="moversList" class="space-y-2"></div>
-        </div>
+// Analyze
+async function runAnalysis() {
+  var sym = document.getElementById('ticker').value.toUpperCase().trim();
+  if(!sym) return;
+  var out = document.getElementById('analyzeResult');
+  out.innerHTML = '<div class="card"><div class="loading-box">ENGAGING LION BRAIN...</div></div>';
+  try {
+    var r = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ticker: sym })
+    });
+    var data = await r.json();
+    renderAnalysis(data, out);
+  } catch(e) { out.innerHTML = 'Error: ' + e.message; }
+}
 
-        <div id="view-catalyst" class="tab-view hidden space-y-4">
-            <div id="catalystList" class="space-y-3">
-                <div class="p-8 text-center text-xs text-gray-600">Initializing Intelligence Feed...</div>
-            </div>
-        </div>
+function renderAnalysis(data, out) {
+  var v = data.verdict || {};
+  var q = data.data.quote || {};
+  out.innerHTML = `
+    <div class="verdict-box v${v.verdict}">
+      <div class="v-action">${v.verdict}</div>
+      <div class="v-headline">${v.headline}</div>
+      <div class="conv-bar"><div class="conv-fill" style="width:${v.conviction}%; background:var(--gold)"></div></div>
+    </div>
+    <div class="card">
+      <div class="lbl">MMR: ${data.mmr.total} | Float: ${(q.floatShares/1e6).toFixed(1)}M</div>
+      <div class="g3">
+        <div class="metric"><div class="ml">Price</div><div class="mv">$${q.price}</div></div>
+        <div class="metric"><div class="ml">Change</div><div class="mv">${q.changePct}%</div></div>
+        <div class="metric"><div class="ml">BPI</div><div class="mv">${data.bpi.score}%</div></div>
+      </div>
+    </div>
+  `;
+}
 
-    </main>
-
-    <footer class="bg-[#161b22] border-t border-[#30363d] p-3">
-        <div class="flex justify-between text-[9px] text-gray-500 uppercase font-mono">
-            <span>Verdicts Resolved: <span id="stat-verdicts" class="text-gray-300">0</span></span>
-            <span>Win Rate: <span id="stat-wins" class="text-green-500">0%</span></span>
-        </div>
-    </footer>
-
-    <script>
-        function showTab(tabId) {
-            document.querySelectorAll('.tab-view').forEach(v => v.classList.add('hidden'));
-            document.querySelectorAll('nav button').forEach(b => b.classList.remove('tab-active'));
-            document.getElementById('view-' + tabId).classList.remove('hidden');
-            document.getElementById('tab-' + tabId).classList.add('tab-active');
-            if (tabId === 'pulse') refreshPulse();
-            if (tabId === 'catalyst') refreshCatalysts();
-            if (tabId === 'scanners') refreshSqueeze();
-        }
-
-        async function auditTape() {
-            const ticker = document.getElementById('tickerInput').value.toUpperCase().trim();
-            if(!ticker) return;
-            
-            // Trigger Lion/Shark
-            const res = await fetch('/api/analyze', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ticker}) });
-            const data = await res.json();
-            
-            document.getElementById('bpiDisplay').innerText = data.bpi.score + '%';
-            document.getElementById('bpiLabel').innerText = data.bpi.label;
-            document.getElementById('sharkDisplay').innerText = data.shark.score + '/100';
-            document.getElementById('sharkLabel').innerText = data.shark.verdict;
-            document.getElementById('verdictText').innerText = data.verdict.headline;
-            document.getElementById('verdictBox').classList.remove('hidden');
-        }
-
-        async function refreshCatalysts() {
-            const res = await fetch('/api/catalyst-feed');
-            const data = await res.json();
-            const list = document.getElementById('catalystList');
-            list.innerHTML = data.items.map(c => `
-                <div class="maverick-card p-3 border-l-2 ${c.tier === 1 ? 'border-red-500' : 'border-blue-500'}">
-                    <div class="flex justify-between items-start mb-1">
-                        <span class="text-[10px] font-black bg-gray-800 px-1 rounded">${c.ticker || 'NEWS'}</span>
-                        <span class="text-[8px] text-gray-500">${c.source} · ${c.ageH}h</span>
-                    </div>
-                    <div class="text-[11px] font-medium leading-tight">${c.headline}</div>
-                </div>
-            `).join('');
-        }
-
-        async function refreshSqueeze() {
-            const res = await fetch('/api/squeeze-scan');
-            const data = await res.json();
-            const list = document.getElementById('squeezeList');
-            list.innerHTML = data.results.map(s => `
-                <div class="p-3 flex justify-between items-center">
-                    <div>
-                        <div class="text-xs font-bold">${s.symbol} <span class="text-[9px] text-gray-500 font-normal">$${s.price}</span></div>
-                        <div class="text-[9px] text-green-400 uppercase font-bold">${s.phase.label}</div>
-                    </div>
-                    <div class="text-right">
-                        <div class="text-[10px] font-mono">SI: ${s.siPercent}%</div>
-                        <div class="text-[10px] font-mono">DTC: ${s.dtc}d</div>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        async function refreshPulse() {
-            const res = await fetch('/api/movers');
-            const data = await res.json();
-            const list = document.getElementById('moversList');
-            list.innerHTML = data.gainers.map(m => `
-                <div class="maverick-card p-3 flex justify-between items-center bg-[#0d1117]">
-                    <span class="text-xs font-bold">${m.sym}</span>
-                    <span class="text-[10px] text-green-400 font-mono">+${m.chg.toFixed(1)}%</span>
-                    <span class="text-[10px] text-gray-500 font-mono">${m.rv}x Vol</span>
-                </div>
-            `).join('');
-        }
-
-        // Stats Init
-        async function fetchStats() {
-            const res = await fetch('/api/backtest');
-            const data = await res.json();
-            document.getElementById('stat-verdicts').innerText = data.resolved;
-            document.getElementById('stat-wins').innerText = data.winRate + '%';
-        }
-        fetchStats();
-    </script>
+// ── INITIALIZE MODULES ───────────────────────────────────────────
+async function init() {
+  try {
+    const res = await fetch('/api/health');
+    const status = await res.json();
+    if(status.services.telegram) document.getElementById('statusDot').style.background = '#22c55e';
+  } catch(e) {}
+}
+init();
+</script>
 </body>
 </html>
