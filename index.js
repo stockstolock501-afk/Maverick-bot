@@ -2237,68 +2237,6 @@ app.get('/api/squeeze-scan', function(req, res) {
   res.json({ results: squeezeStore, scanCount: sqScanCount, timestamp: new Date().toISOString() });
 });
 
-// ── API: Premium Pulse hub — POST ─────────────────────────────────
-app.post('/api/premium-pulse', async function(req, res) {
-  try {
-    var allQuotes = [], seen = new Set();
-    var screenerIds = ['day_gainers', 'most_actives'];
-    for (var s = 0; s < screenerIds.length; s++) {
-      try {
-        var r = await fetch(
-          'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?count=20&scrIds=' + screenerIds[s] + '&_=' + Date.now(),
-          { headers: { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' } }
-        );
-        var d = await r.json();
-        ((d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes) || [])
-          .filter(function(q) { return q.regularMarketPrice >= 0.5 && q.regularMarketPrice <= 15 && !seen.has(q.symbol); })
-          .forEach(function(q) { seen.add(q.symbol); allQuotes.push(q); });
-      } catch(e) {}
-    }
-
-    // INSTITUTIONAL PARALLEL PROCESSING — all 18 tickers simultaneously
-    // Drops response time from ~6 seconds to under 1 second
-    var batch = allQuotes.slice(0, 18);
-    var batchResults = await Promise.all(batch.map(function(q) {
-      return getCandles(q.symbol, '3mo', '1d').then(function(tf) {
-        return { q: q, tf: tf };
-      }).catch(function() { return { q: q, tf: null }; });
-    }));
-
-    var movers = [], radarItems = [];
-    batchResults.forEach(function(row) {
-      try {
-        var q   = row.q;
-        var tf  = row.tf;
-        var rv  = q.regularMarketVolume / (q.averageDailyVolume3Month || 1);
-        var quoteObj = { price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
-          floatShares: q.floatShares, volume: q.regularMarketVolume,
-          avgVolume: q.averageDailyVolume3Month, high: q.regularMarketDayHigh,
-          low: q.regularMarketDayLow, marketCap: q.marketCap, shortName: q.shortName };
-        var mmr    = calculateMMR(quoteObj, tf, []);
-        var phase  = detectSqueezePhase(quoteObj, tf);
-        var sqEntry = squeezeStore.find(function(s) { return s.symbol === q.symbol; });
-        var item = { symbol: q.symbol, name: q.shortName,
-          price: q.regularMarketPrice, changePct: q.regularMarketChangePercent,
-          rvol: +rv.toFixed(1), floatShares: q.floatShares,
-          mmr: mmr.total, mmrGrade: mmr.grade,
-          phase: phase.phase, phaseLabel: phase.label, phaseColor: phase.color,
-          intensity: phase.intensity, scorePT: mmr.total >= 85 ? 7 : mmr.total >= 70 ? 5 : 3,
-          siPercent: sqEntry ? sqEntry.siPercent : 0 };
-        movers.push(item);
-        if (rv >= 5) radarItems.push(item);
-      } catch(e) {}
-    });
-
-    movers.sort(function(a, b) { return (b.mmr||0) - (a.mmr||0); });
-    radarItems.sort(function(a, b) { return (b.rvol||0) - (a.rvol||0); });
-    res.json({ movers: movers, radar: radarItems, timestamp: new Date().toISOString() });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ================================================================
-// END SQUEEZE + PULSE BACKEND v3.7
-// ================================================================
-
 // =========================================================
 // API ROUTES
 // =========================================================
