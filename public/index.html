@@ -2569,7 +2569,7 @@ function renderMoverList() {
   items.forEach(function(m) {
     var chgColor = m.chg >= 0 ? 'var(--green)' : 'var(--red)';
     var rvColor  = m.rv >= 5 ? 'var(--purple)' : m.rv >= 2 ? 'var(--gold)' : 'var(--muted)';
-    html += '<div class="mover-row" onclick="goAnalyze('' + m.sym + '')">' +
+    html += '<div class="mover-row" onclick="goAnalyze(\'' + m.sym + '\')">' +
       '<span class="mover-sym">' + m.sym + '</span>' +
       '<span class="mover-name">' + (m.name||'') + '</span>' +
       '<span class="mover-price">$' + m.price.toFixed(2) + '</span>' +
