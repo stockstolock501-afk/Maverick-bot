@@ -3,142 +3,171 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MAVERICK ELITE v4.8</title>
+    <title>MAVERICK ELITE v4.9</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background-color: #0d1117; color: #e6edf3; font-family: sans-serif; }
-        .maverick-card { background: #161b22; border-radius: 8px; border: 1px solid #30363d; }
-        .lion-border { border-top: 4px solid #f0b429; }
-        .shark-border { border-top: 4px solid #60a5fa; }
-        .btn-gold { background: #f0b429; color: #0d1117; font-weight: bold; }
-        .loading-bar { height: 4px; background: #30363d; overflow: hidden; position: relative; }
-        .loading-bar div { height: 100%; background: #f0b429; width: 0%; transition: width 0.3s; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-        .pulse { animation: pulse 2s infinite; }
+        body { background-color: #0d1117; color: #e6edf3; font-family: 'Inter', sans-serif; }
+        .maverick-card { background: #161b22; border: 1px solid #30363d; border-radius: 4px; }
+        .tab-active { border-bottom: 2px solid #f0b429; color: #f0b429; }
+        .glow-gold { box-shadow: 0 0 15px rgba(240, 180, 41, 0.1); }
+        .ticker-tape { animation: scroll 30s linear infinite; white-space: nowrap; }
+        @keyframes scroll { from { transform: translateX(100%); } to { transform: translateX(-100%); } }
     </style>
 </head>
-<body class="p-4">
-    <header class="mb-6">
-        <h1 class="text-2xl font-bold uppercase tracking-widest">MAVERICK <span class="text-[#f0b429]">ELITE</span> <span class="text-xs text-gray-500">v4.8</span></h1>
+<body class="flex flex-col h-screen">
+
+    <header class="p-4 border-b border-[#30363d] flex justify-between items-center bg-[#0d1117] sticky top-0 z-50">
+        <h1 class="text-xl font-bold tracking-tighter">MAVERICK <span class="text-[#f0b429]">ELITE</span></h1>
+        <div id="connectionStatus" class="text-[10px] bg-green-900/30 text-green-400 px-2 py-1 rounded border border-green-800 uppercase font-mono">System Live</div>
     </header>
 
-    <div class="flex gap-2 mb-6">
-        <input type="text" id="tickerInput" placeholder="ENTER TICKER..." class="bg-[#0d1117] border border-[#30363d] rounded p-2 flex-grow uppercase font-mono">
-        <button onclick="auditTape()" class="btn-gold px-4 py-2 rounded text-sm whitespace-nowrap">AUDIT TAPE</button>
-    </div>
+    <nav class="flex border-b border-[#30363d] bg-[#161b22] text-[10px] font-bold uppercase tracking-widest">
+        <button onclick="showTab('audit')" id="tab-audit" class="flex-1 py-3 tab-active">Audit</button>
+        <button onclick="showTab('scanners')" id="tab-scanners" class="flex-1 py-3">Scanners</button>
+        <button onclick="showTab('pulse')" id="tab-pulse" class="flex-1 py-3">Pulse</button>
+        <button onclick="showTab('catalyst')" id="tab-catalyst" class="flex-1 py-3">Catalyst</button>
+    </nav>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div class="maverick-card p-4 lion-border">
-            <h3 class="text-[#f0b429] font-bold text-xs uppercase flex items-center gap-2">
-                🦁 LION BRAIN <span class="text-gray-500 font-normal">(Floor Audit)</span>
-            </h3>
-            <div id="lionStatus" class="text-sm mt-2 text-gray-400 italic">Awaiting...</div>
-            <div id="lionData" class="mt-4 space-y-2 hidden">
-                <div class="flex justify-between text-xs"><span>BPI SCORE</span> <span id="bpiScore" class="font-bold">--</span></div>
-                <div class="flex justify-between text-xs"><span>DEMAND ZONE</span> <span id="demandZone" class="font-mono">--</span></div>
-                <div class="text-[10px] text-gray-500 mt-2" id="lionVerdict">--</div>
+    <main class="flex-grow overflow-y-auto p-4 space-y-4">
+
+        <div id="view-audit" class="tab-view space-y-4">
+            <div class="flex gap-2">
+                <input type="text" id="tickerInput" placeholder="SYMBOL" class="bg-[#0d1117] border border-[#30363d] rounded p-3 flex-grow uppercase font-mono text-lg outline-none focus:border-[#f0b429]">
+                <button onclick="auditTape()" class="bg-[#f0b429] text-black font-black px-6 rounded uppercase italic text-sm">Audit</button>
             </div>
-            <div class="loading-bar mt-4"><div id="lionProgress"></div></div>
-        </div>
 
-        <div class="maverick-card p-4 shark-border">
-            <h3 class="text-[#60a5fa] font-bold text-xs uppercase flex items-center gap-2">
-                🦈 SHARK BRAIN <span class="text-gray-500 font-normal">(Momentum)</span>
-            </h3>
-            <div id="sharkStatus" class="text-sm mt-2 text-gray-400 italic">Awaiting...</div>
-            <div id="sharkData" class="mt-4 space-y-2 hidden">
-                <div class="flex justify-between text-xs"><span>SHARK SCORE</span> <span id="sharkScore" class="font-bold">--</span></div>
-                <div class="flex justify-between text-xs"><span>VELOCITY</span> <span id="sharkVel" class="font-mono">--</span></div>
-                <div class="text-[10px] text-gray-500 mt-2" id="sharkVerdict">--</div>
+            <div class="grid grid-cols-2 gap-3">
+                <div class="maverick-card p-4 border-t-4 border-[#f0b429]">
+                    <div class="text-[10px] text-gray-500 font-bold uppercase">Lion Brain (BPI)</div>
+                    <div id="bpiDisplay" class="text-2xl font-mono mt-1">--</div>
+                    <div id="bpiLabel" class="text-[9px] text-gray-400 mt-1 uppercase">Awaiting Tape...</div>
+                </div>
+                <div class="maverick-card p-4 border-t-4 border-[#60a5fa]">
+                    <div class="text-[10px] text-gray-500 font-bold uppercase">Shark (Momentum)</div>
+                    <div id="sharkDisplay" class="text-2xl font-mono mt-1">--</div>
+                    <div id="sharkLabel" class="text-[9px] text-gray-400 mt-1 uppercase">Cold Waters</div>
+                </div>
             </div>
-            <div class="loading-bar mt-4"><div id="sharkProgress" style="background:#60a5fa"></div></div>
-        </div>
-    </div>
 
-    <div class="maverick-card overflow-hidden">
-        <div class="p-3 bg-[#1c2128] border-b border-[#30363d] text-[10px] font-bold tracking-widest flex items-center gap-2">
-            📜 AUDITED BACKTEST LOG
+            <div id="verdictBox" class="maverick-card p-4 hidden">
+                <div class="text-[10px] text-[#f0b429] font-bold uppercase mb-2">Institutional Verdict</div>
+                <div id="verdictText" class="text-xs leading-relaxed text-gray-300 italic">--</div>
+            </div>
         </div>
-        <table class="w-full text-left text-[10px]">
-            <thead>
-                <tr class="text-gray-500 border-b border-[#30363d]">
-                    <th class="p-3">TICKER</th>
-                    <th class="p-3">PRICE</th>
-                    <th class="p-3">VERDICT</th>
-                    <th class="p-3">STATUS</th>
-                </tr>
-            </thead>
-            <tbody id="backtestLog">
-                <tr class="text-gray-600"><td colspan="4" class="p-8 text-center">No audit history found.</td></tr>
-            </tbody>
-        </table>
-    </div>
+
+        <div id="view-scanners" class="tab-view hidden space-y-4">
+            <div class="maverick-card overflow-hidden">
+                <div class="bg-[#1c2128] p-2 text-[9px] font-bold uppercase tracking-widest border-b border-[#30363d] text-blue-400">Squeeze Radar (Phase 1 & 2)</div>
+                <div id="squeezeList" class="divide-y divide-[#30363d]">
+                    <div class="p-4 text-center text-xs text-gray-500">Scanning for Coiled Springs...</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-pulse" class="tab-view hidden space-y-4">
+             <div class="maverick-card p-4 text-center border-dashed border-2 border-[#30363d]">
+                <div class="text-xs font-bold text-[#f0b429] uppercase mb-1">Market Sentiment</div>
+                <div id="macroRegime" class="text-sm font-mono tracking-tighter">FETCHING MACRO...</div>
+             </div>
+             <div id="moversList" class="space-y-2"></div>
+        </div>
+
+        <div id="view-catalyst" class="tab-view hidden space-y-4">
+            <div id="catalystList" class="space-y-3">
+                <div class="p-8 text-center text-xs text-gray-600">Initializing Intelligence Feed...</div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="bg-[#161b22] border-t border-[#30363d] p-3">
+        <div class="flex justify-between text-[9px] text-gray-500 uppercase font-mono">
+            <span>Verdicts Resolved: <span id="stat-verdicts" class="text-gray-300">0</span></span>
+            <span>Win Rate: <span id="stat-wins" class="text-green-500">0%</span></span>
+        </div>
+    </footer>
 
     <script>
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-view').forEach(v => v.classList.add('hidden'));
+            document.querySelectorAll('nav button').forEach(b => b.classList.remove('tab-active'));
+            document.getElementById('view-' + tabId).classList.remove('hidden');
+            document.getElementById('tab-' + tabId).classList.add('tab-active');
+            if (tabId === 'pulse') refreshPulse();
+            if (tabId === 'catalyst') refreshCatalysts();
+            if (tabId === 'scanners') refreshSqueeze();
+        }
+
         async function auditTape() {
             const ticker = document.getElementById('tickerInput').value.toUpperCase().trim();
             if(!ticker) return;
-
-            // Reset UI
-            const elements = ['lionData', 'sharkData', 'lionStatus', 'sharkStatus'];
-            elements.forEach(id => {
-                if(id.includes('Data')) document.getElementById(id).classList.add('hidden');
-                else document.getElementById(id).classList.remove('hidden');
-            });
-            document.getElementById('lionProgress').style.width = '30%';
-            document.getElementById('sharkProgress').style.width = '30%';
-
-            try {
-                // Call Analyze (Lion) and Shark Brains in parallel
-                const [lionRes, sharkRes] = await Promise.all([
-                    fetch('/api/analyze', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ticker}) }),
-                    fetch('/api/shark', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ticker}) })
-                ]);
-
-                const lion = await lionRes.json();
-                const shark = await sharkRes.json();
-
-                if (lion.error || shark.error) throw new Error("Analysis failed");
-
-                // Update Lion UI
-                document.getElementById('lionStatus').classList.add('hidden');
-                document.getElementById('lionData').classList.remove('hidden');
-                document.getElementById('bpiScore').innerText = lion.bpi.score + '%';
-                document.getElementById('demandZone').innerText = '$' + lion.bpi.demandZone;
-                document.getElementById('lionVerdict').innerText = lion.verdict.headline;
-                document.getElementById('lionProgress').style.width = '100%';
-
-                // Update Shark UI
-                document.getElementById('sharkStatus').classList.add('hidden');
-                document.getElementById('sharkData').classList.remove('hidden');
-                document.getElementById('sharkScore').innerText = shark.sharkScore + '/100';
-                document.getElementById('sharkVel').innerText = shark.phaseVelocity.label;
-                document.getElementById('sharkVerdict').innerText = shark.verdict;
-                document.getElementById('sharkProgress').style.width = '100%';
-
-                refreshBacktest();
-            } catch (e) {
-                alert("Analysis failed. Check your API keys.");
-                console.error(e);
-            }
+            
+            // Trigger Lion/Shark
+            const res = await fetch('/api/analyze', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ticker}) });
+            const data = await res.json();
+            
+            document.getElementById('bpiDisplay').innerText = data.bpi.score + '%';
+            document.getElementById('bpiLabel').innerText = data.bpi.label;
+            document.getElementById('sharkDisplay').innerText = data.shark.score + '/100';
+            document.getElementById('sharkLabel').innerText = data.shark.verdict;
+            document.getElementById('verdictText').innerText = data.verdict.headline;
+            document.getElementById('verdictBox').classList.remove('hidden');
         }
 
-        async function refreshBacktest() {
+        async function refreshCatalysts() {
+            const res = await fetch('/api/catalyst-feed');
+            const data = await res.json();
+            const list = document.getElementById('catalystList');
+            list.innerHTML = data.items.map(c => `
+                <div class="maverick-card p-3 border-l-2 ${c.tier === 1 ? 'border-red-500' : 'border-blue-500'}">
+                    <div class="flex justify-between items-start mb-1">
+                        <span class="text-[10px] font-black bg-gray-800 px-1 rounded">${c.ticker || 'NEWS'}</span>
+                        <span class="text-[8px] text-gray-500">${c.source} · ${c.ageH}h</span>
+                    </div>
+                    <div class="text-[11px] font-medium leading-tight">${c.headline}</div>
+                </div>
+            `).join('');
+        }
+
+        async function refreshSqueeze() {
+            const res = await fetch('/api/squeeze-scan');
+            const data = await res.json();
+            const list = document.getElementById('squeezeList');
+            list.innerHTML = data.results.map(s => `
+                <div class="p-3 flex justify-between items-center">
+                    <div>
+                        <div class="text-xs font-bold">${s.symbol} <span class="text-[9px] text-gray-500 font-normal">$${s.price}</span></div>
+                        <div class="text-[9px] text-green-400 uppercase font-bold">${s.phase.label}</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-[10px] font-mono">SI: ${s.siPercent}%</div>
+                        <div class="text-[10px] font-mono">DTC: ${s.dtc}d</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function refreshPulse() {
+            const res = await fetch('/api/movers');
+            const data = await res.json();
+            const list = document.getElementById('moversList');
+            list.innerHTML = data.gainers.map(m => `
+                <div class="maverick-card p-3 flex justify-between items-center bg-[#0d1117]">
+                    <span class="text-xs font-bold">${m.sym}</span>
+                    <span class="text-[10px] text-green-400 font-mono">+${m.chg.toFixed(1)}%</span>
+                    <span class="text-[10px] text-gray-500 font-mono">${m.rv}x Vol</span>
+                </div>
+            `).join('');
+        }
+
+        // Stats Init
+        async function fetchStats() {
             const res = await fetch('/api/backtest');
             const data = await res.json();
-            const log = document.getElementById('backtestLog');
-            if(data.recent && data.recent.length) {
-                log.innerHTML = data.recent.slice(0,5).map(v => `
-                    <tr class="border-b border-[#30363d]">
-                        <td class="p-3 font-bold">${v.ticker}</td>
-                        <td class="p-3">$${v.priceAtVerdict}</td>
-                        <td class="p-3 ${v.verdict === 'BUY' ? 'text-green-500' : 'text-red-500'}">${v.verdict}</td>
-                        <td class="p-3 text-gray-500">${v.outcome || 'PENDING'}</td>
-                    </tr>
-                `).join('');
-            }
+            document.getElementById('stat-verdicts').innerText = data.resolved;
+            document.getElementById('stat-wins').innerText = data.winRate + '%';
         }
-        refreshBacktest();
+        fetchStats();
     </script>
 </body>
 </html>
