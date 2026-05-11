@@ -786,7 +786,7 @@ function buildSharkSection(shark, sym) {
   var fe  = shark.floatExhaustion || {};
   var xr  = shark.xray           || {};
   var ch  = shark.crowdHeat      || {};
-  var sc  = shark.score          || 0;
+  var sc  = shark.score || shark.sharkScore || 0;
 
   var scoreColor = sc >= 75 ? '#22d3ee' : sc >= 55 ? '#60a5fa' : sc >= 35 ? '#f0b429' : '#3a5570';
   var sharkVerdict = sc >= 75 ? 'STRIKE — Full Shark conditions' : sc >= 55 ? 'CIRCLING — Conditions building' :
