@@ -2244,44 +2244,6 @@ setTimeout(function() {
 .sq-list-card{background:var(--bg2);border:1px solid;border-left:4px solid;border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:background .15s}
 .sq-list-card:active{opacity:.8}
 
-/* ════════════════════════════════════════════════════════════
-   PULSE HUB
-   ════════════════════════════════════════════════════════════ */
-
-/* Whale radar tape */
-.radar-outer{background:#050b12;overflow:hidden;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);border-top:1px solid rgba(255,255,255,.05);margin-bottom:10px}
-.radar-track{display:inline-flex;white-space:nowrap;animation:radarScroll 30s linear infinite}
-.radar-track:hover{animation-play-state:paused}
-.radar-item{display:inline-flex;align-items:center;gap:6px;padding:0 20px;font-size:9px;font-weight:800;font-family:monospace;border-right:1px solid rgba(255,255,255,.06)}
-@keyframes radarScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
-
-/* Heat tiles */
-.pulse-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
-.pulse-tile{border-radius:9px;padding:11px 8px 9px;text-align:center;cursor:pointer;position:relative;border:1px solid var(--border);background:var(--bg2);transition:transform .12s}
-.pulse-tile:active{transform:scale(.95)}
-.pt-p0{background:var(--bg2);border-color:var(--border)}
-.pt-p05{background:linear-gradient(135deg,rgba(96,165,250,.1),transparent);border-color:rgba(96,165,250,.3)}
-.pt-p1{background:linear-gradient(135deg,rgba(240,180,41,.18),rgba(240,180,41,.05));border-color:rgba(240,180,41,.5)}
-.pt-p2{background:linear-gradient(135deg,rgba(34,197,94,.2),rgba(34,197,94,.06));border-color:rgba(34,197,94,.5);box-shadow:0 0 14px rgba(34,197,94,.12)}
-.pt-p3{background:linear-gradient(135deg,rgba(239,68,68,.14),rgba(239,68,68,.04));border-color:rgba(239,68,68,.3)}
-
-.tile-sym{display:block;font-weight:900;color:#fff;line-height:1.1;margin-bottom:5px}
-.tile-chg{font-size:9px;font-family:monospace;font-weight:700;margin-bottom:3px}
-.tile-mmr{font-size:8px;font-weight:700;margin-bottom:2px}
-.tile-rv{font-size:8px;color:var(--muted)}
-.trophy{position:absolute;top:4px;right:5px;font-size:10px}
-.phase-pip{position:absolute;top:5px;left:5px;width:5px;height:5px;border-radius:50%}
-
-/* Timer + legend row */
-.pulse-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.pulse-legend{display:flex;gap:8px;font-size:8px;color:var(--muted)}
-.pleg{display:flex;align-items:center;gap:3px}
-.pleg-dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0}
-.pulse-timer-txt{font-family:monospace;font-size:9px;color:var(--gold)}
-
-/* Phase guide cards */
-.phase-guide{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-.pg-card{border-radius:7px;padding:9px 11px;border:1px solid}
 </style>
 
 <!-- ════════════════════════════════════════════ SQUEEZE TAB ═══ -->
