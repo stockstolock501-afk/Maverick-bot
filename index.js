@@ -18,7 +18,3 @@ var WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'maverick';
 var TG_CHAT_ID     = process.env.TG_CHAT_ID;
 var BOT_USERNAME   = process.env.TG_BOT_USERNAME || '';
 var PORT           = process.env.PORT || 3000;
-
-var app = express();
-app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
