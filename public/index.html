@@ -924,7 +924,7 @@ function buildLionSection(data) {
     '<div><div class="brain-title">LION BRAIN — Institutional Intelligence</div>' +
     '<div class="brain-subtitle">Patience · BPI floors · Whale absorption · Beta correlation · Alt-data</div></div>' +
     '<div class="brain-score"><div class="brain-score-num lion-score">' + sc + '</div><div style="font-size:7px;color:rgba(240,180,41,.5);letter-spacing:1px">MMR SCORE</div></div>' +
-    '</div>';
+    '</div></div>';
 }
 
 // ── Market Correlation Engine Card ───────────────────────────────
@@ -1196,7 +1196,6 @@ function renderAnalysis(data, out){
     buildSORPanel(data.data && data.data.quote ? data.data.quote.price : 0, data.levels, data.ticker) +
     buildBPICard(data.bpi, data.ticker) +
     buildGhostProtocol(data.altData) +
-    '</div>' +
     buildSharkSection(data.shark, data.ticker) +
     '<div class="card"><div class="lbl">Live Data <span style="color:var(--muted);font-size:8px">· ' + (q.source||'live').toUpperCase() + '</span></div>' +
     '<div class="g3">' +
@@ -1391,14 +1390,13 @@ async function runPerfectTrade(scanMode){
       var r = await fetch('/api/signals');
       var data = await r.json();
       var movers = (data.signals||[]).filter(function(s){return s.type==='MOMENTUM'&&s.symbol&&s.symbol!=='MARKET';}).slice(0,5);
-      var results = [];
-      for(var i=0;i<movers.length;i++){
+      var results = (await Promise.all(movers.map(async function(m){
         try{
-          var r2 = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:movers[i].symbol})});
+          var r2 = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:m.symbol})});
           var d2 = await r2.json();
-          if(!d2.error) results.push(scorePT(d2));
-        }catch(e){}
-      }
+          return (!d2.error) ? scorePT(d2) : null;
+        }catch(e){ return null; }
+      }))).filter(Boolean);
       results.sort(function(a,b){return b.score-a.score;});
       if(!results.length){out.innerHTML='<div class="card"><div style="font-size:11px;color:var(--muted)">No momentum movers found right now. Try during market hours or enter a specific ticker.</div></div>';return;}
       renderPT(results, out);
@@ -2310,13 +2308,8 @@ async function loadShadowScore() {
 setTimeout(loadShadowScore, 2000);
 setInterval(loadShadowScore, 60000);
 
-// Add Shark mode to tab clicks — auto-run Shark analysis when analyze runs
-var _origRunAnalysis = runAnalysis;
-async function runAnalysis() {
-  await _origRunAnalysis();
-  // Shark runs as part of analyze now (data.shark is in the response)
-}
-
+// NOTE: Shark data is returned inside /api/analyze as data.shark — no wrapper needed.
+// The original runAnalysis() at the top of this file already calls buildSharkSection(data.shark).
 
 // Shark Analysis
 document.getElementById('sharkTicker').addEventListener('keydown', function(e){ if(e.key==='Enter') runSharkAnalysis(); });
