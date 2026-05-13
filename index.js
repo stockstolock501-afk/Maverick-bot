@@ -22,7 +22,385 @@ var PORT           = process.env.PORT || 3000;
 var app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+// =====================================================
+// MAVERICK CORE STABILITY ENGINE
+// PHASE 1
+// =====================================================
 
+import crypto from "crypto";
+
+// =====================================================
+// ENV VALIDATION
+// =====================================================
+
+const REQUIRED_ENV = [
+  "FINNHUB_API_KEY",
+  "GROQ_API_KEY"
+];
+
+for (const key of REQUIRED_ENV) {
+  if (!process.env[key]) {
+    console.warn(`[ENV WARNING] Missing ${key}`);
+  }
+}
+
+// =====================================================
+// GLOBAL CONFIG
+// =====================================================
+
+const CONFIG = {
+  REQUEST_TIMEOUT: 12000,
+  AI_TIMEOUT: 25000,
+  CACHE_TTL: 1000 * 60 * 2,
+  MAX_RETRIES: 2,
+  AI_CONCURRENCY: 2,
+  FETCH_CONCURRENCY: 5,
+  LOGGING: true
+};
+
+// =====================================================
+// LOGGER
+// =====================================================
+
+const logger = {
+  info(...args) {
+    console.log("[INFO]", ...args);
+  },
+
+  warn(...args) {
+    console.warn("[WARN]", ...args);
+  },
+
+  error(...args) {
+    console.error("[ERROR]", ...args);
+  },
+
+  api(source, url, err) {
+    console.error(`[API:${source}]`, url, err?.message || err);
+  }
+};
+
+// =====================================================
+// MEMORY SAFE CACHE
+// =====================================================
+
+class MemoryCache {
+  constructor() {
+    this.cache = new Map();
+
+    setInterval(() => {
+      this.cleanup();
+    }, 60000);
+  }
+
+  set(key, value, ttl = CONFIG.CACHE_TTL) {
+    this.cache.set(key, {
+      value,
+      expires: Date.now() + ttl
+    });
+  }
+
+  get(key) {
+    const item = this.cache.get(key);
+
+    if (!item) return null;
+
+    if (Date.now() > item.expires) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    return item.value;
+  }
+
+  cleanup() {
+    const now = Date.now();
+
+    for (const [key, item] of this.cache.entries()) {
+      if (now > item.expires) {
+        this.cache.delete(key);
+      }
+    }
+  }
+}
+
+const CACHE = new MemoryCache();
+
+// =====================================================
+// SAFE RESPONSE HELPERS
+// =====================================================
+
+function success(data = {}, meta = {}) {
+  return {
+    ok: true,
+    timestamp: Date.now(),
+    ...meta,
+    data
+  };
+}
+
+function failure(message = "Unknown Error", extra = {}) {
+  return {
+    ok: false,
+    error: true,
+    message,
+    timestamp: Date.now(),
+    ...extra
+  };
+}
+
+// =====================================================
+// ASYNC WRAPPER
+// =====================================================
+
+function asyncHandler(fn) {
+  return async (req, res, next) => {
+    try {
+      await fn(req, res, next);
+    } catch (err) {
+      logger.error("ASYNC_HANDLER", err);
+
+      if (!res.headersSent) {
+        res.status(500).json(
+          failure("Internal server error", {
+            details: err.message
+          })
+        );
+      }
+    }
+  };
+}
+
+// =====================================================
+// TIMEOUT FETCH
+// =====================================================
+
+async function timeoutFetch(
+  url,
+  options = {},
+  timeout = CONFIG.REQUEST_TIMEOUT
+) {
+  const controller = new AbortController();
+
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+
+    logger.api("FETCH", url, err);
+
+    throw err;
+  }
+}
+
+// =====================================================
+// RETRY WRAPPER
+// =====================================================
+
+async function withRetry(fn, retries = CONFIG.MAX_RETRIES) {
+  let lastError;
+
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+
+      logger.warn(`Retry ${i + 1}/${retries}`, err.message);
+
+      await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+
+  throw lastError;
+}
+
+// =====================================================
+// SAFE JSON FETCH
+// =====================================================
+
+async function fetchJSON(
+  url,
+  options = {},
+  source = "UNKNOWN"
+) {
+  const cacheKey = crypto
+    .createHash("md5")
+    .update(url)
+    .digest("hex");
+
+  const cached = CACHE.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const response = await withRetry(() =>
+      timeoutFetch(url, options)
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `${source} returned ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+
+    CACHE.set(cacheKey, data);
+
+    return data;
+  } catch (err) {
+    logger.api(source, url, err);
+
+    return failure(`${source} fetch failed`, {
+      details: err.message
+    });
+  }
+}
+
+// =====================================================
+// CONCURRENCY GUARD
+// =====================================================
+
+class Queue {
+  constructor(limit = 2) {
+    this.limit = limit;
+    this.running = 0;
+    this.queue = [];
+  }
+
+  async push(task) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({
+        task,
+        resolve,
+        reject
+      });
+
+      this.next();
+    });
+  }
+
+  async next() {
+    if (this.running >= this.limit) return;
+
+    const item = this.queue.shift();
+
+    if (!item) return;
+
+    this.running++;
+
+    try {
+      const result = await item.task();
+
+      item.resolve(result);
+    } catch (err) {
+      item.reject(err);
+    } finally {
+      this.running--;
+
+      this.next();
+    }
+  }
+}
+
+const aiQueue = new Queue(CONFIG.AI_CONCURRENCY);
+
+const fetchQueue = new Queue(CONFIG.FETCH_CONCURRENCY);
+
+// =====================================================
+// SAFE AI WRAPPER
+// =====================================================
+
+async function safeAICall(fn, label = "AI") {
+  return aiQueue.push(async () => {
+    try {
+      const result = await Promise.race([
+        fn(),
+        new Promise((_, reject) =>
+          setTimeout(() => {
+            reject(new Error(`${label} timeout`));
+          }, CONFIG.AI_TIMEOUT)
+        )
+      ]);
+
+      if (!result) {
+        return failure(`${label} returned empty`);
+      }
+
+      return success(result);
+
+    } catch (err) {
+      logger.error(`${label}_ERROR`, err);
+
+      return failure(`${label} failed`, {
+        details: err.message
+      });
+    }
+  });
+}
+
+// =====================================================
+// REQUEST LOGGER
+// =====================================================
+
+app.use((req, res, next) => {
+  const start = Date.now();
+
+  res.on("finish", () => {
+    logger.info(
+      req.method,
+      req.originalUrl,
+      res.statusCode,
+      `${Date.now() - start}ms`
+    );
+  });
+
+  next();
+});
+
+// =====================================================
+// GLOBAL ERROR HANDLER
+// =====================================================
+
+process.on("uncaughtException", err => {
+  logger.error("UNCAUGHT_EXCEPTION", err);
+});
+
+process.on("unhandledRejection", err => {
+  logger.error("UNHANDLED_REJECTION", err);
+});
+
+// =====================================================
+// HEALTH ENDPOINT
+// =====================================================
+
+app.get("/health", (req, res) => {
+  res.json(
+    success({
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      timestamp: Date.now()
+    })
+  );
+});
+
+// =====================================================
+// END PHASE 1
+// =====================================================
 // ── Multi-Brain AI System ─────────────────────────────────────────
 // Key rotation: cycles through available Groq keys on 429
 // Tiered routing: scans → Cerebras/8B, manual analysis → 70B
