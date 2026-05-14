@@ -349,15 +349,16 @@ app.post('/api/luxalgo', async (req, res) => {
 app.get('/api/signals', async (req, res) => {
   try {
     const news = await fh(`/news?category=general`);
-    const signals = Array.isArray(news) ? news.slice(0, 8).map((n, i) => ({
-      id: i,
+    const clean = s => { const t = (s || '').split(',')[0].replace(/[^A-Z0-9]/gi,'').trim().toUpperCase(); return t || 'MARKET'; };
+    const signals = Array.isArray(news) ? news.filter(n => n.headline).slice(0, 10).map((n, i) => ({
+      id:       i,
       type:     i < 3 ? 'MOMENTUM' : i < 6 ? 'CATALYST' : 'EARNINGS',
-      symbol:   (n.related || 'MARKET').split(',')[0].trim(),
-      name:     n.source,
-      text:     n.headline,
-      tags:     ['NEWS'],
-      strength: 'MODERATE',
-      ts:       n.datetime * 1000
+      symbol:   clean(n.related),
+      name:     n.source  || 'News',
+      text:     n.headline || '—',
+      tags:     [i < 3 ? 'HIGH' : 'MODERATE'],
+      strength: i < 3 ? 'HIGH' : 'MODERATE',
+      ts:       (n.datetime || 0) * 1000
     })) : [];
     res.json({ signals });
   } catch (e) {
@@ -379,14 +380,18 @@ app.post('/api/whale-scan', (req, res) => {
 app.post('/api/catalyst-scan', async (req, res) => {
   try {
     const news = await fh(`/news?category=general`);
-    const catalysts = Array.isArray(news) ? news.slice(0, 12).map((n, i) => ({
-      id: i, tier: i < 3 ? 1 : i < 7 ? 2 : 3,
-      ticker:   (n.related || '—').split(',')[0].trim(),
+    const clean = s => { const t = (s || '').split(',')[0].replace(/[^A-Z0-9]/gi,'').trim().toUpperCase(); return t || '—'; };
+    const catalysts = Array.isArray(news) ? news.filter(n => n.headline).slice(0, 15).map((n, i) => ({
+      id:       i,
+      tier:     i < 3 ? 1 : i < 8 ? 2 : 3,
+      ticker:   clean(n.related),
       type:     'NEWS',
-      headline: n.headline,
-      source:   n.source,
-      ts:       n.datetime * 1000,
-      score:    Math.round(70 + Math.random() * 29)
+      headline: n.headline || '—',
+      summary:  n.summary  || '',
+      source:   n.source   || '—',
+      url:      n.url      || '',
+      ts:       (n.datetime || 0) * 1000,
+      score:    Math.round(95 - i * 3)
     })) : [];
     res.json({ catalysts });
   } catch (e) {
@@ -399,14 +404,18 @@ app.get('/api/catalyst-feed', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 40);
     const news  = await fh(`/news?category=general`);
-    const catalysts = Array.isArray(news) ? news.slice(0, limit).map((n, i) => ({
-      id: i, tier: i < 3 ? 1 : i < 8 ? 2 : 3,
-      ticker:   (n.related || '—').split(',')[0].trim(),
+    const clean = s => { const t = (s || '').split(',')[0].replace(/[^A-Z0-9]/gi,'').trim().toUpperCase(); return t || '—'; };
+    const catalysts = Array.isArray(news) ? news.filter(n => n.headline).slice(0, limit).map((n, i) => ({
+      id:       i,
+      tier:     i < 3 ? 1 : i < 8 ? 2 : 3,
+      ticker:   clean(n.related),
       type:     'NEWS',
-      headline: n.headline,
-      source:   n.source,
-      ts:       n.datetime * 1000,
-      score:    Math.round(70 + Math.random() * 29)
+      headline: n.headline || '—',
+      summary:  n.summary  || '',
+      source:   n.source   || '—',
+      url:      n.url      || '',
+      ts:       (n.datetime || 0) * 1000,
+      score:    Math.round(95 - i * 2)
     })) : [];
     res.json({ catalysts, total: catalysts.length });
   } catch (e) {
@@ -482,13 +491,18 @@ app.post('/api/squeeze-check', async (req, res) => {
     const shortPct    = m.shortInterestPercentOfFloat || 10;
     const phase       = shortPct > 30 && relVol > 2 ? 2 : shortPct > 20 ? 1 : 0;
     const compression = clamp(Math.round(shortPct * 1.5 + relVol * 5), 0, 100);
+    const atr         = rnd(price * 0.025, 2);
+    const stopCluster = rnd(price * 0.95, 2);
+    const t1Target    = rnd(price * 1.15, 2);
+    const t2Target    = rnd(price * 1.30, 2);
     res.json({
       symbol: sym, price, shortPct, relVol, floatShares,
+      atr,
       phase:       { phase, color: phase >= 2 ? '#22c55e' : phase === 1 ? '#f0b429' : '#243548', intensity: compression },
       painPct:     changePct,
-      stopCluster: rnd(price * 0.95, 2),
+      stopCluster, t1Target, t2Target,
       squeezeProb: clamp(Math.round(shortPct * 1.2 + relVol * 5), 0, 95),
-      t1Target:    rnd(price * 1.15, 2),
+      riskReward:  rnd((t1Target - price) / (price - stopCluster), 2),
       coil: {
         isCoiled:       compression > 60 && relVol < 1.5,
         compression,
@@ -500,7 +514,9 @@ app.post('/api/squeeze-check', async (req, res) => {
         advice:         'Wait for RVOL above 2x then enter on 1-min close above trigger.'
       },
       lux:      computeLuxAlgo(price, changePct, relVol).daily,
-      dilution: { detected: false }
+      mmr:      computeMMR(price, relVol, floatShares, changePct),
+      dilution: { detected: false },
+      levels:   { stop: stopCluster, tp1: t1Target, tp2: t2Target }
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -548,6 +564,30 @@ app.post('/api/probability', async (req, res) => {
 // Shadow Score
 app.get('/api/shadow-score', (req, res) => {
   res.json({ score: '0.00', savings: 0, trades: 0 });
+});
+
+// Chart Candles — used by TradingView-style chart panels
+app.get('/api/candles', async (req, res) => {
+  try {
+    const sym        = (req.query.symbol || '').toUpperCase().trim();
+    const resolution = req.query.resolution || 'D';
+    const now        = Math.floor(Date.now() / 1000);
+    const from       = now - 60 * 60 * 24 * 90; // 90 days back
+    if (!sym) return res.status(400).json({ error: 'symbol required' });
+    const data = await fh(`/stock/candle?symbol=${sym}&resolution=${resolution}&from=${from}&to=${now}`);
+    if (!data || data.s === 'no_data') return res.json({ candles: [], symbol: sym });
+    const candles = (data.t || []).map((t, i) => ({
+      time:   t,
+      open:   data.o[i],
+      high:   data.h[i],
+      low:    data.l[i],
+      close:  data.c[i],
+      volume: data.v[i]
+    }));
+    res.json({ candles, symbol: sym, resolution });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Serve Frontend
