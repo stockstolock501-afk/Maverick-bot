@@ -595,4 +595,20 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 // Start
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`MAVERICK COCKPIT ONLINE — port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`MAVERICK COCKPIT ONLINE — port ${PORT}`);
+  console.log(`  FINNHUB_KEY:       ${FINNHUB  ? '✅ connected' : '❌ MISSING — set in Render env vars'}`);
+  console.log(`  TELEGRAM_TOKEN:    ${TG_TOKEN ? '✅ connected' : '❌ MISSING — set in Render env vars'}`);
+  console.log(`  TELEGRAM_CHAT_ID:  ${TG_CHAT  ? '✅ set'       : '❌ MISSING — set in Render env vars'}`);
+  console.log(`  INTEL_BOT_TOKEN:   ${process.env.INTEL_BOT_TOKEN  ? '✅ connected' : '⚠️  not set (optional)'}`);
+
+  // Launch background intel bot if configured
+  if (process.env.INTEL_BOT_TOKEN || TG_TOKEN) {
+    try {
+      require('./cerebras-bot');
+      console.log('  Intel bot: ✅ launched');
+    } catch (e) {
+      console.error('  Intel bot: ❌ failed to start —', e.message);
+    }
+  }
+});
