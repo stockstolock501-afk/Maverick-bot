@@ -18,7 +18,6 @@ const positions   = {}; // { SYM: { entry, stop, tp1, tp2, shares, alerts:{} } }
 const watchlist   = {}; // { SYM: { added } }
 const priceAlerts = []; // [{ ticker, price, direction, chatId, fired }]
 const chatHistory = {}; // { chatId: [ {role, content} ] }
-let cerebrasFired  = false;
 let lastUpdateId   = 0;
 let lastNewsTs     = Math.floor(Date.now() / 1000) - 3600;
 const sentHeadlines = new Set();
@@ -30,9 +29,16 @@ const BASE_SCAN = ['MARA','RIOT','SOFI','HOOD','SNDL','FFIE','MULN','ATER','BBIG
 const rnd = (n, d = 2) => +Number(n).toFixed(d);
 
 async function fh(ep) {
-  const sep = ep.includes('?') ? '&' : '?';
-  const r   = await fetch(`https://finnhub.io/api/v1${ep}${sep}token=${FINNHUB}`);
-  return r.json();
+  try {
+    const sep  = ep.includes('?') ? '&' : '?';
+    const r    = await fetch(`https://finnhub.io/api/v1${ep}${sep}token=${FINNHUB}`);
+    const text = await r.text();
+    if (!text || text.trim() === '') return null;
+    return JSON.parse(text);
+  } catch (e) {
+    console.error('[Finnhub]', ep.split('?')[0], e.message);
+    return null;
+  }
 }
 
 async function tg(text, chatId = CHAT_ID) {
@@ -175,8 +181,7 @@ async function cmdStart(chatId) {
 <b>🤖 AI ASSISTANT</b>
 Just type anything — trading or not.
 I remember our conversation.
-
-Cerebras $CBRS IPO monitor: 🟢 ACTIVE`, chatId);
+`, chatId);
 }
 
 async function cmdCheck(sym, chatId) {
@@ -459,34 +464,11 @@ Use /check ${alert.ticker} for full analysis.`, alert.chatId || CHAT_ID);
   }
 }
 
-async function checkCerebrasIPO() {
-  if (cerebrasFired) return;
-  try {
-    const q = await fh('/quote?symbol=CBRS');
-    if (q?.c && q.c > 0) {
-      cerebrasFired = true;
-      await tg(`🚨🚨🚨 <b>CEREBRAS IPO LIVE — $CBRS</b> 🚨🚨🚨
-💰 Price: <b>$${q.c}</b>
-📈 High: $${q.h} · Low: $${q.l}
-🔄 Change: ${(q.dp||0) >= 0 ? '+' : ''}${rnd(q.dp||0, 2)}%
-
-⚡ <b>Maverick IPO Protocol:</b>
-• First 15 min = smart money only. Observe.
-• Enter only on RVOL above 3x, price holding.
-• Do NOT chase above +25% from open.
-• Hard stop: -8% from entry. No exceptions.
-Use /check CBRS for live Lion Analysis.`);
-    } else {
-      console.log(`[CEREBRAS] Not live yet — quote.c = ${q?.c}`);
-    }
-  } catch (e) { console.error('[IPO]', e.message); }
-}
-
 async function scanNewsIntel() {
   try {
     const news = await fh('/news?category=general');
     if (!Array.isArray(news)) return;
-    const TIER1 = ['fda approval','fda approved','merger','acquisition','buyout','earnings beat','short squeeze','trading halted','halt','ipo','barda','government contract','phase 3','cerebras','cbrs','reverse split','buyback','uplisting','nasdaq compliance'];
+    const TIER1 = ['fda approval','fda approved','merger','acquisition','buyout','earnings beat','short squeeze','trading halted','halt','ipo','barda','government contract','phase 3','reverse split','buyback','uplisting','nasdaq compliance'];
     const NEG   = ['going concern','dilut','offering','atm shelf','bankruptcy','delisting','class action','default'];
     const fresh = news.filter(n => n.datetime > lastNewsTs && n.headline);
     if (fresh.length) lastNewsTs = Math.max(...fresh.map(n => n.datetime));
@@ -514,7 +496,7 @@ async function scanNewsIntel() {
 // ── TELEGRAM POLL LOOP ───────────────────────────────────────────
 async function poll() {
   try {
-    // FIX: Use AbortController for timeout — node-fetch v2 ignores { timeout } option
+    // AbortController fixes node-fetch v2 timeout (the { timeout } option is silently ignored)
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
     let r;
@@ -526,23 +508,21 @@ async function poll() {
     } finally {
       clearTimeout(timer);
     }
-
     const d = await r.json();
     if (!d.ok || !d.result?.length) {
-      // Log unexpected Telegram errors (not just empty results)
       if (!d.ok) console.error('[POLL] Telegram error:', d.description || JSON.stringify(d));
       return;
     }
     for (const update of d.result) {
       lastUpdateId = update.update_id;
-      // Handle both regular messages and channel_post
+      // Support both direct messages and group/channel posts
       const msg = update.message || update.channel_post;
       if (!msg?.text) continue;
       const chatId = String(msg.chat.id);
       const text   = msg.text.trim();
       const parts  = text.split(/\s+/);
-      const cmd    = parts[0].toLowerCase().split('@')[0]; // strip bot username if present
-      console.log(`[MSG] chatId=${chatId} cmd=${cmd}`); // visibility into incoming messages
+      const cmd    = parts[0].toLowerCase().split('@')[0];
+      console.log(`[MSG] chatId=${chatId} cmd=${cmd}`);
       try {
         if      (cmd === '/start' || cmd === '/help')  await cmdStart(chatId);
         else if (cmd === '/check'   && parts[1])       await cmdCheck(parts[1].toUpperCase(), chatId);
@@ -562,14 +542,13 @@ async function poll() {
       }
     }
   } catch (e) {
-    // AbortError = timeout, not a real failure — just retry
     if (e.name === 'AbortError' || e.message?.includes('timeout')) {
-      // silent retry
+      // silent retry — normal long-poll timeout
     } else {
       console.error('[POLL]', e.message);
     }
   }
-  // FIX: Always reschedule — even if an error slips through
+  // Always reschedule no matter what
   setTimeout(poll, 500);
 }
 
@@ -580,6 +559,7 @@ async function start() {
   console.log(`  Cerebras (backup): ${CBRS_KEY ? '✅' : '⚠️  not set'}`);
   console.log(`  Finnhub:         ${FINNHUB  ? '✅' : '❌ MISSING'}`);
   console.log(`  Telegram:        ${TG_TOKEN ? '✅' : '❌ MISSING'}`);
+  console.log(`  Intel Bot:       ${TG_TOKEN ? '✅ launched' : '❌'}`);
 
   if (!TG_TOKEN) { console.error('[BOT] No Telegram token. Bot disabled.'); return; }
 
@@ -588,14 +568,12 @@ async function start() {
 ✅ Position monitor (60s)
 ✅ Price alerts (30s)
 ✅ News catalyst scanner (2min)
-✅ Cerebras $CBRS IPO watch (30s)
 🧠 Brain: ${GROQ_KEY ? 'Groq primary + Cerebras backup' : CBRS_KEY ? 'Cerebras only' : '⚠️ NO AI — check keys'}
 
 Type /help for all commands.`);
 
   setInterval(monitorPositions, 60000);
   setInterval(checkPriceAlerts, 30000);
-  setInterval(checkCerebrasIPO, 30000);
   setInterval(scanNewsIntel,   120000);
 
   poll(); // Start long-poll loop
