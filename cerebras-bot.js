@@ -514,20 +514,35 @@ async function scanNewsIntel() {
 // ── TELEGRAM POLL LOOP ───────────────────────────────────────────
 async function poll() {
   try {
-    const r = await fetch(
-      `https://api.telegram.org/bot${TG_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=25`,
-      { timeout: 30000 }
-    );
+    // FIX: Use AbortController for timeout — node-fetch v2 ignores { timeout } option
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    let r;
+    try {
+      r = await fetch(
+        `https://api.telegram.org/bot${TG_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=25`,
+        { signal: controller.signal }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
     const d = await r.json();
-    if (!d.ok || !d.result?.length) return;
+    if (!d.ok || !d.result?.length) {
+      // Log unexpected Telegram errors (not just empty results)
+      if (!d.ok) console.error('[POLL] Telegram error:', d.description || JSON.stringify(d));
+      return;
+    }
     for (const update of d.result) {
       lastUpdateId = update.update_id;
-      const msg = update.message;
+      // Handle both regular messages and channel_post
+      const msg = update.message || update.channel_post;
       if (!msg?.text) continue;
       const chatId = String(msg.chat.id);
       const text   = msg.text.trim();
       const parts  = text.split(/\s+/);
       const cmd    = parts[0].toLowerCase().split('@')[0]; // strip bot username if present
+      console.log(`[MSG] chatId=${chatId} cmd=${cmd}`); // visibility into incoming messages
       try {
         if      (cmd === '/start' || cmd === '/help')  await cmdStart(chatId);
         else if (cmd === '/check'   && parts[1])       await cmdCheck(parts[1].toUpperCase(), chatId);
@@ -547,8 +562,14 @@ async function poll() {
       }
     }
   } catch (e) {
-    if (!e.message?.includes('timeout')) console.error('[POLL]', e.message);
+    // AbortError = timeout, not a real failure — just retry
+    if (e.name === 'AbortError' || e.message?.includes('timeout')) {
+      // silent retry
+    } else {
+      console.error('[POLL]', e.message);
+    }
   }
+  // FIX: Always reschedule — even if an error slips through
   setTimeout(poll, 500);
 }
 
