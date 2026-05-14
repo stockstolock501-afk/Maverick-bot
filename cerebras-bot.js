@@ -10,6 +10,9 @@ const fetch = require('node-fetch');
 const TOKEN    = process.env.INTEL_BOT_TOKEN   || process.env.TELEGRAM_TOKEN  || '';
 const CHAT_ID  = process.env.INTEL_BOT_CHAT    || process.env.TELEGRAM_CHAT_ID || '';
 const FINNHUB  = process.env.FINNHUB_KEY        || '';
+// Brain priority: Groq primary, Cerebras backup
+const GROQ_KEY = process.env.GROQ_KEY           || process.env.GROQ_KEY_2      || '';
+const CBRS_KEY = process.env.CEREBRAS_KEY       || '';
 
 // ── Cerebras ticker — CBRS on NASDAQ
 const CEREBRAS_TICKER = 'CBRS';
