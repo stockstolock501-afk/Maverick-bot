@@ -464,6 +464,20 @@ Use /check ${alert.ticker} for full analysis.`, alert.chatId || CHAT_ID);
   }
 }
 
+🔄 Change: ${(q.dp||0) >= 0 ? '+' : ''}${rnd(q.dp||0, 2)}%
+
+⚡ <b>Maverick IPO Protocol:</b>
+• First 15 min = smart money only. Observe.
+• Enter only on RVOL above 3x, price holding.
+• Do NOT chase above +25% from open.
+• Hard stop: -8% from entry. No exceptions.
+Use /check CBRS for live Lion Analysis.`);
+    } else {
+      console.log(`[CEREBRAS] Not live yet — quote.c = ${q?.c}`);
+    }
+  } catch (e) { console.error('[IPO]', e.message); }
+}
+
 async function scanNewsIntel() {
   try {
     const news = await fh('/news?category=general');
@@ -495,10 +509,11 @@ async function scanNewsIntel() {
 
 // ── TELEGRAM POLL LOOP ───────────────────────────────────────────
 async function poll() {
+  // THE CRITICAL FIX: setTimeout is in a finally block so the loop
+  // NEVER dies — not on empty results, not on errors, not on timeouts.
   try {
-    // AbortController fixes node-fetch v2 timeout (the { timeout } option is silently ignored)
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
+    const abort = setTimeout(() => controller.abort(), 30000);
     let r;
     try {
       r = await fetch(
@@ -506,16 +521,19 @@ async function poll() {
         { signal: controller.signal }
       );
     } finally {
-      clearTimeout(timer);
+      clearTimeout(abort);
     }
+
     const d = await r.json();
+
+    // Empty or idle — perfectly normal, loop continues via finally below
     if (!d.ok || !d.result?.length) {
-      if (!d.ok) console.error('[POLL] Telegram error:', d.description || JSON.stringify(d));
-      return;
+      if (!d.ok) console.error('[POLL] Telegram error:', d.description);
+      return; // <-- safe now because finally runs setTimeout
     }
+
     for (const update of d.result) {
       lastUpdateId = update.update_id;
-      // Support both direct messages and group/channel posts
       const msg = update.message || update.channel_post;
       if (!msg?.text) continue;
       const chatId = String(msg.chat.id);
@@ -542,14 +560,11 @@ async function poll() {
       }
     }
   } catch (e) {
-    if (e.name === 'AbortError' || e.message?.includes('timeout')) {
-      // silent retry — normal long-poll timeout
-    } else {
-      console.error('[POLL]', e.message);
-    }
+    if (e.name !== 'AbortError') console.error('[POLL]', e.message);
+  } finally {
+    // This ALWAYS runs — empty results, errors, timeouts — loop never dies
+    setTimeout(poll, 500);
   }
-  // Always reschedule no matter what
-  setTimeout(poll, 500);
 }
 
 // ── STARTUP ───────────────────────────────────────────────────────
@@ -559,7 +574,6 @@ async function start() {
   console.log(`  Cerebras (backup): ${CBRS_KEY ? '✅' : '⚠️  not set'}`);
   console.log(`  Finnhub:         ${FINNHUB  ? '✅' : '❌ MISSING'}`);
   console.log(`  Telegram:        ${TG_TOKEN ? '✅' : '❌ MISSING'}`);
-  console.log(`  Intel Bot:       ${TG_TOKEN ? '✅ launched' : '❌'}`);
 
   if (!TG_TOKEN) { console.error('[BOT] No Telegram token. Bot disabled.'); return; }
 
