@@ -26,16 +26,35 @@ require('dotenv').config();
 var fetch = require('node-fetch');
 var http  = require('http');
 
-// ── RENDER HTTP SERVER — MAVERICK TERMINAL ────────────────────────────────
+// ── RENDER HTTP SERVER — MAVERICK TERMINAL + TELEGRAM WEBHOOK ─────────────
 var PORT      = process.env.PORT || 10000;
 var BOT_START = new Date();
-http.createServer(function(req, res) {
+var server    = http.createServer(function(req, res) {
+
+  // ── TELEGRAM WEBHOOK (POST /webhook) ──────────────────────────────────────
+  // Telegram pushes every message here. We respond 200 immediately,
+  // then process async — no polling, no conflict possible.
+  if (req.method === 'POST' && req.url === '/webhook') {
+    var body = '';
+    req.on('data', function(chunk) { body += chunk.toString(); });
+    req.on('end', function() {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+      try {
+        var update = JSON.parse(body);
+        handleUpdate(update).catch(function(e) { console.error('[WEBHOOK]', e.message); });
+      } catch (e) { console.error('[WEBHOOK] Parse error:', e.message); }
+    });
+    return;
+  }
+
+  // ── DASHBOARD (GET /) ─────────────────────────────────────────────────────
   var upMs  = Date.now() - BOT_START.getTime();
   var upH   = Math.floor(upMs/3600000), upM = Math.floor((upMs%3600000)/60000), upS = Math.floor((upMs%60000)/1000);
   var upStr = upH+'h '+upM+'m '+upS+'s';
   var posCount = Object.keys(positions||{}).length;
   var wlCount  = Object.keys(watchlist||{}).length;
-  var html = '<!DOCTYPE html><html><head><title>MAVERICK INTEL BOT v5.0</title>' +
+  var html = '<!DOCTYPE html><html><head><title>MAVERICK INTEL BOT v5.2</title>' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<meta http-equiv="refresh" content="30">' +
     '<style>' +
@@ -47,16 +66,19 @@ http.createServer(function(req, res) {
     '.row{display:flex;justify-content:space-between;font-size:0.8em;margin:4px 0;}' +
     '.ok{color:#00ff88;}.warn{color:#ffaa00;}.off{color:#ff4444;}' +
     '.tag{background:#00ff8815;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:0.7em;}' +
-    '.up{color:#00ff88;font-size:1.4em;font-weight:bold;letter-spacing:1px;}' +
+    '.up{color:#00ff88;font-size:1.4em;font-weight:bold;letter-spacing:1px;margin:8px 0;}' +
+    '.mode{background:#00ff8815;border:1px solid #00ff8833;border-radius:6px;padding:8px 12px;margin:10px 0;font-size:0.8em;color:#00ff88;}' +
     '.pulse{width:8px;height:8px;background:#00ff88;border-radius:50%;display:inline-block;margin-right:6px;animation:p 1.5s infinite;}' +
     '@keyframes p{0%,100%{opacity:1}50%{opacity:0.3}}' +
     'footer{margin-top:20px;font-size:0.7em;color:#444;text-align:center;}' +
     '</style></head><body>' +
-    '<h1><span class="pulse"></span>MAVERICK INTEL BOT <span class="tag">v5.0</span></h1>' +
+    '<h1><span class="pulse"></span>MAVERICK INTEL BOT <span class="tag">v5.2</span></h1>' +
     '<div class="up">● ONLINE</div>' +
+    '<div class="mode">⚡ WEBHOOK MODE — Zero polling. Zero conflict. Telegram pushes directly here.</div>' +
     '<div class="grid">' +
     '<div class="card"><h3>SYSTEM</h3>' +
     '<div class="row"><span>Uptime</span><span class="ok">'+upStr+'</span></div>' +
+    '<div class="row"><span>Mode</span><span class="ok">Webhook ✓</span></div>' +
     '<div class="row"><span>Positions</span><span class="ok">'+posCount+' open</span></div>' +
     '<div class="row"><span>Watchlist</span><span class="ok">'+wlCount+' tickers</span></div>' +
     '<div class="row"><span>Trades logged</span><span class="ok">'+((memory&&memory.trades)?memory.trades.length:0)+'</span></div>' +
@@ -78,12 +100,13 @@ http.createServer(function(req, res) {
     '<div class="row"><span>News Scanner</span><span class="ok">2min cycle ✓</span></div>' +
     '</div>' +
     '</div>' +
-    '<footer>MAVERICK INTEL BOT v5.0 · Supernova Protocol · Page refreshes every 30s</footer>' +
+    '<footer>MAVERICK INTEL BOT v5.2 · Webhook Mode · Page refreshes every 30s</footer>' +
     '</body></html>';
   res.writeHead(200, { 'Content-Type': 'text/html' });
   res.end(html);
-}).listen(PORT, function() {
-  console.log('[SERVER] Maverick Terminal listening on port ' + PORT);
+});
+server.listen(PORT, function() {
+  console.log('[SERVER] Maverick Terminal on port ' + PORT + ' (webhook + dashboard)');
 });
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
@@ -1506,56 +1529,48 @@ async function checkPriceAlerts() {
   }
 }
 
-// ── TELEGRAM POLL LOOP ─────────────────────────────────────────────────────
-async function poll() {
+// ── COMMAND ROUTER (used by webhook — no polling needed) ───────────────────
+async function handleUpdate(update) {
+  var msg = update.message || update.channel_post;
+  if (!msg || !msg.text) return;
+  var chatId = String(msg.chat.id);
+  var text   = msg.text.trim();
+  var parts  = text.split(/\s+/);
+  var cmd    = parts[0].toLowerCase().split('@')[0];
+  console.log('[MSG] chatId='+chatId+' text='+text.slice(0,60));
+  // Fire heavy commands without await — response comes when ready, bot stays responsive
+  var fire = function(fn) { fn.catch(function(e) { console.error('[CMD]', e.message); tg('Something went wrong. Try again.', chatId); }); };
   try {
-    var controller=new AbortController(), timer=setTimeout(function(){controller.abort();},32000);
-    var r;
-    try { r=await fetch('https://api.telegram.org/bot'+TG_TOKEN+'/getUpdates?offset='+(lastUpdateId+1)+'&timeout=25',{signal:controller.signal}); }
-    finally { clearTimeout(timer); }
-    var d=await r.json();
-    if(!d.ok||!d.result||!d.result.length){if(!d.ok)console.error('[POLL]',d.description);return;}
-    for(var i=0;i<d.result.length;i++){
-      var update=d.result[i]; lastUpdateId=update.update_id;
-      var msg=update.message||update.channel_post; if(!msg||!msg.text) continue;
-      var chatId=String(msg.chat.id), text=msg.text.trim(), parts=text.split(/\s+/), cmd=parts[0].toLowerCase().split('@')[0];
-      console.log('[MSG] chatId='+chatId+' text='+text.slice(0,60));
-      // Fire heavy commands without await — decouples from poll timeout, prevents freeze
-      var fire=function(fn){fn.catch(function(e){console.error('[CMD]',e.message);tg('Something went wrong. Try again.',chatId);});};
-      try {
-        if      (cmd==='/start'||cmd==='/help')  await cmdStart(chatId);
-        else if (cmd==='/check'&&parts[1])        fire(cmdCheck(parts[1].toUpperCase(),chatId));
-        else if (cmd==='/check')                  await tg('Usage: /check TICKER  e.g. /check AAPL',chatId);
-        else if (cmd==='/scan')                   fire(cmdScan(chatId));
-        else if (cmd==='/squeeze')                fire(cmdSqueeze(chatId));
-        else if (cmd==='/gappers')                fire(cmdGappers(chatId));
-        else if (cmd==='/news')                   fire(cmdNews(chatId));
-        else if (cmd==='/science'&&parts[1])      fire(cmdScience(parts[1].toUpperCase(),chatId));
-        else if (cmd==='/science')                await tg('Usage: /science TICKER  e.g. /science AAPL',chatId);
-        else if (cmd==='/sdi'&&parts[1])          fire(cmdSDI(parts[1].toUpperCase(),chatId));
-        else if (cmd==='/sdi')                    await tg('Usage: /sdi TICKER  e.g. /sdi AAPL',chatId);
-        else if (cmd==='/autopsy')                fire(cmdAutopsy(chatId));
-        else if (cmd==='/supernova'&&parts[1])    fire(cmdSupernova(parts[1].toUpperCase(),chatId));
-        else if (cmd==='/supernova')              await tg('Usage: /supernova TICKER  e.g. /supernova MDAI',chatId);
-        else if (cmd==='/ross')                   await cmdActivateProtocol('ross',chatId);
-        else if (cmd==='/humble')                 await cmdActivateProtocol('humble',chatId);
-        else if (cmd==='/maverick')               await cmdActivateProtocol('maverick',chatId);
-        else if (cmd==='/protocol')               await cmdProtocol(parts,chatId);
-        else if (cmd==='/position')               await cmdPosition(parts,chatId);
-        else if (cmd==='/positions')              fire(cmdPositions(chatId));
-        else if (cmd==='/close'&&parts[1])        await cmdClose(parts,chatId);
-        else if (cmd==='/watch'&&parts[1])        await cmdWatch(parts[1],chatId);
-        else if (cmd==='/alert')                  await cmdAlert(parts,chatId);
-        else if (cmd==='/myedge')                 fire(cmdMyEdge(chatId));
-        else if (cmd==='/history')                await cmdHistory(chatId);
-        else if (cmd==='/supernova-scan')         fire(cmdSupernovaScan(chatId));
-        else if (cmd==='/briefing')               fire(morningBriefing(true));
-        else if (text.charAt(0)!=='/') fire(cmdAI(text,chatId));
-        else await tg('Unknown command. Type /help for all commands.',chatId);
-      } catch(e){console.error('[CMD]',cmd,e.message);await tg('Error: '+e.message,chatId);}
-    }
-  } catch(e){if(e.name!=='AbortError')console.error('[POLL]',e.message);}
-  finally { setTimeout(poll, 500); }
+    if      (cmd==='/start'||cmd==='/help')  await cmdStart(chatId);
+    else if (cmd==='/check'&&parts[1])        fire(cmdCheck(parts[1].toUpperCase(),chatId));
+    else if (cmd==='/check')                  await tg('Usage: /check TICKER  e.g. /check AAPL',chatId);
+    else if (cmd==='/scan')                   fire(cmdScan(chatId));
+    else if (cmd==='/squeeze')                fire(cmdSqueeze(chatId));
+    else if (cmd==='/gappers')                fire(cmdGappers(chatId));
+    else if (cmd==='/news')                   fire(cmdNews(chatId));
+    else if (cmd==='/science'&&parts[1])      fire(cmdScience(parts[1].toUpperCase(),chatId));
+    else if (cmd==='/science')                await tg('Usage: /science TICKER  e.g. /science AAPL',chatId);
+    else if (cmd==='/sdi'&&parts[1])          fire(cmdSDI(parts[1].toUpperCase(),chatId));
+    else if (cmd==='/sdi')                    await tg('Usage: /sdi TICKER  e.g. /sdi AAPL',chatId);
+    else if (cmd==='/autopsy')                fire(cmdAutopsy(chatId));
+    else if (cmd==='/supernova'&&parts[1])    fire(cmdSupernova(parts[1].toUpperCase(),chatId));
+    else if (cmd==='/supernova')              await tg('Usage: /supernova TICKER  e.g. /supernova MDAI',chatId);
+    else if (cmd==='/supernova-scan')         fire(cmdSupernovaScan(chatId));
+    else if (cmd==='/briefing')               fire(morningBriefing(true));
+    else if (cmd==='/ross')                   await cmdActivateProtocol('ross',chatId);
+    else if (cmd==='/humble')                 await cmdActivateProtocol('humble',chatId);
+    else if (cmd==='/maverick')               await cmdActivateProtocol('maverick',chatId);
+    else if (cmd==='/protocol')               await cmdProtocol(parts,chatId);
+    else if (cmd==='/position')               await cmdPosition(parts,chatId);
+    else if (cmd==='/positions')              fire(cmdPositions(chatId));
+    else if (cmd==='/close'&&parts[1])        await cmdClose(parts,chatId);
+    else if (cmd==='/watch'&&parts[1])        await cmdWatch(parts[1],chatId);
+    else if (cmd==='/alert')                  await cmdAlert(parts,chatId);
+    else if (cmd==='/myedge')                 fire(cmdMyEdge(chatId));
+    else if (cmd==='/history')                await cmdHistory(chatId);
+    else if (text.charAt(0)!=='/') fire(cmdAI(text,chatId));
+    else await tg('Unknown command. Type /help for all commands.',chatId);
+  } catch(e) { console.error('[CMD]', cmd, e.message); await tg('Error: '+e.message, chatId); }
 }
 
 // ── SUPERNOVA SCAN ────────────────────────────────────────────────────────
@@ -1586,54 +1601,63 @@ async function cmdSupernovaScan(chatId) {
 // ── STARTUP ────────────────────────────────────────────────────────────────
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v5.1           ║');
-  console.log('║    SUPERNOVA PROTOCOL + MAVERICK VOICE║');
+  console.log('║    MAVERICK INTEL BOT v5.2           ║');
+  console.log('║    WEBHOOK MODE — ZERO CONFLICT      ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
-  console.log('  Data:       Yahoo Finance (primary, parallel) + Finnhub + Polygon');
+  console.log('  Mode:       Webhook (Telegram pushes → no polling conflict)');
+  console.log('  Data:       Yahoo Finance (parallel) + Finnhub + Polygon');
   console.log('  Polygon:    '+(POLYGON?'connected':'not set'));
   console.log('  Finnhub:    '+(FINNHUB?'connected':'not set'));
   console.log('  Groq AI:    '+(GROQ_KEY?'connected':'not set'));
   console.log('  Cerebras:   '+(CBRS_KEY?'connected':'not set'));
   console.log('  JSONBin:    '+(JSONBIN_ID?'configured':'not set'));
   console.log('');
-  if(!TG_TOKEN){console.error('[BOT] FATAL: No INTEL_BOT_TOKEN. Cannot start.');return;}
-  if(!CHAT_ID) console.error('[BOT] WARNING: No INTEL_BOT_CHAT. Alerts will NOT send proactively.');
+  if (!TG_TOKEN) { console.error('[BOT] FATAL: No INTEL_BOT_TOKEN. Cannot start.'); return; }
+  if (!CHAT_ID)  { console.error('[BOT] WARNING: No INTEL_BOT_CHAT. Proactive alerts will NOT send.'); }
+
   await loadMemory();
+
+  // Register webhook with Telegram — tells Telegram to push messages here
+  var WEBHOOK_URL = 'https://maverick-terminal.onrender.com/webhook';
+  try {
+    var whr = await fetch('https://api.telegram.org/bot'+TG_TOKEN+'/setWebhook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: WEBHOOK_URL, drop_pending_updates: true, allowed_updates: ['message','channel_post'] })
+    });
+    var whd = await whr.json();
+    if (whd.ok) {
+      console.log('[WEBHOOK] Registered: ' + WEBHOOK_URL);
+    } else {
+      console.error('[WEBHOOK] Registration failed:', JSON.stringify(whd));
+    }
+  } catch(e) { console.error('[WEBHOOK] setWebhook error:', e.message); }
+
   await tg(
-    '<b>MAVERICK INTEL BOT v5.1 — ONLINE</b>\n\n' +
+    '<b>MAVERICK INTEL BOT v5.2 — ONLINE</b>\n\n' +
+    '⚡ Mode: WEBHOOK — zero polling conflict\n' +
     'Data:   Yahoo Finance (parallel) ✓\n' +
     (POLYGON?'Polygon: news + gainers + history ✓\n':'') +
     (FINNHUB?'Finnhub: fundamentals ✓\n':'') +
     'Brain:  '+(GROQ_KEY?'Groq+Cerebras ✓':CBRS_KEY?'Cerebras only':'NO AI KEYS')+'\n' +
     'Memory: '+(JSONBIN_ID?(memory.trades?memory.trades.length:0)+' trades loaded ✓':'not configured')+'\n\n' +
-    '<b>v5.1 UPGRADES:</b>\n' +
-    '• Maverick alert voice — personal, trade-ready format\n' +
-    '• Demand/supply zone detection on every alert\n' +
-    '• 30-minute move projection on every alert\n' +
-    '• Deep analysis freeze fixed — fire-and-forget\n' +
-    '• Parallel data calls — 3x faster responses\n' +
-    '• /supernova-scan — find supernova candidates\n' +
-    '• /briefing — manual morning briefing trigger\n' +
-    '• Terminal dashboard live at your Render URL\n\n' +
+    '<b>v5.2 — WEBHOOK MODE:</b>\n' +
+    '• Poll conflict eliminated permanently\n' +
+    '• Telegram pushes messages directly to bot\n' +
+    '• No more [POLL] conflict errors\n' +
+    '• All previous features intact\n\n' +
     'Type /help for all commands.'
   );
+
   setInterval(monitorPositions,  60000);
   setInterval(checkPriceAlerts,  30000);
   setInterval(scanNewsIntel,    120000);
   setInterval(morningBriefing,  300000);
   setInterval(pruneHeadlines,  3600000);
 
-  // Fix poll conflict — clear webhook + 3-second delay before polling starts
-  try {
-    await fetch('https://api.telegram.org/bot'+TG_TOKEN+'/deleteWebhook?drop_pending_updates=true');
-    console.log('[POLL] Webhook cleared.');
-  } catch(e) { console.error('[POLL] deleteWebhook failed:', e.message); }
-  await new Promise(function(r){setTimeout(r,3000);}); // 3s gap kills old instance race
-  console.log('[POLL] Starting poll — sole instance confirmed.');
-  poll();
-  console.log('[BOT] v5.1 running. Maverick voice active. Parallel data. Alerts live.');
+  console.log('[BOT] v5.2 running. Webhook active. Alerts live. No polling.');
 }
 
 start();
