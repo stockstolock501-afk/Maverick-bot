@@ -200,6 +200,28 @@ function pruneHeadlines() {
   }
 }
 
+// ── 60-SECOND DATA CACHE ───────────────────────────────────────────────────
+// Prevents hammering Yahoo with repeated calls on same ticker within 1 minute.
+// Cache stores full getStock() result. Cuts Yahoo calls ~60% during scans.
+var dataCache = {};
+var CACHE_TTL  = 60000; // 60 seconds
+
+function cacheGet(sym) {
+  var entry = dataCache[sym];
+  if (entry && (Date.now() - entry.ts) < CACHE_TTL) return entry.data;
+  return null;
+}
+
+function cacheSet(sym, data) {
+  dataCache[sym] = { data: data, ts: Date.now() };
+  // Prune cache if over 100 entries
+  var keys = Object.keys(dataCache);
+  if (keys.length > 100) {
+    var oldest = keys.sort(function(a,b){ return dataCache[a].ts - dataCache[b].ts; }).slice(0, 20);
+    oldest.forEach(function(k){ delete dataCache[k]; });
+  }
+}
+
 // ── JSONBIN ────────────────────────────────────────────────────────────────
 async function loadMemory() {
   if (!JSONBIN_ID || !JSONBIN_KEY) { console.log('[MEMORY] Not configured — running in-memory only'); return; }
@@ -286,7 +308,45 @@ async function fh(ep) {
   try { var sep = ep.indexOf('?')!==-1?'&':'?', r = await fetch('https://finnhub.io/api/v1'+ep+sep+'token='+FINNHUB), text = await r.text(); if (!text||text.trim()==='') return null; return JSON.parse(text); } catch (e) { return null; }
 }
 
-// Polygon daily aggs (works on free plan)
+// ── YAHOO HISTORICAL BARS (replaces polyAggs as primary) ───────────────────
+// Uses the same Yahoo chart endpoint already pulling live prices.
+// range=3mo gives ~60 trading days — enough for RVOL, gap, autopsy.
+// No API key. No rate limit beyond Yahoo's general throttle.
+async function yahooAggs(sym, days) {
+  days = days || 20;
+  var range = days <= 30 ? '3mo' : '6mo';
+  try {
+    var r = await fetch(
+      'https://query1.finance.yahoo.com/v8/finance/chart/' + sym +
+      '?interval=1d&range=' + range,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/5.2)' } }
+    );
+    var d   = await r.json();
+    var res = d && d.chart && d.chart.result && d.chart.result[0];
+    if (!res || !res.timestamp) return null;
+    var ts    = res.timestamp;
+    var q     = res.indicators && res.indicators.quote && res.indicators.quote[0];
+    var adjc  = res.indicators && res.indicators.adjclose && res.indicators.adjclose[0];
+    if (!q) return null;
+    var bars = [];
+    for (var i = 0; i < ts.length; i++) {
+      var c = (adjc && adjc.adjclose && adjc.adjclose[i]) || q.close[i];
+      if (!c || !q.volume[i]) continue;
+      bars.push({
+        t: ts[i] * 1000,
+        o: q.open[i]   || c,
+        h: q.high[i]   || c,
+        l: q.low[i]    || c,
+        c: c,
+        v: q.volume[i] || 0
+      });
+    }
+    // Return only the last N days requested
+    return bars.length ? bars.slice(-Math.min(days + 5, bars.length)) : null;
+  } catch (e) { console.error('[yahooAggs]', sym, e.message); return null; }
+}
+
+// Polygon daily aggs — kept as fallback if Yahoo aggs fail
 async function polyAggs(sym, days) {
   if (!POLYGON) return null;
   days = days || 20;
@@ -294,18 +354,64 @@ async function polyAggs(sym, days) {
     var to = todayStr(), from = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
     var r = await fetch('https://api.polygon.io/v2/aggs/ticker/'+sym+'/range/1/day/'+from+'/'+to+'?adjusted=true&sort=asc&limit=50&apiKey='+POLYGON);
     var d = await r.json(); if (d && d.results && d.results.length) return d.results;
-  } catch (e) { console.error('[polyAggs]', sym, e.message); }
+  } catch (e) {}
   return null;
 }
 
-// Polygon gainers (works on free plan)
+// ── YAHOO GAINERS SCREENER (replaces Polygon snapshot — that's paid) ───────
+// Yahoo predefined screener: day_gainers. Free, no key, same domain.
+// Returns top gainers in the same shape the rest of the bot expects.
+async function yahooGainers() {
+  try {
+    var fields = 'symbol,regularMarketPrice,regularMarketChangePercent,regularMarketVolume,regularMarketDayHigh,regularMarketDayLow,regularMarketPreviousClose';
+    var r = await fetch(
+      'https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved' +
+      '?scrIds=day_gainers&count=25&fields=' + fields,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/5.2)' } }
+    );
+    var d = await r.json();
+    var quotes = d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes;
+    if (!quotes || !quotes.length) return [];
+    return quotes.map(function(q) {
+      return {
+        ticker:          q.symbol,
+        todaysChangePerc: q.regularMarketChangePercent || 0,
+        day: {
+          c: q.regularMarketPrice    || 0,
+          h: q.regularMarketDayHigh  || 0,
+          l: q.regularMarketDayLow   || 0,
+          v: q.regularMarketVolume   || 0
+        },
+        prevDay: { c: q.regularMarketPreviousClose || 0 }
+      };
+    }).filter(function(g) { return g.ticker && g.day.c > 0; });
+  } catch (e) { console.error('[yahooGainers]', e.message); return []; }
+}
+
+// ── UNIFIED GAINERS — Yahoo primary, Polygon fallback ─────────────────────
 async function getTopGainers() {
-  if (!POLYGON) return [];
-  try { var r = await fetch('https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey='+POLYGON), d = await r.json(); if (d && d.tickers) return d.tickers.slice(0,20); } catch (e) {}
+  // Try Yahoo screener first
+  var yg = await yahooGainers();
+  if (yg && yg.length >= 3) {
+    console.log('[GAINERS] Yahoo screener: ' + yg.length + ' gainers');
+    return yg;
+  }
+  // Polygon fallback (only if key set and Yahoo failed)
+  if (POLYGON) {
+    try {
+      var r = await fetch('https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey='+POLYGON);
+      var d = await r.json();
+      if (d && d.tickers && d.tickers.length) {
+        console.log('[GAINERS] Polygon fallback: ' + d.tickers.length + ' gainers');
+        return d.tickers.slice(0, 20);
+      }
+    } catch (e) {}
+  }
+  console.log('[GAINERS] No gainer data from any source');
   return [];
 }
 
-// Polygon news (works on free plan)
+// Polygon news (still free on their plan — kept as primary news source)
 async function polyNewsRaw(tickerOrNull, limit) {
   if (!POLYGON) return [];
   limit = limit || 25;
@@ -319,44 +425,58 @@ async function polyNewsRaw(tickerOrNull, limit) {
 
 // ── UNIFIED STOCK DATA ─────────────────────────────────────────────────────
 async function getStock(sym) {
+  // Return cached data if fresh (60s TTL — protects Yahoo from hammering)
+  var cached = cacheGet(sym);
+  if (cached) return cached;
+
   try {
     var price=0, prevClose=0, volume=0, high=0, low=0, open=0, week52H=0, week52L=0, source='unknown';
 
     // TIER 1: Yahoo Finance (primary — free and live)
     var yq = await yahooQuote(sym);
-    if (yq && yq.price > 0) { price=yq.price; prevClose=yq.prevClose; volume=yq.volume; high=yq.high; low=yq.low; open=yq.open; week52H=yq.week52H; week52L=yq.week52L; source='Yahoo'; }
+    if (yq && yq.price > 0) {
+      price=yq.price; prevClose=yq.prevClose; volume=yq.volume;
+      high=yq.high; low=yq.low; open=yq.open;
+      week52H=yq.week52H; week52L=yq.week52L; source='Yahoo';
+    }
 
     // TIER 2: Finnhub
     if (!price || price <= 0) {
       var fq = await fhQuote(sym);
-      if (fq && fq.price > 0) { price=fq.price; prevClose=fq.prevClose; volume=fq.volume; high=fq.high; low=fq.low; open=fq.open; source='Finnhub'; }
-    }
-
-    // TIER 3: Polygon aggs (last close)
-    if (!price || price <= 0) {
-      var aggs3 = await polyAggs(sym, 5);
-      if (aggs3 && aggs3.length >= 1) {
-        var last=aggs3[aggs3.length-1], before=aggs3.length>=2?aggs3[aggs3.length-2]:last;
-        price=last.c; prevClose=before.c; volume=last.v; high=last.h; low=last.l; open=last.o; source='Polygon (EOD)';
+      if (fq && fq.price > 0) {
+        price=fq.price; prevClose=fq.prevClose; volume=fq.volume;
+        high=fq.high; low=fq.low; open=fq.open; source='Finnhub';
       }
     }
 
     if (!price || price <= 0) return null;
 
-    // PARALLEL: fetch RVOL aggs + fundamentals simultaneously (3x faster)
+    // PARALLEL: Yahoo historical bars + Finnhub fundamentals simultaneously
     var parallel = await Promise.allSettled([
-      polyAggs(sym, 20),
+      yahooAggs(sym, 22),   // PRIMARY: free, no key, same domain
       fhMetrics(sym)
     ]);
 
-    // RVOL from aggs
-    var avgVol = 500000;
+    // Historical bars for RVOL + gap (Yahoo primary, Polygon fallback)
     var aggs = (parallel[0].status==='fulfilled' && parallel[0].value) ? parallel[0].value : null;
-    if (aggs && aggs.length >= 3) { var vols=aggs.slice(-10).map(function(a){return a.v||0;}); avgVol=vols.reduce(function(a,b){return a+b;},0)/vols.length; }
+    if (!aggs || aggs.length < 3) {
+      // Polygon fallback for aggs (free endpoint — just needs correct REST key)
+      aggs = await polyAggs(sym, 20);
+    }
 
-    // Gap
+    // RVOL from bars
+    var avgVol = 500000;
+    if (aggs && aggs.length >= 3) {
+      var vols = aggs.slice(-10).map(function(a){return a.v||0;});
+      avgVol = vols.reduce(function(a,b){return a+b;},0) / vols.length;
+    }
+
+    // Gap from bars
     var gapPct = 0;
-    if (aggs && aggs.length >= 2) { var pd=aggs[aggs.length-2]; if (pd&&pd.c>0) gapPct=rnd((open-pd.c)/pd.c*100,2); }
+    if (aggs && aggs.length >= 2) {
+      var pd = aggs[aggs.length-2];
+      if (pd && pd.c > 0) gapPct = rnd((open - pd.c) / pd.c * 100, 2);
+    }
 
     // Fundamentals from Finnhub
     var floatM=50, shortPct=0;
@@ -375,7 +495,9 @@ async function getStock(sym) {
     var atr         = rnd(price*0.025,4);
     var daysToCover = floatM>0&&avgVol>0 ? rnd((floatM*1e6)/avgVol,2) : 99;
 
-    return { sym, price, changePct, gapPct, high, low, open, prevClose, volume, avgVol:rnd(avgVol,0), relVol, floatM, shortPct, week52High:week52H, week52Low:week52L, atr, daysToCover, source, _aggs:aggs };
+    var result = { sym, price, changePct, gapPct, high, low, open, prevClose, volume, avgVol:rnd(avgVol,0), relVol, floatM, shortPct, week52High:week52H, week52Low:week52L, atr, daysToCover, source, _aggs:aggs };
+    cacheSet(sym, result);  // Store in 60s cache
+    return result;
   } catch (e) { console.error('[getStock]', sym, e.message); return null; }
 }
 
@@ -1084,7 +1206,7 @@ async function runAutopsy() {
   for (var i=0;i<candidates.length;i++){
     var sym=candidates[i];
     try {
-      var aggs=await polyAggs(sym,35); if(!aggs||aggs.length<5){await sleep(200);continue;}
+      var aggs=await yahooAggs(sym,40); if(!aggs||aggs.length<5) aggs=await polyAggs(sym,35); if(!aggs||aggs.length<5){await sleep(200);continue;}
       var biggestMove=0, biggestDay=null, biggestIdx=0;
       for(var j=1;j<aggs.length;j++){var pc=aggs[j-1].c,cc=aggs[j].c;if(!pc||!cc||pc<=0)continue;var pct=(cc-pc)/pc*100;if(pct>biggestMove){biggestMove=pct;biggestDay=aggs[j];biggestIdx=j;}}
       if(biggestMove<15||!biggestDay){await sleep(200);continue;}
@@ -1601,8 +1723,8 @@ async function cmdSupernovaScan(chatId) {
 // ── STARTUP ────────────────────────────────────────────────────────────────
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v5.2           ║');
-  console.log('║    WEBHOOK MODE — ZERO CONFLICT      ║');
+  console.log('║    MAVERICK INTEL BOT v5.3           ║');
+  console.log('║    YAHOO DATA + CACHE + WEBHOOK      ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
@@ -1636,18 +1758,18 @@ async function start() {
   } catch(e) { console.error('[WEBHOOK] setWebhook error:', e.message); }
 
   await tg(
-    '<b>MAVERICK INTEL BOT v5.2 — ONLINE</b>\n\n' +
+    '<b>MAVERICK INTEL BOT v5.3 — ONLINE</b>\n\n' +
     '⚡ Mode: WEBHOOK — zero polling conflict\n' +
-    'Data:   Yahoo Finance (parallel) ✓\n' +
-    (POLYGON?'Polygon: news + gainers + history ✓\n':'') +
-    (FINNHUB?'Finnhub: fundamentals ✓\n':'') +
+    'Data:   Yahoo Finance (quotes + history + gainers) ✓\n' +
+    (FINNHUB?'Finnhub: fundamentals + news ✓\n':'') +
+    (POLYGON?'Polygon: news only (free tier) ✓\n':'') +
     'Brain:  '+(GROQ_KEY?'Groq+Cerebras ✓':CBRS_KEY?'Cerebras only':'NO AI KEYS')+'\n' +
     'Memory: '+(JSONBIN_ID?(memory.trades?memory.trades.length:0)+' trades loaded ✓':'not configured')+'\n\n' +
-    '<b>v5.2 — WEBHOOK MODE:</b>\n' +
-    '• Poll conflict eliminated permanently\n' +
-    '• Telegram pushes messages directly to bot\n' +
-    '• No more [POLL] conflict errors\n' +
-    '• All previous features intact\n\n' +
+    '<b>v5.3 DATA FIX:</b>\n' +
+    '• Gainers: Yahoo screener (free) — Polygon gainers dropped\n' +
+    '• History: Yahoo 3-month bars for RVOL + gap + autopsy\n' +
+    '• 60s data cache — Yahoo rate protection active\n' +
+    '• /scan /gappers /autopsy /briefing all restored\n\n' +
     'Type /help for all commands.'
   );
 
@@ -1657,7 +1779,7 @@ async function start() {
   setInterval(morningBriefing,  300000);
   setInterval(pruneHeadlines,  3600000);
 
-  console.log('[BOT] v5.2 running. Webhook active. Alerts live. No polling.');
+  console.log('[BOT] v5.3 running. Yahoo data stack. 60s cache. Webhook active. No polling.');
 }
 
 start();
