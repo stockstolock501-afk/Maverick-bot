@@ -1386,15 +1386,113 @@ async function start() {
   setInterval(morningBriefing,  300000);
   setInterval(pruneHeadlines,  3600000);
 
-  // Fix poll conflict — clear any webhook and drop pending updates so
-  // only this instance polls. Eliminates the "terminated by other getUpdates" error.
+  // ── WEBHOOK SETUP (Better for Render) ─────────────────────────────────────
+async function handleUpdate(update) {
   try {
-    await fetch('https://api.telegram.org/bot'+TG_TOKEN+'/deleteWebhook?drop_pending_updates=true');
-    console.log('[POLL] Webhook cleared — sole instance confirmed.');
-  } catch(e) { console.error('[POLL] deleteWebhook failed:', e.message); }
+    var msg = update.message || update.channel_post;
+    if (!msg || !msg.text) return;
 
-  poll();
-  console.log('[BOT] v5.0 running. Supernova Protocol active. HTTP server up. All intervals live.');
+    var chatId = String(msg.chat.id);
+    var text = msg.text.trim();
+    var parts = text.split(/\s+/);
+    var cmd = parts[0].toLowerCase().split('@')[0];
+
+    console.log('[MSG] chatId=' + chatId + ' text=' + text.slice(0, 60));
+
+    if      (cmd === '/start' || cmd === '/help')  await cmdStart(chatId);
+    else if (cmd === '/check' && parts[1])        await cmdCheck(parts[1].toUpperCase(), chatId);
+    else if (cmd === '/check')                    await tg('Usage: /check TICKER', chatId);
+    else if (cmd === '/scan')                     await cmdScan(chatId);
+    else if (cmd === '/squeeze')                  await cmdSqueeze(chatId);
+    else if (cmd === '/gappers')                  await cmdGappers(chatId);
+    else if (cmd === '/news')                     await cmdNews(chatId);
+    else if (cmd === '/science' && parts[1])      await cmdScience(parts[1].toUpperCase(), chatId);
+    else if (cmd === '/science')                  await tg('Usage: /science TICKER', chatId);
+    else if (cmd === '/sdi' && parts[1])          await cmdSDI(parts[1].toUpperCase(), chatId);
+    else if (cmd === '/sdi')                      await tg('Usage: /sdi TICKER', chatId);
+    else if (cmd === '/autopsy')                  await cmdAutopsy(chatId);
+    else if (cmd === '/ross')                     await cmdActivateProtocol('ross', chatId);
+    else if (cmd === '/humble')                   await cmdActivateProtocol('humble', chatId);
+    else if (cmd === '/maverick')                 await cmdActivateProtocol('maverick', chatId);
+    else if (cmd === '/protocol')                 await cmdProtocol(parts, chatId);
+    else if (cmd === '/position')                 await cmdPosition(parts, chatId);
+    else if (cmd === '/positions')                await cmdPositions(chatId);
+    else if (cmd === '/close' && parts[1])        await cmdClose(parts, chatId);
+    else if (cmd === '/watch' && parts[1])        await cmdWatch(parts[1], chatId);
+    else if (cmd === '/alert')                    await cmdAlert(parts, chatId);
+    else if (cmd === '/myedge')                   await cmdMyEdge(chatId);
+    else if (cmd === '/history')                  await cmdHistory(chatId);
+    else if (cmd === '/supernova' && parts[1])    await cmdSupernova(parts[1].toUpperCase(), chatId);
+    else if (cmd === '/supernova')                await tg('Usage: /supernova TICKER', chatId);
+    else if (text.charAt(0) !== '/')              await cmdAI(text, chatId);
+    else await tg('Unknown command. Type /help for all commands.', chatId);
+
+  } catch (e) {
+    console.error('[WEBHOOK]', e.message);
+  }
 }
 
-start();
+// ── STARTUP ────────────────────────────────────────────────────────────────
+async function start() {
+  console.log('\n╔══════════════════════════════════════╗');
+  console.log('║    MAVERICK INTEL BOT v5.0           ║');
+  console.log('║    SUPERNOVA PROTOCOL ACTIVE         ║');
+  console.log('╚══════════════════════════════════════╝\n');
+
+  // ... keep all your existing console.log lines for connections ...
+
+  if (!TG_TOKEN) { console.error('[BOT] FATAL: No INTEL_BOT_TOKEN'); return; }
+
+  await loadMemory();
+
+  // === WEBHOOK SETUP ===
+  try {
+    await fetch('https://api.telegram.org/bot' + TG_TOKEN + '/deleteWebhook?drop_pending_updates=true');
+    await fetch('https://api.telegram.org/bot' + TG_TOKEN + '/setWebhook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'maverick-terminal.onrender.com'}/webhook`,
+        drop_pending_updates: true
+      })
+    });
+    console.log('[WEBHOOK] ✅ Successfully set on Render');
+  } catch (e) {
+    console.error('[WEBHOOK] Setup failed:', e.message);
+  }
+
+  await tg('<b>✅ MAVERICK INTEL BOT v5.0 — ONLINE (Webhook Mode)</b>', CHAT_ID);
+
+  setInterval(monitorPositions,  60000);
+  setInterval(checkPriceAlerts,  30000);
+  setInterval(scanNewsIntel,    120000);
+  setInterval(morningBriefing,  300000);
+  setInterval(pruneHeadlines,   3600000);
+
+  console.log('[BOT] v5.0 running in Webhook mode. No more polling conflicts.');
+}
+
+// ── HTTP SERVER WITH WEBHOOK ───────────────────────────────────────────────
+var PORT = process.env.PORT || 10000;
+var server = http.createServer(async function(req, res) {
+  if (req.url === '/webhook' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const update = JSON.parse(body);
+        await handleUpdate(update);
+      } catch (e) {}
+      res.writeHead(200);
+      res.end();
+    });
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('MAVERICK INTEL BOT v5.0 — ONLINE\n');
+  }
+});
+
+server.listen(PORT, function() {
+  console.log('[SERVER] HTTP keepalive listening on port ' + PORT);
+  start();
+});
