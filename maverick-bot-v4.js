@@ -150,12 +150,31 @@ function procEnd(key) {
 // ── MEMORY ─────────────────────────────────────────────────────────────────
 var memory = { trades: [], preferences: {}, winRates: {}, science: null, lastUpdated: 0 };
 
-// ── BASE UNIVERSE ──────────────────────────────────────────────────────────
+// ── BASE UNIVERSE — 65 TICKERS ────────────────────────────────────────────
+// Expanded to include AMEX names, broader micro-cap coverage, active movers.
+// Primary zone ($0.25-$6) weighted first. Includes known AMEX staircase types.
 var BASE_SCAN = [
+  // Core NASDAQ momentum (proven volatility)
   'MARA','RIOT','SOFI','HOOD','FFIE','MULN','ATER','BBIG',
   'GFAI','GMBL','NKLA','GPUS','AIXI','AAOI','VERB','CNEY','XTIA',
-  'MSTX','IONQ','RKLB','ACHR','PLTR','AMD'
-];
+  'MSTX','IONQ','RKLB','ACHR','PLTR','AMD',
+  // AMEX active names (TRT-style staircase territory)
+  'TRT','CEI','IMPP','CSLR','NRXS','AMMO','SCON','BKSY',
+  // Active NASDAQ micro-caps $1-$15
+  'SBET','PBTS','DRUG','BTBT','SOPA','KAVL','BRTX','GOEV',
+  'WRAP','GTBP','ABOS','WLDS','SNPX','CLWT','CLEU','SOS',
+  'REBN','PHGE','TRKA','AGEN','IDEX','ILUS','CODA','IDN',
+  'GREE','APLT','BURU','INPX','FRZA','PAYO',
+  // Biotech/pharma sub-$15
+  'ADXN','OBSV','FEMY','HUDI','PRFX','HLBZ','VVPR','BFRI',
+  // Crypto-adjacent / emerging tech
+  'SFOR','GAMC','MEGL','NUKK','MBOT','CENN','MULN'
+].filter(function(v,i,a){return a.indexOf(v)===i;}); // deduplicate
+
+// ── STAIRCASE TRACKER ──────────────────────────────────────────────────────
+// Remembers when each ticker first showed staircase behavior.
+// Enables the duration timer: 30min soft / 60min hard alert.
+var staircaseTracker = {};
 
 // ── TICKER + INTENT DETECTION ─────────────────────────────────────────────
 var SKIP_WORDS = new Set([
@@ -194,6 +213,7 @@ function detectIntent(text) {
   if (/\b(short danger|sdi)\b/.test(lower)) return 'sdi';
   if (/\b(stealth|accumulation|whale detect|sas score|dark pool)\b/.test(lower)) return 'sas';
   if (/\b(backtest|back test|hit rate|88|formula|validate|validation)\b/.test(lower)) return 'backtest';
+  if (/\b(trend|trending|staircase|uptrend|higher high|higher low|momentum trend)\b/.test(lower)) return 'trend';
   if (/\b(supernova|snova|rule of five|supernova score)\b/.test(lower)) return 'supernova';
   if (/\b(gap up|gapping|gappers|gainers|top gain|top gainer)\b/.test(lower)) return 'gappers';
   return null;
@@ -647,6 +667,213 @@ function priceZone(price) {
   if (price <= 9.99)               return { label:'GOOD ZONE ✅',    bonus:7,   mis:4,   penaltySetup:0,  penaltyMIS:0,  filter:false };
   if (price <= 20.00)              return { label:'NOT PREFERRED',   bonus:0,   mis:0,   penaltySetup:0,  penaltyMIS:0,  filter:false };
   return                                  { label:'DON\'T BOTHER ❌', bonus:-15, mis:-8,  penaltySetup:-15,penaltyMIS:-8, filter:true  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── TREND RECOGNITION ENGINE (TRE) ────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// Calculates trend direction, strength, MAs, HH/HL structure, volume bias,
+// momentum, and whether the setup is forming a staircase pattern.
+// Uses only OHLCV bars — no paid data needed.
+
+function calcTrend(d, aggs) {
+  if (!aggs || aggs.length < 5) {
+    return { direction:'UNKNOWN', strength:0, isStaircase:false, details:[], summary:'Insufficient history for trend analysis.', sma5:null, sma10:null, sma20:null };
+  }
+
+  // Simple Moving Averages from closes
+  var closes = aggs.map(function(b){return b.c||0;});
+  function sma(n) {
+    if (closes.length < n) return null;
+    return rnd(closes.slice(-n).reduce(function(a,b){return a+b;},0)/n, 4);
+  }
+  var sma5  = sma(5);
+  var sma10 = sma(10);
+  var sma20 = sma(20);
+
+  // Higher Highs / Higher Lows / Lower Lows / Lower Highs
+  var last10   = aggs.slice(-10);
+  var hhCount=0, hlCount=0, llCount=0, lhCount=0;
+  for (var i=1; i<last10.length; i++) {
+    if (last10[i].h > last10[i-1].h) hhCount++; else lhCount++;
+    if (last10[i].l > last10[i-1].l) hlCount++; else llCount++;
+  }
+
+  // Volume bias — are up days louder than down days?
+  var upVol=0, downVol=0;
+  last10.forEach(function(b){
+    if ((b.c||0) >= (b.o||0)) upVol += b.v||0;
+    else downVol += b.v||0;
+  });
+  var volBias = downVol > 0 ? rnd(upVol/downVol,2) : 1;
+
+  // Rate of change (momentum)
+  var roc5  = aggs.length >= 6  ? rnd((d.price - aggs[aggs.length-6].c)/Math.max(aggs[aggs.length-6].c,0.01)*100, 1) : 0;
+  var roc10 = aggs.length >= 11 ? rnd((d.price - aggs[aggs.length-11].c)/Math.max(aggs[aggs.length-11].c,0.01)*100, 1) : 0;
+
+  // Trend scoring
+  var bull=0, bear=0;
+  if (sma5  && d.price > sma5)          { bull += 15; }
+  if (sma10 && sma5  && sma5  > sma10)  { bull += 15; }
+  if (sma20 && sma10 && sma10 > sma20)  { bull += 10; }
+  if (hhCount >= 6)  bull += 20; else if (hhCount >= 4) bull += 10;
+  if (hlCount >= 6)  bull += 20; else if (hlCount >= 4) bull += 10;
+  if (volBias >= 1.5) bull += 15; else if (volBias >= 1.2) bull += 8;
+  if (roc5 > 5)  bull += 10; else if (roc5 > 0) bull += 4;
+  if (sma5  && d.price < sma5)          { bear += 15; }
+  if (sma10 && sma5  && sma5  < sma10)  { bear += 15; }
+  if (llCount >= 6) bear += 20; else if (llCount >= 4) bear += 10;
+  if (lhCount >= 6) bear += 15;
+  if (volBias < 0.7) bear += 15;
+  if (roc5 < -5) bear += 10; else if (roc5 < 0) bear += 4;
+
+  var net      = bull - bear;
+  var direction= net >= 25 ? 'BULLISH 📈' : net <= -25 ? 'BEARISH 📉' : 'SIDEWAYS ↔️';
+  var strength = Math.min(100, Math.abs(net));
+
+  // Staircase detection: HH + HL majority + bullish volume + positive momentum
+  var isStaircase = hlCount >= 5 && hhCount >= 4 && volBias >= 1.1 && roc5 > 0;
+
+  var details = [];
+  if (sma5)  details.push('5d MA: $'+sma5+' (price '+(d.price>sma5?'above ✅':'below ❌')+')');
+  if (sma10) details.push('10d MA: $'+sma10+' (price '+(d.price>sma10?'above ✅':'below ❌')+')');
+  if (sma20) details.push('20d MA: $'+sma20+' (price '+(d.price>sma20?'above ✅':'below ❌')+')');
+  details.push('HH/HL '+hhCount+'/'+hlCount+' | LL/LH '+llCount+'/'+lhCount+' (last 10 sessions)');
+  details.push('Volume bias: '+volBias+'x '+(volBias>=1.5?'STRONG BUY 🟢':volBias>=1.2?'BUY':volBias<=0.7?'SELL 🔴':'NEUTRAL'));
+  details.push('5d ROC: '+(roc5>=0?'+':'')+roc5+'%  |  10d ROC: '+(roc10>=0?'+':'')+roc10+'%');
+  if (isStaircase) details.push('🪜 STAIRCASE PATTERN DETECTED — higher highs + higher lows + volume confirmation');
+
+  var summary = direction.includes('BULLISH') ?
+    'Uptrend confirmed. '+hhCount+' of '+(last10.length-1)+' sessions made higher highs. Volume favors buyers '+volBias+'x. Momentum: +'+roc5+'% (5d).' :
+    direction.includes('BEARISH') ?
+    'Downtrend. Lower lows dominating. Volume confirms selling pressure.' :
+    'Sideways/consolidating. Watch for breakout. No clear directional edge yet.';
+
+  return { direction, strength, bull, bear, net, sma5, sma10, sma20, hhCount, hlCount, llCount, lhCount, volBias, roc5, roc10, details, summary, isStaircase };
+}
+
+// ── INTRADAY STAIRCASE DETECTOR ───────────────────────────────────────────
+// Detects whether a stock is CURRENTLY forming a staircase intraday.
+// Uses: today's price position in range + RVOL + from-open move + daily trend.
+function detectStaircaseScore(d, aggs) {
+  var score=0, signals=[];
+
+  // Price near HOD (not a spike-fade — still holding gains)
+  var range = (d.high||0) - (d.low||0);
+  if (range > 0) {
+    var rangePos = (d.price - (d.low||0)) / range;
+    if      (rangePos >= 0.80) { score+=25; signals.push('Price at '+rnd(rangePos*100,0)+'% of day range — holding near HOD ✅'); }
+    else if (rangePos >= 0.60) { score+=12; signals.push('Price at '+rnd(rangePos*100,0)+'% of range — mid-range, still in play'); }
+    else                        { score-=15; signals.push('Price near LOD — staircase losing steam ❌'); }
+  }
+
+  // Sustained move from open (not one candle spike)
+  var fromOpen = d.open > 0 ? (d.price - d.open) / d.open * 100 : 0;
+  if      (fromOpen >= 15) { score+=20; signals.push('+'+rnd(fromOpen,1)+'% from open — strong sustained push'); }
+  else if (fromOpen >= 8)  { score+=13; signals.push('+'+rnd(fromOpen,1)+'% from open — building'); }
+  else if (fromOpen >= 4)  { score+=6;  signals.push('+'+rnd(fromOpen,1)+'% from open'); }
+  else if (fromOpen < 0)   { score-=10; signals.push('Below open — directional failure'); }
+
+  // RVOL (institutional volume = real staircase, not retail tweet)
+  if      (d.relVol >= 10) { score+=25; signals.push('RVOL '+d.relVol+'x — WHALE volume. Institutional accumulation.'); }
+  else if (d.relVol >= 6)  { score+=18; signals.push('RVOL '+d.relVol+'x — strong institutional interest'); }
+  else if (d.relVol >= 3)  { score+=10; signals.push('RVOL '+d.relVol+'x — elevated'); }
+  else                      { score+=0;  signals.push('RVOL '+d.relVol+'x — not enough volume for confirmed staircase'); }
+
+  // Multi-day higher lows (the structural foundation)
+  if (aggs && aggs.length >= 5) {
+    var last5    = aggs.slice(-5);
+    var higherL  = 0, higherH = 0;
+    for (var i=1; i<last5.length; i++) {
+      if ((last5[i].l||0) > (last5[i-1].l||0)) higherL++;
+      if ((last5[i].h||0) > (last5[i-1].h||0)) higherH++;
+    }
+    if (higherL >= 3) { score+=20; signals.push(higherL+' of 4 sessions made higher lows — staircase structure building ✅'); }
+    else if (higherL >= 2) { score+=10; signals.push(higherL+' higher lows detected'); }
+
+    // Volume bias on up days vs down days
+    var upV=0, dnV=0;
+    last5.forEach(function(b){ if((b.c||0)>=(b.o||0)) upV+=b.v||0; else dnV+=b.v||0; });
+    if (upV > dnV*1.5) { score+=10; signals.push('Buy volume '+rnd(upV/Math.max(dnV,1),1)+'x sell volume — whales loading'); }
+  }
+
+  score = Math.min(100, Math.max(0, score));
+  var tier = score>=75?'CONFIRMED STAIRCASE 🪜':score>=55?'DEVELOPING 📈':score>=35?'EARLY SIGNS 👀':'NOT A STAIRCASE';
+  return { score, tier, signals };
+}
+
+// ── STAIRCASE SCANNER — runs every 5 min during market hours ─────────────
+async function runStaircaseScanner() {
+  var hourCT = nowHourCT();
+  if (hourCT < 9 || hourCT >= 16) return;
+
+  // Full universe: gainers + watchlist + expanded base
+  var universe=[], gainers=await getTopGainers();
+  gainers.forEach(function(g){ if(g.ticker) universe.push(g.ticker); });
+  Object.keys(watchlist).forEach(function(t){ if(universe.indexOf(t)===-1) universe.push(t); });
+  BASE_SCAN.forEach(function(t){ if(universe.indexOf(t)===-1) universe.push(t); });
+  universe = universe.filter(function(v,i,a){return a.indexOf(v)===i;}).slice(0,50);
+
+  var now = Date.now();
+  for (var i=0; i<universe.length; i++) {
+    var sym = universe[i];
+    try {
+      var d = await getStock(sym);
+      if (!d) continue;
+      // STAIRCASE EXCEPTION: sub-$20, any score, any float — the exception is ABSOLUTE
+      if (d.price > 20 || d.price < 0.25) continue;
+      if (d.changePct < 5) { delete staircaseTracker[sym]; continue; }
+      var country = detectCountry(sym,'');
+      if (country === 'IL') continue;
+
+      var sc = detectStaircaseScore(d, d._aggs);
+      if (sc.score < 40) { delete staircaseTracker[sym]; continue; }
+
+      if (!staircaseTracker[sym]) {
+        staircaseTracker[sym] = { firstSeen:now, alerted30:false, alerted60:false };
+        console.log('[STAIRCASE] First detection: '+sym+' score:'+sc.score);
+      }
+      var tracker = staircaseTracker[sym];
+      var elapsedMin = Math.round((now - tracker.firstSeen) / 60000);
+
+      // ── 60 MIN HARD ALERT — NO EXCEPTIONS ───────────────────────────────
+      if (elapsedMin >= 60 && !tracker.alerted60) {
+        tracker.alerted60 = true;
+        tracker.alerted30 = true;
+        var zones = calcDemandSupplyZones(d._aggs||[]);
+        var trend = calcTrend(d, d._aggs||[]);
+        var msg  = '🪜 <b>STAIRCASE EXCEPTION ALERT — $'+sym+'</b>\n\n';
+        msg += '$'+sym+' has been climbing steadily for <b>'+elapsedMin+' minutes</b>.\n';
+        msg += 'Price: $'+d.price+' (+'+rnd(d.changePct,1)+'%)  RVOL: '+d.relVol+'x\n';
+        msg += 'Zone: '+priceZone(d.price).label+'  Country: '+country+'\n';
+        msg += 'Staircase Score: <b>'+sc.score+'/100</b> ['+sc.tier+']\n';
+        msg += 'Trend: '+trend.direction+' ('+trend.strength+'/100)\n\n';
+        msg += '<b>Why this is real:</b>\n';
+        sc.signals.slice(0,4).forEach(function(s){ msg += '• '+s+'\n'; });
+        msg += '\n<b>Entry zone:</b> $'+rnd(d.price*0.99,4)+' — $'+rnd(d.price*1.01,4)+'\n';
+        msg += '<b>Stop:</b> $'+rnd(d.price*0.94,4)+' (below today\'s higher low structure)\n';
+        msg += '<b>Hold plan:</b> Staircase plays run until RVOL fades. Exit when RVOL < 2x.\n';
+        if (zones.demand.length) msg += '<b>Demand:</b> '+zones.demand.join(' / ')+'\n';
+        if (zones.supply.length) msg += '<b>Supply:</b> '+zones.supply.join(' / ')+'\n';
+        msg += '\n/check '+sym+' | /sas '+sym+' | /trend '+sym;
+        await tg(msg);
+        iHealth.newsAlertsTotal++;
+        await sleep(1500);
+      }
+      // ── 30 MIN SOFT ALERT ────────────────────────────────────────────────
+      else if (elapsedMin >= 30 && !tracker.alerted30 && sc.score >= 60) {
+        tracker.alerted30 = true;
+        await tg('🪜 <b>STAIRCASE BUILDING — $'+sym+'</b>\n$'+d.price+' (+'+rnd(d.changePct,1)+'%) for <b>'+elapsedMin+' min</b>\nRVOL:'+d.relVol+'x  Score:'+sc.score+'/100\nWatching. Will hard-alert at 60min.\n\n/check '+sym);
+        await sleep(1500);
+      }
+      await sleep(300);
+    } catch(e) { console.error('[STAIRCASE]', sym, e.message); }
+  }
+  // Prune stale entries (>8 hours old)
+  Object.keys(staircaseTracker).forEach(function(sym){
+    if ((Date.now()-staircaseTracker[sym].firstSeen) > 8*3600000) delete staircaseTracker[sym];
+  });
+  console.log('[STAIRCASE] Scan complete. Tracking: '+Object.keys(staircaseTracker).length+' names.');
 }
 
 // ── POSITION SIZING ────────────────────────────────────────────────────────
@@ -1120,6 +1347,48 @@ function predictDuration(d, catRank) {
     exitNote='Watch RVOL for fade signal as primary exit trigger.';
   }
   return { minMin, maxMin, style, hold, exitNote };
+}
+
+// ── /trend TICKER ─────────────────────────────────────────────────────────
+async function cmdTrend(sym, chatId) {
+  var key = 'trend:'+sym;
+  procStart(key, '/trend', sym);
+  await tg('⏳ Running Trend Recognition Engine on $'+sym+'...', chatId);
+  var d = await getStock(sym);
+  procEnd(key);
+  if (!d) return tg('Cannot pull data for $'+sym+'. Check ticker.', chatId);
+  if (!d._aggs || d._aggs.length < 5) {
+    var freshAggs = await getAggs(sym, 25);
+    if (freshAggs) d._aggs = freshAggs;
+  }
+  var trend = calcTrend(d, d._aggs||[]);
+  var sc    = detectStaircaseScore(d, d._aggs||[]);
+  var zone  = priceZone(d.price);
+  var country = detectCountry(sym,'');
+  var countryFlag = country==='US'?'🇺🇸':country==='CN'?'🇨🇳':'🌐';
+
+  var trendEmoji = trend.direction.includes('BULLISH')?'📈':trend.direction.includes('BEARISH')?'📉':'↔️';
+  var msg = trendEmoji+' <b>$'+sym+' — TREND RECOGNITION</b> '+countryFlag+'\n\n';
+  msg += '<b>Trend:</b> '+trend.direction+'  Strength: <b>'+trend.strength+'/100</b>\n';
+  msg += '<b>Price:</b> $'+d.price+'  '+zone.label+'\n';
+  msg += (trend.isStaircase ? '🪜 <b>STAIRCASE PATTERN ACTIVE</b>\n' : '');
+  msg += '\n<b>Moving Averages:</b>\n';
+  if (trend.sma5)  msg += '5d MA:  $'+trend.sma5+' — price '+(d.price>trend.sma5?'ABOVE ✅':'BELOW ❌')+'\n';
+  if (trend.sma10) msg += '10d MA: $'+trend.sma10+' — price '+(d.price>trend.sma10?'ABOVE ✅':'BELOW ❌')+'\n';
+  if (trend.sma20) msg += '20d MA: $'+trend.sma20+' — price '+(d.price>trend.sma20?'ABOVE ✅':'BELOW ❌')+'\n';
+  msg += '\n<b>Structure (last 10 sessions):</b>\n';
+  msg += 'Higher Highs: '+trend.hhCount+'  Higher Lows: '+trend.hlCount+'\n';
+  msg += 'Lower Lows:   '+trend.llCount+'  Lower Highs: '+trend.lhCount+'\n';
+  msg += '\n<b>Volume Bias:</b> '+trend.volBias+'x '+(trend.volBias>=1.5?'🟢 STRONG BUYERS':trend.volBias>=1.2?'🟡 BUYERS':trend.volBias<=0.7?'🔴 SELLERS':'⚪ NEUTRAL')+'\n';
+  msg += '<b>Momentum:</b> 5d '+( trend.roc5>=0?'+':'')+trend.roc5+'%  |  10d '+(trend.roc10>=0?'+':'')+trend.roc10+'%\n';
+  msg += '\n<b>Summary:</b>\n'+trend.summary+'\n';
+  if (trend.isStaircase) {
+    msg += '\n<b>🪜 STAIRCASE DETAIL:</b>\n';
+    msg += 'Score: '+sc.score+'/100 ['+sc.tier+']\n';
+    sc.signals.slice(0,4).forEach(function(s){ msg += '• '+s+'\n'; });
+  }
+  msg += '\n/check '+sym+' | /science '+sym;
+  await tg(msg, chatId);
 }
 
 // ── PROTOCOLS ──────────────────────────────────────────────────────────────
@@ -1910,6 +2179,8 @@ async function cmdCheck(sym, chatId) {
   var sas  = calcSAS(d);
   var seq  = calcSequenceMatch(d, catRank, d._aggs || []);
   var dur  = predictDuration(d, catRank);
+  var trend = calcTrend(d, d._aggs || []);
+  var sc_stair = detectStaircaseScore(d, d._aggs || []);
   var sn   = scoreSupernova(d, catRank, latestHead);
   var arch = classifyArchetype(d, catRank);
   var zones = calcDemandSupplyZones(d._aggs || []);
@@ -1941,6 +2212,13 @@ async function cmdCheck(sym, chatId) {
   m1 += 'SDI: <b>'+sdi.score+'/100</b> ['+sdi.danger+']\n';
   m1 += 'SAS: <b>'+sas.score+'/100</b> ['+sas.tier+']\n';
   m1 += 'Setup: '+sr.score+'/100  Supernova: '+sn.passed+'/9 ingredients\n';
+  m1 += '\n<b>TREND:</b> '+trend.direction+'  Strength:'+trend.strength+'/100\n';
+  m1 += (trend.sma5?'5dMA:$'+trend.sma5+' '+(d.price>trend.sma5?'✅':'❌')+'  ':'');
+  m1 += (trend.sma20?'20dMA:$'+trend.sma20+' '+(d.price>trend.sma20?'✅':'❌'):'')+'\n';
+  m1 += 'HH/HL: '+trend.hhCount+'/'+trend.hlCount+'  VolBias:'+trend.volBias+'x  ROC5:'+( trend.roc5>=0?'+':'')+trend.roc5+'%\n';
+  if (trend.isStaircase || sc_stair.score >= 55) {
+    m1 += '🪜 <b>STAIRCASE PATTERN</b> — Score:'+sc_stair.score+'/100 ['+sc_stair.tier+']\n';
+  }
   m1 += '\n<b>SEQUENCE MATCH:</b>\n';
   m1 += 'Seq A (Explosive):  <b>'+seq.scoreA+'%</b>\n';
   m1 += 'Seq B (Duration):   <b>'+seq.scoreB+'%</b>\n';
@@ -2378,6 +2656,8 @@ async function cmdAI(text, chatId) {
   if (intent==='sas' && ticker) return cmdSAS(ticker, chatId);
   if (intent==='sas') return tg('SAS on which ticker? Try: "stealth MDAI" or /sas MDAI', chatId);
   if (intent==='backtest') return cmdBacktest(chatId);
+  if (intent==='trend' && ticker) return cmdTrend(ticker, chatId);
+  if (intent==='trend') return tg('Trend on which ticker? Try: "trend AAPL" or /trend AAPL', chatId);
 
   // General conversation
   var personalInsight=getPersonalInsight();
@@ -2473,6 +2753,8 @@ async function handleUpdate(update) {
     else if (cmd==='/supernova-scan')         fire(cmdSupernovaScan(chatId));
     else if (cmd==='/briefing')               fire(morningBriefing(true));
     else if (cmd==='/backtest')               fire(cmdBacktest(chatId));
+    else if (cmd==='/trend'&&parts[1])        fire(cmdTrend(parts[1].toUpperCase(),chatId));
+    else if (cmd==='/trend')                  await tg('Usage: /trend TICKER  e.g. /trend TRT',chatId);
     else if (cmd==='/backtest'&&parts[1]==='force') fire(runBacktest(chatId));
     else if (cmd==='/ross')                   await cmdActivateProtocol('ross',chatId);
     else if (cmd==='/humble')                 await cmdActivateProtocol('humble',chatId);
@@ -2796,8 +3078,8 @@ async function cmdBacktest(chatId) {
 }
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v5.9           ║');
-  console.log('║    PRICE ZONES + COUNTRY SCORING     ║');
+  console.log('║    MAVERICK INTEL BOT v6.0           ║');
+  console.log('║    STAIRCASE + TREND + 65 TICKERS   ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
@@ -2831,17 +3113,17 @@ async function start() {
   } catch(e) { console.error('[WEBHOOK] setWebhook error:', e.message); }
 
   await tg(
-    '<b>MAVERICK INTEL BOT v5.9 — ONLINE</b>\n\n' +
-    '🎯 Price zones active: $0.25-$6 PRIMARY | $6-$10 GOOD\n' +
-    '🇺🇸 US +bonus  🇨🇳 CN -penalty  🇮🇱 IL HARD EXCLUDED\n\n' +
-    '<b>v5.9 TARGETING:</b>\n' +
-    '• Primary zone $0.25-$6.00 gets highest scores\n' +
-    '• Good zone $6.01-$9.99 scores well\n' +
-    '• $20.01+ penalized and filtered from briefing\n' +
-    '• Israeli companies never appear anywhere\n' +
-    '• Country flag shown on every /check output\n' +
-    '• /check null crash fixed — runs cleanly\n\n' +
-    'Type /top-pick for best setup now.\nType /help for all commands.'
+    '<b>MAVERICK INTEL BOT v6.0 — ONLINE</b>\n\n' +
+    '🪜 Staircase Scanner | 📈 Trend Engine | 🌍 65 Tickers\n\n' +
+    '<b>v6.0 — NO MORE TRT MISSES:</b>\n' +
+    '• Staircase scanner runs every 5min during market hours\n' +
+    '• 30min soft alert | 60min HARD ALERT (sub-$20, no exceptions)\n' +
+    '• Trend Recognition Engine (TRE) — MA, HH/HL, volume bias\n' +
+    '• /trend TICKER — full trend analysis + staircase detection\n' +
+    '• 65-ticker universe including AMEX names (TRT, CEI, IMPP...)\n' +
+    '• Country flags visible on all /check outputs\n' +
+    '• Price zone + country embedded in every score\n\n' +
+    'Type /top-pick to find today\'s best setup.'
   );
 
   setInterval(monitorPositions,  60000);
@@ -2849,8 +3131,9 @@ async function start() {
   setInterval(scanNewsIntel,    120000);
   setInterval(morningBriefing,  300000);
   setInterval(pruneHeadlines,  3600000);
+  setInterval(runStaircaseScanner, 300000); // Every 5 min — staircase exception scanner
 
-  console.log('[BOT] v5.9 running. Price zones. Country scoring. IL excluded. /check fixed.');
+  console.log('[BOT] v6.0 running. Staircase scanner live. TRE active. 65 tickers. No more TRT misses.');
 }
 
 start();
