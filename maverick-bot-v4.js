@@ -1480,6 +1480,10 @@ async function buildMaverickAlert(sym, d, triggerReason, catName, catRank) {
   var archetype  = classifyArchetype(d, catRank);
   var projection = project30MinMove(d, catRank);
   var zones      = calcDemandSupplyZones(d._aggs || []);
+  var lifecycle  = detectLifecyclePhase(d);
+  var mis        = calcMIS(d, catRank);
+  var sdi        = calcSDI(d, catRank);
+  var sas        = calcSAS(d);
   var stop  = rnd(d.price - d.atr * 1.5, 4);
   var tp1   = rnd(d.price + d.atr * 2, 4);
   var tp2   = rnd(d.price + d.atr * 4, 4);
@@ -1487,23 +1491,33 @@ async function buildMaverickAlert(sym, d, triggerReason, catName, catRank) {
   var buyHi = rnd(d.price * 1.005, 4);
   var changeStr = (d.changePct >= 0 ? '+' : '') + rnd(d.changePct, 2) + '%';
 
-  var msg = '<b>🔔 $' + sym + ' just pinged my alert.</b>\n\n';
-  msg += "I've looked into it and found it's a <b>" + archetype.type + "</b> for the following reasons:\n";
-  msg += '• ' + triggerReason + '\n';
-  msg += '• RVOL ' + d.relVol + 'x — ' + (d.relVol >= 10 ? 'whale-level accumulation' : d.relVol >= 5 ? 'institutional interest confirmed' : d.relVol >= 3 ? 'above-average buying' : 'building') + '\n';
-  msg += '• Float: ' + d.floatM + 'M — ' + (d.floatM < 1 ? 'nano float, explosive % moves possible' : d.floatM < 5 ? 'tight float, limited supply' : d.floatM < 15 ? 'workable float' : 'wide float, needs more volume') + '\n';
-  if (catName !== 'No Catalyst') msg += '• Catalyst: ' + catName + ' (Rank ' + catRank + '/5)\n';
-  msg += '• Price ' + changeStr + ' today at $' + d.price + '\n';
-  msg += '\n<b>I\'m projecting this could move ' + projection.pct + '%+ within the first 30 minutes.</b>';
-  msg += ' [Confidence: ' + projection.confidence + ']\n\n';
+  // Engine synergy for this alert
+  var aScores  = [mis.pct, sdi.score, sas.score];
+  var aSpread  = Math.max.apply(null,aScores) - Math.min.apply(null,aScores);
+  var aSynergy = aSpread<=20?'🟢 ALIGNED':aSpread<=40?'🟡 MIXED':'🔴 CONFLICTED';
+
+  var zone = priceZone(d.price);
+  var flag = cFlag(sym);
+
+  var msg = '<b>🔔 $'+sym+' '+flag+' just pinged my alert.</b>\n\n';
+  msg += "I've looked into it and found it's a <b>"+archetype.type+"</b> for the following reasons:\n";
+  msg += '• '+triggerReason+'\n';
+  msg += '• RVOL '+d.relVol+'x — '+(d.relVol>=10?'whale-level accumulation':d.relVol>=5?'institutional interest confirmed':d.relVol>=3?'above-average buying':'building')+'\n';
+  msg += '• Float: '+d.floatM+'M — '+(d.floatM<1?'nano float, explosive % moves possible':d.floatM<5?'tight float, limited supply':d.floatM<15?'workable float':'wide float, needs more volume')+'\n';
+  if (catName !== 'No Catalyst' && catName !== 'System Test') msg += '• Catalyst: '+catName+' (Rank '+catRank+'/5)\n';
+  msg += '• Price '+changeStr+' today at $'+d.price+'  '+zone.label+'\n';
+  msg += '\n'+lifecycle.emoji+' <b>'+lifecycle.name+'</b>\n'+lifecycle.action+'\n';
+  msg += '\nEngines: MIS:'+mis.pct+' SDI:'+sdi.score+' SAS:'+sas.score+'  '+aSynergy+'\n';
+  msg += '\n<b>I\'m projecting this could move '+projection.pct+'%+ within the first 30 minutes.</b>';
+  msg += ' [Confidence: '+projection.confidence+']\n\n';
   msg += '<b>Zones:</b>\n';
-  msg += 'Buy zone:  $' + buyLo + ' — $' + buyHi + '\n';
-  msg += 'Stop loss: $' + stop + '\n';
-  msg += 'TP1: $' + tp1 + '  |  TP2: $' + tp2 + '\n\n';
-  if (zones.demand.length) msg += '<b>I see demand clusters at:</b> ' + zones.demand.join(' / ') + '\n';
-  if (zones.supply.length) msg += '<b>Supply zone resistance at:</b> ' + zones.supply.join(' / ') + '\n';
-  msg += '\nMIS:' + calcMIS(d,catRank).pct + ' | SDI:' + calcSDI(d,catRank).score + ' | ' + archetype.emoji + ' ' + archetype.type;
-  msg += '\n\n/supernova ' + sym + ' | /check ' + sym;
+  msg += 'Buy zone:  $'+buyLo+' — $'+buyHi+'\n';
+  msg += 'Stop loss: $'+stop+'\n';
+  msg += 'TP1: $'+tp1+'  |  TP2: $'+tp2+'\n\n';
+  if (zones.demand.length) msg += '<b>Demand clusters at:</b> '+zones.demand.join(' / ')+'\n';
+  if (zones.supply.length) msg += '<b>Supply resistance at:</b> '+zones.supply.join(' / ')+'\n';
+  msg += '\n'+archetype.emoji+' '+archetype.type+' | MIS:'+mis.pct+' | SDI:'+sdi.score;
+  msg += '\n\n/check '+sym+' | /science '+sym+' | /supernova '+sym;
   return msg;
 }
 
@@ -2253,38 +2267,126 @@ async function cmdCheck(sym, chatId) {
   await sleep(300);
 
   // ── MESSAGE 2: CONVICTION CASE (AI) ──────────────────────────────────────
+  // Build a rich context block so the AI gives phase-specific, synergy-checked verdicts.
+  // No more generic "RVOL may indicate overbought" — every word references the actual data.
   procStart(key+':ai', '/check AI', sym);
+
+  var lifecycle  = detectLifecyclePhase(d);
+  var killzone   = getKillZoneSignals(d);
+  var traps      = detectFalseSignals(d, catRank, latestHead);
+
+  // ── SYNERGY CHECK — do engines agree? ─────────────────────────────────────
+  var synScores  = [mis.pct, sdi.score, sas.score, sr.score];
+  var synAvg     = rnd(synScores.reduce(function(a,b){return a+b;},0)/synScores.length,0);
+  var synMax     = Math.max.apply(null,synScores);
+  var synMin     = Math.min.apply(null,synScores);
+  var synSpread  = synMax - synMin;
+  var synergy    = synSpread <= 20 ? 'ALIGNED' : synSpread <= 40 ? 'MIXED' : 'CONFLICTED';
+  var synergyNote = synergy==='ALIGNED'
+    ? 'All 4 engines pointing same direction (spread '+synSpread+'pts) — high confidence signal.'
+    : synergy==='MIXED'
+    ? 'Engines partially aligned (spread '+synSpread+'pts) — valid setup but size down.'
+    : 'Engines conflicted (spread '+synSpread+'pts) — competing signals. Wait for clarity.';
+
+  // ── PHASE-SPECIFIC PLAYBOOK ────────────────────────────────────────────────
+  var phasePlaybook = lifecycle.action;
+  var phaseContext  =
+    lifecycle.phase===1 ? 'You are in PHASE 1 — the optimal entry window. This is where the Maverick edge lives. ' :
+    lifecycle.phase===2 ? 'You are in PHASE 2 — the dip-buy window. Archetype B territory. Higher quality entry. ' :
+    lifecycle.phase===3 ? 'You are in PHASE 3 — mid-day continuation. Still tradeable but size smaller. ' :
+    lifecycle.phase===4 ? 'You are in PHASE 4 — extended. DO NOT enter fresh. Trail existing only. ' :
+    lifecycle.phase===5 ? 'You are in PHASE 5 — distribution. Whales exiting. Exit any existing position. ' :
+    lifecycle.name.includes('DEAD') ? 'DEAD ZONE — no edge here. Wait for Phase 3 to develop. ' :
+    'Pre-market or unclear phase. Wait for open confirmation. ';
+
+  // ── SEQUENCE CONTEXT ────────────────────────────────────────────────────────
+  var seqContext = seq.primary==='A'
+    ? 'Sequence A match '+seq.scoreA+'% — explosive setup type. Short fuel + catalyst + tight float. Targets 50-200% if all 5 factors present.'
+    : 'Sequence B match '+seq.scoreB+'% — duration setup type. Staircase potential. Targets sustained run, not a spike.';
+
+  // ── TRAP CONTEXT ────────────────────────────────────────────────────────────
+  var trapContext = traps.length
+    ? 'FALSE SIGNAL WARNINGS: '+traps.map(function(t){return t.trap+' ['+t.severity+']';}).join(', ')+'. Address these before entry.'
+    : 'No false signal traps detected.';
+
+  // ── PERSONAL EDGE CONTEXT ──────────────────────────────────────────────────
+  var edgeCtx = '';
+  if (memory.trades && memory.trades.length >= 5) {
+    rebuildWinRates();
+    var wr = memory.winRates;
+    var floatKey = d.floatM<5?'nano':d.floatM<15?'tight':'mid';
+    var floatArr = wr.byFloat && wr.byFloat[floatKey] ? wr.byFloat[floatKey] : [];
+    if (floatArr.length >= 3) {
+      var floatWR = rnd(floatArr.reduce(function(a,b){return a+b;},0)/floatArr.length*100,0);
+      edgeCtx = 'TRADER PERSONAL EDGE: '+floatWR+'% win rate on '+floatKey+' float ('+floatArr.length+' trades). ';
+    }
+    var rvolKey = d.relVol>=5?'high':d.relVol>=2?'med':'low';
+    var rvolArr  = wr.byRvol && wr.byRvol[rvolKey] ? wr.byRvol[rvolKey] : [];
+    if (rvolArr.length >= 3) {
+      var rvolWR = rnd(rvolArr.reduce(function(a,b){return a+b;},0)/rvolArr.length*100,0);
+      edgeCtx += rvolWR+'% win rate at '+rvolKey+' RVOL. ';
+    }
+  }
+
   var analysis = await ai(
-    'You are MAVERICK LION BRAIN — the most elite micro-cap analyst alive. ' +
-    'You have REAL live data. Use every number. Be specific. ' +
-    'Structure your response in 3 sections: ' +
-    '1) VERDICT (BUY/WATCH/PASS + 1 sentence why) ' +
-    '2) WHY I\'M RIGHT — 3 specific bullet points using the actual numbers provided ' +
-    '3) WHAT COULD KILL THIS TRADE — 2 specific risks with exact price levels ' +
-    'Be direct. Be precise. Max 250 words. This is a small account trader — tight risk is everything.',
-    '$'+sym+' ANALYSIS DATA:\n' +
-    'Price:$'+d.price+' ('+changeStr+') Gap:'+rnd(d.gapPct,1)+'%\n' +
-    'RVOL:'+d.relVol+'x Float:'+d.floatM+'M Short:'+rnd(d.shortPct,1)+'% DTC:'+d.daysToCover+'d\n' +
-    'MIS:'+mis.pct+' ['+mis.tier+'] SDI:'+sdi.score+' ['+sdi.danger+'] SAS:'+sas.score+' ['+sas.tier+']\n' +
-    'Catalyst:'+catName+' Rank:'+catRank+'/5\n' +
-    'Seq A match:'+seq.scoreA+'% Seq B match:'+seq.scoreB+'%\n' +
-    'Supernova:'+sn.passed+'/9 Archetype:'+arch.type+'\n' +
-    'Duration:'+dur.minMin+'-'+dur.maxMin+'min ['+dur.style+']\n' +
-    'Demand zones:'+(zones.demand.join(' / ')||'none')+'\n' +
-    'Supply zones:'+(zones.supply.join(' / ')||'none')+'\n' +
-    (latestHead?'Latest headline:"'+latestHead.slice(0,120)+'"':''),
-    500, chatId
+    'You are MAVERICK LION BRAIN — the most precise micro-cap analyst alive. ' +
+    'You speak directly to a small-account trader who needs phase-specific, actionable guidance. ' +
+    '\n\n' +
+    'STRUCTURE YOUR RESPONSE EXACTLY LIKE THIS — no deviation:\n' +
+    '**VERDICT**: [BUY / SCALE-IN / WATCH / AVOID] — one sentence tied directly to phase and synergy\n' +
+    '**WHY I\'M RIGHT**:\n' +
+    '• [Cite MIS/SDI/SAS scores and what they mean together — not individually]\n' +
+    '• [Cite the sequence match % and what it predicts about move type and duration]\n' +
+    '• [Cite the lifecycle phase and exactly how to exploit it right now]\n' +
+    '**WHAT COULD KILL THIS**:\n' +
+    '• [Specific price level below which thesis is broken — not vague]\n' +
+    '• [Specific condition — volume, catalyst, phase transition — that invalidates entry]\n' +
+    '**PHASE INSTRUCTION**: [One sentence on what to do RIGHT NOW based on lifecycle]\n' +
+    '\n' +
+    'Rules: Use exact numbers from the data. Never say "may" or "could indicate". Be direct and certain. ' +
+    'Max 300 words. No disclaimers. Tight risk is everything for this account.',
+
+    '$'+sym+' FULL CONTEXT:\n' +
+    '— PRICE: $'+d.price+' ('+changeStr+')  Gap:+'+rnd(d.gapPct,1)+'%  Zone:'+zone.label+'\n' +
+    '— MARKET STATS: RVOL:'+d.relVol+'x  Float:'+d.floatM+'M  Short:'+rnd(d.shortPct,1)+'%  DTC:'+d.daysToCover+'d  ATR:$'+d.atr+'\n' +
+    '— SCORES: MIS:'+mis.pct+'/100['+mis.tier+']  SDI:'+sdi.score+'/100['+sdi.danger+']  SAS:'+sas.score+'/100['+sas.tier+']  Setup:'+sr.score+'/100\n' +
+    '— ENGINE SYNERGY: '+synergy+' (avg:'+synAvg+'  spread:'+synSpread+'pts)  '+synergyNote+'\n' +
+    '— CATALYST: '+catName+' Rank:'+catRank+'/5'+(latestHead?' — "'+latestHead.slice(0,100)+'"':'')+'\n' +
+    '— SEQUENCE: Seq A:'+seq.scoreA+'%  Seq B:'+seq.scoreB+'%  Primary:'+seq.primary+'  ['+seq.label+']\n' +
+    '  '+seqContext+'\n' +
+    '— LIFECYCLE: '+lifecycle.name+'  Entry ok:'+lifecycle.entryOk+'\n' +
+    '  '+phaseContext+phasePlaybook+'\n' +
+    '— DURATION: '+dur.minMin+'-'+dur.maxMin+'min  Style:'+dur.style+'\n' +
+    '  Hold plan: '+dur.hold+'\n' +
+    '— STAIRCASE: '+(trend.isStaircase||sc_stair.score>=55?'YES score:'+sc_stair.score+'/100['+sc_stair.tier+']':'Not detected')+'\n' +
+    '— TREND: '+trend.direction+'  Strength:'+trend.strength+'/100  HH:'+trend.hhCount+' HL:'+trend.hlCount+'  ROC5:'+(trend.roc5>=0?'+':'')+trend.roc5+'%\n' +
+    '— SUPERNOVA: '+sn.passed+'/9 ingredients ['+sn.grade+']  Archetype: '+arch.type+'\n' +
+    '— TRAPS: '+trapContext+'\n' +
+    (killzone.signals.length?'— KILL ZONE: '+killzone.signals.slice(0,2).join(' | ')+'\n':'')+
+    (edgeCtx?'— '+edgeCtx+'\n':'') +
+    '— PROJ MOVE: +'+proj.pct+'%+ in 30min ['+proj.confidence+']\n' +
+    '— COUNTRY: '+cFlag(sym)+' '+detectCountry(sym,'')+'\n' +
+    '— LEVELS: Entry:$'+rnd(d.price*0.988,4)+'-$'+rnd(d.price*1.005,4)+'  Stop:$'+stop+'  TP1:$'+tp1+'  TP2:$'+tp2+'  R:R:'+rr,
+    600, chatId
   );
   procEnd(key+':ai');
 
-  var m2 = '<b>🧠 CONVICTION CASE — $'+sym+'</b>\n';
+  // ── BUILD MESSAGE 2 ────────────────────────────────────────────────────────
+  var synergyEmoji = synergy==='ALIGNED'?'🟢':synergy==='MIXED'?'🟡':'🔴';
+  var m2 = '<b>🧠 CONVICTION CASE — $'+sym+' '+cFlag(sym)+'</b>\n';
   m2 += '━━━━━━━━━━━━━━━━━━━━━━\n';
-  m2 += (analysis || 'AI offline. Scores speak for themselves — see data above.') + '\n\n';
-  if (arch.type !== 'UNCLASSIFIED') {
-    m2 += '<b>'+arch.emoji+' Archetype: '+arch.type+'</b>\n';
-    m2 += arch.desc + '\n';
+  m2 += synergyEmoji+' Engine Synergy: <b>'+synergy+'</b>  ('+synergyNote+')\n\n';
+  m2 += lifecycle.emoji+' <b>'+lifecycle.name+'</b>\n';
+  m2 += phasePlaybook+'\n\n';
+  if (traps.length) {
+    m2 += '⚠️ <b>Traps detected:</b> ';
+    m2 += traps.map(function(t){return t.trap+' ['+t.severity+']';}).join(' | ')+'\n\n';
   }
+  m2 += (analysis || 'AI offline. Use scores and lifecycle above for trade decision.') + '\n\n';
+  m2 += arch.emoji+' <b>Archetype: '+arch.type+'</b>\n';
+  m2 += arch.desc+'\n';
   m2 += '\n<b>Proj. move:</b> +'+proj.pct+'%+ in 30min ['+proj.confidence+' confidence]';
+  if (killzone.critical) m2 += '\n🚨 <b>KILL ZONE ACTIVE:</b> '+killzone.signals[0];
   await tg(m2, chatId);
   await sleep(300);
 
@@ -2330,12 +2432,18 @@ async function cmdScience(sym, chatId) {
   if(news.length){latestHead=news[0].title||'';var cat=identifyCatalyst(latestHead);catRank=cat.rank;catName=cat.name;}
   var mis=calcMIS(d,catRank), sdi=calcSDI(d,catRank), sas=calcSAS(d);
   var seq=calcSequenceMatch(d,catRank,d._aggs), dur=predictDuration(d,catRank);
-  var msg='<b>🔬 $'+sym+' — MAVERICK SCIENCE MODULE</b>\n\n';
+  var lifecycle2=detectLifecyclePhase(d);
+  var synScores2=[mis.pct,sdi.score,sas.score]; var synAvg2=rnd(synScores2.reduce(function(a,b){return a+b;},0)/synScores2.length,0);
+  var synSpread2=Math.max.apply(null,synScores2)-Math.min.apply(null,synScores2);
+  var synergy2=synSpread2<=20?'🟢 ALIGNED':synSpread2<=40?'🟡 MIXED':'🔴 CONFLICTED';
+  var msg='<b>🔬 $'+sym+' '+cFlag(sym)+' — MAVERICK SCIENCE MODULE</b>\n\n';
   msg+='MIS: <b>'+mis.pct+'/100</b> ['+mis.tier+']  Move: +'+mis.expectedMove+'\n';
   msg+='SDI: <b>'+sdi.score+'/100</b> ['+sdi.danger+']\n';
   msg+='SAS: <b>'+sas.score+'/100</b> ['+sas.tier+']\n';
+  msg+='Synergy: '+synergy2+'  (avg:'+synAvg2+'  spread:'+synSpread2+'pts)\n';
   msg+='Seq A: <b>'+seq.scoreA+'%</b>  Seq B: <b>'+seq.scoreB+'%</b>  ['+seq.label+']\n';
-  msg+=dur.style+'  '+dur.minMin+'-'+dur.maxMin+' min\n\n';
+  msg+=dur.style+'  '+dur.minMin+'-'+dur.maxMin+' min\n';
+  msg+=lifecycle2.emoji+' '+lifecycle2.name+'\n';
   msg+='Catalyst: '+catName+' (Rank '+catRank+'/5)\n';
   if(latestHead) msg+='"'+latestHead.slice(0,100)+'"\n';
   msg+='\n<b>MIS Breakdown:</b>\n'; mis.components.forEach(function(c){msg+='• '+c+'\n';});
@@ -3120,8 +3228,8 @@ async function warmCache() {
 
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v6.0           ║');
-  console.log('║    STAIRCASE + TREND + 65 TICKERS   ║');
+  console.log('║    MAVERICK INTEL BOT v6.2           ║');
+  console.log('║    AI CONVICTION UPGRADE LIVE        ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
@@ -3155,17 +3263,18 @@ async function start() {
   } catch(e) { console.error('[WEBHOOK] setWebhook error:', e.message); }
 
   await tg(
-    '<b>MAVERICK INTEL BOT v6.0 — ONLINE</b>\n\n' +
-    '🪜 Staircase Scanner | 📈 Trend Engine | 🌍 65 Tickers\n\n' +
-    '<b>v6.0 — NO MORE TRT MISSES:</b>\n' +
-    '• Staircase scanner runs every 5min during market hours\n' +
-    '• 30min soft alert | 60min HARD ALERT (sub-$20, no exceptions)\n' +
-    '• Trend Recognition Engine (TRE) — MA, HH/HL, volume bias\n' +
-    '• /trend TICKER — full trend analysis + staircase detection\n' +
-    '• 65-ticker universe including AMEX names (TRT, CEI, IMPP...)\n' +
-    '• Country flags visible on all /check outputs\n' +
-    '• Price zone + country embedded in every score\n\n' +
-    'Type /top-pick to find today\'s best setup.'
+    '<b>MAVERICK INTEL BOT v6.2 — ONLINE</b>\n\n' +
+    '🧠 AI Conviction Upgrade | 🔄 Synergy Check | 📍 Phase-Specific\n\n' +
+    '<b>v6.2 CONVICTION UPGRADE:</b>\n' +
+    '• /check now feeds ALL engines into one unified AI prompt\n' +
+    '• Synergy check: 🟢 ALIGNED / 🟡 MIXED / 🔴 CONFLICTED\n' +
+    '• AI gives phase-specific instructions (Phase 1 = BUY NOW vs Phase 4 = EXIT)\n' +
+    '• "WHY I\'M RIGHT" uses engine scores, sequence match, and lifecycle together\n' +
+    '• "WHAT COULD KILL THIS" gives exact price levels, not vague conditions\n' +
+    '• Personal edge (your win rates) fed into every conviction call\n' +
+    '• Alerts include lifecycle phase + engine synergy\n' +
+    '• /science shows synergy rating in output\n\n' +
+    'Type /top-pick for best setup now.'
   );
 
   setInterval(monitorPositions,  60000);
@@ -3178,7 +3287,7 @@ async function start() {
   // First warm at 45s after startup (let services stabilize)
   setTimeout(warmCache, 45000);
 
-  console.log('[BOT] v6.0 running. Staircase scanner live. TRE active. 65 tickers. No more TRT misses.');
+  console.log('[BOT] v6.2 running. AI conviction upgrade live. Synergy check active. Phase-specific verdicts.');
 }
 
 start();
