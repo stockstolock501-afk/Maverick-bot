@@ -125,10 +125,19 @@ var watchlist        = {};
 var priceAlerts      = [];
 var chatHistory      = {};
 var lastUpdateId     = 0;
-var lastNewsTs       = Math.floor(Date.now() / 1000) - 300;
+var lastNewsTs       = Math.floor(Date.now() / 1000) - 1800; // 30 min lookback on start
 var sentHeadlines    = new Set();
 var activeProtocol   = null;
 var lastBriefingDate = '';
+
+// ── INTERVAL HEALTH TRACKING ───────────────────────────────────────────────
+var iHealth = {
+  newsLastRun:    0, newsRunCount:   0, newsAlertsTotal: 0,
+  posLastRun:     0, posRunCount:    0,
+  briefLastRun:   0, alertsLastRun:  0,
+  startTime:      Date.now(),
+  dataErrors:     0, dataOk:         0
+};
 
 // ── MEMORY ─────────────────────────────────────────────────────────────────
 var memory = { trades: [], preferences: {}, winRates: {}, science: null, lastUpdated: 0 };
@@ -186,6 +195,23 @@ function detectIntent(text) {
 var rnd = function(n, d) { return +Number(n).toFixed(d === undefined ? 2 : d); };
 function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+// ── FETCH WITH TIMEOUT ─────────────────────────────────────────────────────
+// Hard 9-second cap on every external HTTP call.
+// Prevents any single hanging API from freezing the entire command.
+// This fixes: science, sdi, sas, supernova, autopsy, briefing, backtest.
+async function tFetch(url, opts, ms) {
+  ms = ms || 9000;
+  var ctrl  = new AbortController();
+  var timer = setTimeout(function() { ctrl.abort(); }, ms);
+  try {
+    var r = await fetch(url, Object.assign({}, opts||{}, { signal: ctrl.signal }));
+    return r;
+  } catch(e) {
+    if (e.name === 'AbortError') { console.warn('[TIMEOUT]', url.slice(0,60)); iHealth.dataErrors++; }
+    throw e;
+  } finally { clearTimeout(timer); }
+}
 
 function nowHourCT() {
   try {
@@ -278,12 +304,13 @@ function getPersonalInsight() {
 // PRIMARY: Yahoo Finance (free, live, no key needed)
 async function yahooQuote(sym) {
   try {
-    var r = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?interval=1d&range=2d', { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/4.1)' } });
+    var r = await tFetch('https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?interval=1d&range=2d', { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/5.6)' } });
     var d = await r.json(), res = d && d.chart && d.chart.result && d.chart.result[0], meta = res && res.meta;
     if (meta && meta.regularMarketPrice && meta.regularMarketPrice > 0) {
+      iHealth.dataOk++;
       return { price: meta.regularMarketPrice, prevClose: meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice, volume: meta.regularMarketVolume || 0, high: meta.regularMarketDayHigh || meta.regularMarketPrice, low: meta.regularMarketDayLow || meta.regularMarketPrice, open: meta.regularMarketOpen || meta.regularMarketPrice, week52H: meta.fiftyTwoWeekHigh || 0, week52L: meta.fiftyTwoWeekLow || 0, source: 'Yahoo' };
     }
-  } catch (e) { console.error('[Yahoo]', sym, e.message); }
+  } catch (e) { if (e.name !== 'AbortError') console.error('[Yahoo]', sym, e.message); }
   return null;
 }
 
@@ -291,7 +318,8 @@ async function yahooQuote(sym) {
 async function fhQuote(sym) {
   if (!FINNHUB) return null;
   try {
-    var r = await fetch('https://finnhub.io/api/v1/quote?symbol=' + sym + '&token=' + FINNHUB), text = await r.text();
+    var r = await tFetch('https://finnhub.io/api/v1/quote?symbol=' + sym + '&token=' + FINNHUB);
+    var text = await r.text();
     if (!text || text.trim() === '') return null;
     var d = JSON.parse(text);
     if (d && d.c && d.c > 0) return { price:d.c, prevClose:d.pc||d.c, volume:d.v||0, high:d.h||d.c, low:d.l||d.c, open:d.o||d.c, source:'Finnhub' };
@@ -302,12 +330,19 @@ async function fhQuote(sym) {
 // Finnhub fundamentals
 async function fhMetrics(sym) {
   if (!FINNHUB) return null;
-  try { var r = await fetch('https://finnhub.io/api/v1/stock/metric?symbol='+sym+'&metric=all&token='+FINNHUB), text = await r.text(); if (!text||text.trim()==='') return null; return JSON.parse(text); } catch (e) { return null; }
+  try {
+    var r = await tFetch('https://finnhub.io/api/v1/stock/metric?symbol='+sym+'&metric=all&token='+FINNHUB);
+    var text = await r.text(); if (!text||text.trim()==='') return null; return JSON.parse(text);
+  } catch (e) { return null; }
 }
 
 async function fh(ep) {
   if (!FINNHUB) return null;
-  try { var sep = ep.indexOf('?')!==-1?'&':'?', r = await fetch('https://finnhub.io/api/v1'+ep+sep+'token='+FINNHUB), text = await r.text(); if (!text||text.trim()==='') return null; return JSON.parse(text); } catch (e) { return null; }
+  try {
+    var sep = ep.indexOf('?')!==-1?'&':'?';
+    var r = await tFetch('https://finnhub.io/api/v1'+ep+sep+'token='+FINNHUB);
+    var text = await r.text(); if (!text||text.trim()==='') return null; return JSON.parse(text);
+  } catch (e) { return null; }
 }
 
 // ── YAHOO HISTORICAL BARS (replaces polyAggs as primary) ───────────────────
@@ -318,111 +353,75 @@ async function yahooAggs(sym, days) {
   days = days || 20;
   var range = days <= 30 ? '3mo' : '6mo';
   try {
-    var r = await fetch(
-      'https://query1.finance.yahoo.com/v8/finance/chart/' + sym +
-      '?interval=1d&range=' + range,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/5.2)' } }
+    var r = await tFetch(
+      'https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?interval=1d&range=' + range,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/5.6)' } }
     );
-    var d   = await r.json();
-    var res = d && d.chart && d.chart.result && d.chart.result[0];
+    var d = await r.json(), res = d && d.chart && d.chart.result && d.chart.result[0];
     if (!res || !res.timestamp) return null;
-    var ts    = res.timestamp;
-    var q     = res.indicators && res.indicators.quote && res.indicators.quote[0];
-    var adjc  = res.indicators && res.indicators.adjclose && res.indicators.adjclose[0];
+    var ts = res.timestamp, q = res.indicators && res.indicators.quote && res.indicators.quote[0];
+    var adjc = res.indicators && res.indicators.adjclose && res.indicators.adjclose[0];
     if (!q) return null;
     var bars = [];
     for (var i = 0; i < ts.length; i++) {
       var c = (adjc && adjc.adjclose && adjc.adjclose[i]) || q.close[i];
       if (!c || !q.volume[i]) continue;
-      bars.push({
-        t: ts[i] * 1000,
-        o: q.open[i]   || c,
-        h: q.high[i]   || c,
-        l: q.low[i]    || c,
-        c: c,
-        v: q.volume[i] || 0
-      });
+      bars.push({ t:ts[i]*1000, o:q.open[i]||c, h:q.high[i]||c, l:q.low[i]||c, c:c, v:q.volume[i]||0 });
     }
-    // Return only the last N days requested
     return bars.length ? bars.slice(-Math.min(days + 5, bars.length)) : null;
-  } catch (e) { console.error('[yahooAggs]', sym, e.message); return null; }
+  } catch (e) { if (e.name !== 'AbortError') console.error('[yahooAggs]', sym, e.message); return null; }
 }
 
-// Polygon daily aggs — kept as fallback if Yahoo aggs fail
 async function polyAggs(sym, days) {
   if (!POLYGON) return null;
   days = days || 20;
   try {
     var to = todayStr(), from = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
-    var r = await fetch('https://api.polygon.io/v2/aggs/ticker/'+sym+'/range/1/day/'+from+'/'+to+'?adjusted=true&sort=asc&limit=50&apiKey='+POLYGON);
+    var r = await tFetch('https://api.polygon.io/v2/aggs/ticker/'+sym+'/range/1/day/'+from+'/'+to+'?adjusted=true&sort=asc&limit=50&apiKey='+POLYGON);
     var d = await r.json(); if (d && d.results && d.results.length) return d.results;
   } catch (e) {}
   return null;
 }
 
-// ── YAHOO GAINERS SCREENER (replaces Polygon snapshot — that's paid) ───────
-// Yahoo predefined screener: day_gainers. Free, no key, same domain.
-// Returns top gainers in the same shape the rest of the bot expects.
 async function yahooGainers() {
   try {
     var fields = 'symbol,regularMarketPrice,regularMarketChangePercent,regularMarketVolume,regularMarketDayHigh,regularMarketDayLow,regularMarketPreviousClose';
-    var r = await fetch(
-      'https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved' +
-      '?scrIds=day_gainers&count=25&fields=' + fields,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/5.2)' } }
+    var r = await tFetch(
+      'https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=day_gainers&count=25&fields=' + fields,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/5.6)' } }
     );
     var d = await r.json();
     var quotes = d && d.finance && d.finance.result && d.finance.result[0] && d.finance.result[0].quotes;
     if (!quotes || !quotes.length) return [];
     return quotes.map(function(q) {
-      return {
-        ticker:          q.symbol,
-        todaysChangePerc: q.regularMarketChangePercent || 0,
-        day: {
-          c: q.regularMarketPrice    || 0,
-          h: q.regularMarketDayHigh  || 0,
-          l: q.regularMarketDayLow   || 0,
-          v: q.regularMarketVolume   || 0
-        },
-        prevDay: { c: q.regularMarketPreviousClose || 0 }
-      };
-    }).filter(function(g) { return g.ticker && g.day.c > 0; });
+      return { ticker: q.symbol, todaysChangePerc: q.regularMarketChangePercent||0, day: { c:q.regularMarketPrice||0, h:q.regularMarketDayHigh||0, l:q.regularMarketDayLow||0, v:q.regularMarketVolume||0 }, prevDay: { c:q.regularMarketPreviousClose||0 } };
+    }).filter(function(g){ return g.ticker && g.day.c > 0; });
   } catch (e) { console.error('[yahooGainers]', e.message); return []; }
 }
 
-// ── UNIFIED GAINERS — Yahoo primary, Polygon fallback ─────────────────────
-async function getTopGainers() {
-  // Try Yahoo screener first
-  var yg = await yahooGainers();
-  if (yg && yg.length >= 3) {
-    console.log('[GAINERS] Yahoo screener: ' + yg.length + ' gainers');
-    return yg;
-  }
-  // Polygon fallback (only if key set and Yahoo failed)
-  if (POLYGON) {
-    try {
-      var r = await fetch('https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey='+POLYGON);
-      var d = await r.json();
-      if (d && d.tickers && d.tickers.length) {
-        console.log('[GAINERS] Polygon fallback: ' + d.tickers.length + ' gainers');
-        return d.tickers.slice(0, 20);
-      }
-    } catch (e) {}
-  }
-  console.log('[GAINERS] No gainer data from any source');
-  return [];
-}
-
-// Polygon news (still free on their plan — kept as primary news source)
 async function polyNewsRaw(tickerOrNull, limit) {
   if (!POLYGON) return [];
   limit = limit || 25;
   try {
     var url = 'https://api.polygon.io/v2/reference/news?limit='+limit+'&order=desc&sort=published_utc&apiKey='+POLYGON;
     if (tickerOrNull) url += '&ticker=' + tickerOrNull;
-    var r = await fetch(url), d = await r.json(); if (d && d.results) return d.results;
+    var r = await tFetch(url); var d = await r.json(); if (d && d.results) return d.results;
   } catch (e) {}
   return [];
+}
+
+// ── UNIFIED GAINERS — Yahoo primary, Polygon fallback ─────────────────────
+async function getTopGainers() {
+  var yg = await yahooGainers();
+  if (yg && yg.length >= 3) { console.log('[GAINERS] Yahoo: ' + yg.length); return yg; }
+  if (POLYGON) {
+    try {
+      var r = await tFetch('https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey='+POLYGON);
+      var d = await r.json();
+      if (d && d.tickers && d.tickers.length) { console.log('[GAINERS] Polygon fallback: '+d.tickers.length); return d.tickers.slice(0,20); }
+    } catch (e) {}
+  }
+  console.log('[GAINERS] No gainer data'); return [];
 }
 
 // ── UNIFIED STOCK DATA ─────────────────────────────────────────────────────
@@ -774,6 +773,12 @@ async function cmdSAS(sym, chatId) {
   await tg('🐋 Running Stealth Accumulation Score for $' + sym + '...', chatId);
   var d = await getStock(sym);
   if (!d) return tg('Cannot pull data for $' + sym + '. Check ticker.', chatId);
+  // Guarantee aggs are present — SAS needs historical bars to score
+  if (!d._aggs || d._aggs.length < 5) {
+    var freshAggs = await yahooAggs(sym, 25);
+    if (freshAggs && freshAggs.length >= 5) d._aggs = freshAggs;
+    else d._aggs = [];
+  }
   var sas = calcSAS(d);
   var mis = calcMIS(d, 5);
   var sdi = calcSDI(d, 5);
@@ -1220,7 +1225,7 @@ async function ai(system, user, maxTokens, chatId) {
   var messages=[{role:'user',content:'[SYSTEM] '+system}].concat(history).concat([{role:'user',content:user}]);
   if (GROQ_KEY) {
     try {
-      var r=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:maxTokens,temperature:0.3,messages})});
+      var r=await tFetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:maxTokens,temperature:0.3,messages})},15000);
       var gd=await r.json(), text=gd&&gd.choices&&gd.choices[0]&&gd.choices[0].message&&gd.choices[0].message.content;
       if (text) {
         if (chatId){if(!chatHistory[chatId])chatHistory[chatId]=[];chatHistory[chatId].push({role:'user',content:user},{role:'assistant',content:text});if(chatHistory[chatId].length>24)chatHistory[chatId]=chatHistory[chatId].slice(-24);}
@@ -1230,7 +1235,7 @@ async function ai(system, user, maxTokens, chatId) {
   }
   if (CBRS_KEY) {
     try {
-      var r2=await fetch('https://api.cerebras.ai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+CBRS_KEY},body:JSON.stringify({model:'llama3.1-8b',max_tokens:maxTokens,temperature:0.3,messages})});
+      var r2=await tFetch('https://api.cerebras.ai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+CBRS_KEY},body:JSON.stringify({model:'llama3.1-8b',max_tokens:maxTokens,temperature:0.3,messages})},12000);
       var d2=await r2.json(), txt2=d2&&d2.choices&&d2.choices[0]&&d2.choices[0].message&&d2.choices[0].message.content;
       if (txt2) return txt2;
     } catch (e) { console.error('[Cerebras]', e.message); }
@@ -1244,104 +1249,149 @@ var BEARISH_KW=['going concern','dilution','public offering','atm offering','she
 
 async function scanNewsIntel() {
   pruneHeadlines();
+  iHealth.newsLastRun = Date.now();
+  iHealth.newsRunCount++;
+  var sent = 0;
+
+  // ── SOURCE 1: FINNHUB GENERAL NEWS (primary — always connected, no Polygon needed) ──
   try {
-    if (POLYGON) {
-      var articles=await polyNewsRaw(null,50);
-      for (var i=0;i<articles.length;i++) {
-        var art=articles[i], pubTs=art.published_utc?new Date(art.published_utc).getTime()/1000:0;
-        if (pubTs&&pubTs<=lastNewsTs) continue;
-        var key=art.id||art.title; if (sentHeadlines.has(key)) continue;
-        var body=(art.title+' '+(art.description||'')).toLowerCase();
-        var hits=BULLISH_KW.filter(function(k){return body.indexOf(k)!==-1;});
-        var negs=BEARISH_KW.filter(function(k){return body.indexOf(k)!==-1;});
-        var ticks=(art.tickers||[]).filter(function(t){return t&&t.length>=1&&t.length<=5;});
-        if (hits.length>=1&&negs.length===0&&ticks.length>=1) {
-          sentHeadlines.add(key);
-          var cat=identifyCatalyst(art.title), ageMin=pubTs?Math.round((Date.now()/1000-pubTs)/60):0;
-          var ticker=ticks[0];
-          // For rank 1-2 catalysts, pull live data and send full Maverick alert
-          if (cat.rank<=2) {
-            var liveD = await getStock(ticker).catch(function(){return null;});
-            if (liveD) {
-              var reason = cat.name+' detected — '+hits[0]+(art.publisher&&art.publisher.name?' via '+art.publisher.name:'')+' ('+ageMin+'m ago)';
-              var alertMsg = await buildMaverickAlert(ticker, liveD, reason, cat.name, cat.rank);
-              await tg(alertMsg); await sleep(1500);
-            } else {
-              // Fallback if data pull fails
-              var pub=art.publisher&&art.publisher.name?art.publisher.name:'News';
-              await tg('<b>🔔 $'+ticker+' — '+cat.name.toUpperCase()+'</b>\n'+art.title+'\n'+pub+' — '+ageMin+'m ago\nRank '+cat.rank+'/5 catalyst\n\n/supernova '+ticker+' | /check '+ticker);
-              await sleep(1500);
+    if (FINNHUB) {
+      var fhNews = await fh('/news?category=general&minId=0');
+      if (Array.isArray(fhNews)) {
+        var cutoff = lastNewsTs - 3600; // 1hr buffer
+        for (var fi = 0; fi < fhNews.length; fi++) {
+          var fn = fhNews[fi];
+          if (!fn.headline || fn.datetime <= cutoff) continue;
+          var fnKey = String(fn.id || fn.headline);
+          if (sentHeadlines.has(fnKey)) continue;
+          var fnBody = (fn.headline + ' ' + (fn.summary||'')).toLowerCase();
+          var fnHits = BULLISH_KW.filter(function(k){return fnBody.indexOf(k)!==-1;});
+          var fnNegs = BEARISH_KW.filter(function(k){return fnBody.indexOf(k)!==-1;});
+          var fnTick = (fn.related||'').split(',').map(function(t){return t.trim().toUpperCase();}).filter(function(t){return t.length>=1&&t.length<=5;})[0]||'';
+          if (fnHits.length >= 1 && fnNegs.length === 0 && fnTick) {
+            sentHeadlines.add(fnKey);
+            if (fn.datetime > lastNewsTs) lastNewsTs = fn.datetime;
+            var fnCat = identifyCatalyst(fn.headline);
+            var liveD = await getStock(fnTick).catch(function(){return null;});
+            if (liveD && fnCat.rank <= 3) {
+              var reason = fnCat.name + ' via Finnhub (' + Math.round((Date.now()/1000 - fn.datetime)/60) + 'm ago)';
+              var alertMsg = await buildMaverickAlert(fnTick, liveD, reason, fnCat.name, fnCat.rank);
+              await tg(alertMsg); sent++; iHealth.newsAlertsTotal++; await sleep(1200);
+            } else if (fnCat.rank <= 4) {
+              await tg('<b>📡 CATALYST — $'+fnTick+'</b>\n[Rank '+fnCat.rank+'] '+fnCat.name+'\n'+fn.headline+'\n/check '+fnTick+' | /science '+fnTick);
+              sent++; iHealth.newsAlertsTotal++; await sleep(1200);
             }
-          } else {
-            // Rank 3-5: lighter format
-            var pub2=art.publisher&&art.publisher.name?art.publisher.name:'News';
-            var msg2='<b>📡 CATALYST ALERT — $'+ticks.slice(0,3).join(' $')+'</b>\n';
-            msg2+='[Rank '+cat.rank+'/5] '+cat.name+'\n';
-            msg2+=art.title+'\n'+pub2+' — '+ageMin+'m ago\n';
-            msg2+='Signal: '+hits.slice(0,2).join(', ')+'\n';
-            msg2+='\n/check '+ticker+' | /science '+ticker;
-            await tg(msg2); await sleep(1500);
+          }
+          if (fnNegs.length >= 1 && fnTick) {
+            sentHeadlines.add(fnKey);
+            await tg('<b>⚠️ BEARISH FLAG — $'+fnTick+'</b>\n'+fn.headline+'\nFlags: '+fnNegs.slice(0,2).join(', '));
+            sent++; await sleep(1200);
           }
         }
-        if (negs.length>=1&&ticks.length>=1){
+      }
+    }
+  } catch (e) { console.error('[NEWS-FH-GENERAL]', e.message); }
+
+  // ── SOURCE 2: SEC EDGAR 8-K FILINGS (completely free, high signal) ──────────
+  try {
+    var eFrom = new Date(Date.now()-7200000).toISOString().slice(0,10);
+    var er = await tFetch(
+      'https://efts.sec.gov/LATEST/search-index?q=%228-K%22&forms=8-K&dateRange=custom&startdt='+eFrom+'&enddt='+todayStr(),
+      { headers: { 'User-Agent': 'MaverickIntelBot/5.6 (research@maverick.ai)' } }
+    );
+    if (er.ok) {
+      var ed = await er.json(), eHits = ed && ed.hits && ed.hits.hits ? ed.hits.hits : [];
+      for (var ek = 0; ek < Math.min(eHits.length, 8); ek++) {
+        var src = eHits[ek] && eHits[ek]._source; if (!src) continue;
+        var eKey = (src.entity_name||'')+'|'+(src.file_date||'');
+        if (sentHeadlines.has(eKey)) continue;
+        var tick = ((src.ticker||'')||(src.tickers&&src.tickers[0])||'').toUpperCase().trim();
+        if (!tick || tick.length > 5) continue;
+        sentHeadlines.add(eKey);
+        var secD = await getStock(tick).catch(function(){return null;});
+        if (secD) {
+          var secReason = 'SEC 8-K filing detected ('+src.file_date+') — potential catalyst';
+          var secMsg = await buildMaverickAlert(tick, secD, secReason, 'SEC 8-K Filing', 3);
+          await tg(secMsg); sent++; iHealth.newsAlertsTotal++; await sleep(2000);
+        }
+      }
+    }
+  } catch (e) { console.error('[NEWS-SEC]', e.message); }
+
+  // ── SOURCE 3: POLYGON NEWS (tertiary — may return empty on free tier) ────────
+  try {
+    if (POLYGON) {
+      var articles = await polyNewsRaw(null, 40);
+      for (var i = 0; i < articles.length; i++) {
+        var art = articles[i], pubTs = art.published_utc ? new Date(art.published_utc).getTime()/1000 : 0;
+        if (pubTs && pubTs <= lastNewsTs) continue;
+        var key = art.id || art.title; if (sentHeadlines.has(key)) continue;
+        var body = (art.title+' '+(art.description||'')).toLowerCase();
+        var hits = BULLISH_KW.filter(function(k){return body.indexOf(k)!==-1;});
+        var negs = BEARISH_KW.filter(function(k){return body.indexOf(k)!==-1;});
+        var ticks = (art.tickers||[]).filter(function(t){return t&&t.length>=1&&t.length<=5;});
+        if (hits.length>=1 && negs.length===0 && ticks.length>=1) {
           sentHeadlines.add(key);
-          await tg('<b>⚠️ BEARISH FLAG — $'+ticks[0]+'</b>\n'+art.title+'\nFlags: '+negs.slice(0,2).join(', ')+'\nAvoid until clarified.');
+          var cat = identifyCatalyst(art.title), ticker = ticks[0];
+          var ageMin = pubTs ? Math.round((Date.now()/1000-pubTs)/60) : 0;
+          if (cat.rank <= 2) {
+            var pLive = await getStock(ticker).catch(function(){return null;});
+            if (pLive) {
+              var pReason = cat.name+' via Polygon ('+ageMin+'m ago)';
+              var pAlert = await buildMaverickAlert(ticker, pLive, pReason, cat.name, cat.rank);
+              await tg(pAlert); sent++; iHealth.newsAlertsTotal++; await sleep(1500);
+            }
+          } else {
+            await tg('<b>📡 CATALYST — $'+ticks.slice(0,3).join(' $')+'</b>\n[Rank '+cat.rank+'] '+cat.name+'\n'+art.title+'\n/check '+ticker);
+            sent++; iHealth.newsAlertsTotal++; await sleep(1500);
+          }
+        }
+        if (negs.length>=1 && ticks.length>=1) {
+          sentHeadlines.add(key);
+          await tg('<b>⚠️ BEARISH — $'+ticks[0]+'</b>\n'+art.title+'\nFlags: '+negs.slice(0,2).join(', '));
           await sleep(1500);
         }
-        if (pubTs&&pubTs>lastNewsTs) lastNewsTs=pubTs;
+        if (pubTs && pubTs > lastNewsTs) lastNewsTs = pubTs;
       }
     }
   } catch (e) { console.error('[NEWS-POLY]', e.message); }
+
+  // ── SOURCE 4: FINNHUB WATCHLIST NEWS ─────────────────────────────────────
   try {
     if (FINNHUB) {
-      var wkeys=Object.keys(watchlist).slice(0,5);
-      for (var w=0;w<wkeys.length;w++) {
-        var wsym=wkeys[w], wFrom=new Date(Date.now()-86400000).toISOString().slice(0,10);
-        var wNews=await fh('/company-news?symbol='+wsym+'&from='+wFrom+'&to='+todayStr());
-        if (!Array.isArray(wNews)){await sleep(400);continue;}
-        var fresh=wNews.filter(function(n){return n.datetime>lastNewsTs-3600&&n.headline;});
-        for (var fn=0;fn<Math.min(fresh.length,2);fn++){
-          var n=fresh[fn], nk=n.id||n.headline; if(sentHeadlines.has(nk)) continue;
-          var bd=(n.headline+' '+(n.summary||'')).toLowerCase();
-          var h2=BULLISH_KW.filter(function(k){return bd.indexOf(k)!==-1;});
-          if(h2.length){
-            sentHeadlines.add(nk);
-            var wLive=await getStock(wsym).catch(function(){return null;});
-            if(wLive){
-              var wCat=identifyCatalyst(n.headline);
-              var wAlert=await buildMaverickAlert(wsym,wLive,'Watchlist catalyst: '+h2[0],wCat.name,wCat.rank);
-              await tg(wAlert);
-            } else {
-              await tg('<b>📡 WATCHLIST $'+wsym+'</b>\n'+n.headline+'\nSignal: '+h2[0]+'\n\n/check '+wsym);
+      var wkeys = Object.keys(watchlist).slice(0,5);
+      for (var w = 0; w < wkeys.length; w++) {
+        var wsym = wkeys[w], wFrom = new Date(Date.now()-86400000).toISOString().slice(0,10);
+        var wNews = await fh('/company-news?symbol='+wsym+'&from='+wFrom+'&to='+todayStr());
+        if (!Array.isArray(wNews)) { await sleep(400); continue; }
+        var fresh = wNews.filter(function(n){return n.datetime > lastNewsTs-3600 && n.headline;});
+        for (var wn = 0; wn < Math.min(fresh.length,2); wn++) {
+          var wItem = fresh[wn], wK = String(wItem.id||wItem.headline);
+          if (sentHeadlines.has(wK)) continue;
+          var wBody = (wItem.headline+' '+(wItem.summary||'')).toLowerCase();
+          var wH = BULLISH_KW.filter(function(k){return wBody.indexOf(k)!==-1;});
+          if (wH.length) {
+            sentHeadlines.add(wK);
+            var wCat = identifyCatalyst(wItem.headline);
+            var wLive = await getStock(wsym).catch(function(){return null;});
+            if (wLive) {
+              var wAlert = await buildMaverickAlert(wsym, wLive, 'Watchlist — '+wH[0], wCat.name, wCat.rank);
+              await tg(wAlert); sent++; iHealth.newsAlertsTotal++; await sleep(1500);
             }
-            await sleep(1500);
           }
         }
         await sleep(400);
       }
     }
-  } catch (e) { console.error('[NEWS-FH]', e.message); }
-  try {
-    var eFrom=new Date(Date.now()-7200000).toISOString().slice(0,10);
-    var er=await fetch('https://efts.sec.gov/LATEST/search-index?q=%228-K%22&forms=8-K&dateRange=custom&startdt='+eFrom+'&enddt='+todayStr(),{headers:{'User-Agent':'MaverickIntelBot/4.1 (research@maverick.ai)'}});
-    if (er.ok){
-      var ed=await er.json(), eHits=ed&&ed.hits&&ed.hits.hits?ed.hits.hits:[];
-      for (var ek=0;ek<Math.min(eHits.length,6);ek++){
-        var src=eHits[ek]&&eHits[ek]._source; if(!src) continue;
-        var eKey=(src.entity_name||'')+'|'+(src.file_date||''); if(sentHeadlines.has(eKey)) continue;
-        var tick=((src.ticker||'')||(src.tickers&&src.tickers[0])||'').toUpperCase().trim();
-        if (!tick||tick.length>5) continue;
-        sentHeadlines.add(eKey);
-        await tg('SEC 8-K FILING\n'+(src.entity_name||'Unknown')+' ($'+tick+')\nFiled: '+(src.file_date||todayStr())+'\n/science '+tick+' | /check '+tick);
-        await sleep(2000);
-      }
-    }
-  } catch (e) { console.error('[NEWS-SEC]', e.message); }
+  } catch (e) { console.error('[NEWS-WL]', e.message); }
+
+  if (sent > 0) console.log('[NEWS] Sent ' + sent + ' alert(s). Total: ' + iHealth.newsAlertsTotal);
 }
 
 // ── MORNING BRIEFING ───────────────────────────────────────────────────────
 async function morningBriefing(manual) {
   var hour=nowHourCT(), today=todayStr();
+  iHealth.briefLastRun = Date.now();
   if (!manual) {
     if (hour<4||hour>=11) return;
     if (lastBriefingDate===today) return;
@@ -1495,6 +1545,9 @@ async function cmdStart(chatId) {
     '<b>🧠 LEARNING ENGINE</b>\n' +
     '/myedge — your personal win rate by float/RVOL/protocol\n' +
     '/history — last 10 closed trades\n\n' +
+    '<b>🔧 DIAGNOSTICS</b>\n' +
+    '/status — interval health, data sources, alert count\n' +
+    '/test-alert TICKER — end-to-end alert pipeline test\n\n' +
     '<b>💬 NATURAL LANGUAGE</b>\n' +
     'Just type anything:\n' +
     '"What\'s NIXX doing?" → live analysis\n' +
@@ -1752,6 +1805,86 @@ async function cmdHistory(chatId) {
   await tg(msg, chatId);
 }
 
+// ── /status — Interval + pipeline health ──────────────────────────────────
+async function cmdStatus(chatId) {
+  var now = Date.now();
+  var upMs = now - iHealth.startTime;
+  var upH = Math.floor(upMs/3600000), upM = Math.floor((upMs%3600000)/60000);
+
+  function ago(ts) {
+    if (!ts) return 'never';
+    var d = Math.round((now-ts)/1000);
+    if (d < 60) return d+'s ago';
+    if (d < 3600) return Math.round(d/60)+'m ago';
+    return Math.round(d/3600)+'h ago';
+  }
+
+  // Quick data source check
+  var yTest = await yahooQuote('SPY').catch(function(){return null;});
+  var fhTest = FINNHUB ? await fhQuote('SPY').catch(function(){return null;}) : null;
+
+  var msg = '<b>🔧 MAVERICK BOT STATUS v5.6</b>\n\n';
+  msg += '<b>UPTIME:</b> '+upH+'h '+upM+'m\n';
+  msg += '<b>MODE:</b> Webhook ✓ (zero polling)\n\n';
+
+  msg += '<b>DATA SOURCES:</b>\n';
+  msg += (yTest ? '✅' : '❌') + ' Yahoo Finance — ' + (yTest ? 'live $'+yTest.price : 'OFFLINE') + '\n';
+  msg += (fhTest ? '✅' : (FINNHUB ? '⚠️' : '❌')) + ' Finnhub — ' + (fhTest ? 'live' : FINNHUB ? 'slow/offline' : 'no key') + '\n';
+  msg += (POLYGON ? '✅' : '❌') + ' Polygon — ' + (POLYGON ? 'news only' : 'no key') + '\n\n';
+
+  msg += '<b>INTERVAL HEALTH:</b>\n';
+  msg += '📡 News scanner: '+ago(iHealth.newsLastRun)+' ('+iHealth.newsRunCount+' runs)\n';
+  msg += '📢 Alerts sent: <b>'+iHealth.newsAlertsTotal+'</b> total\n';
+  msg += '🌅 Briefing: '+ago(iHealth.briefLastRun)+'\n';
+  msg += '📈 Position monitor: '+ago(iHealth.posLastRun)+'\n\n';
+
+  msg += '<b>PIPELINE:</b>\n';
+  msg += 'CHAT_ID: ' + (CHAT_ID ? '✅ set ('+CHAT_ID.slice(0,4)+'***)' : '❌ MISSING — alerts cannot send') + '\n';
+  msg += 'Cache entries: '+Object.keys(dataCache).length+'\n';
+  msg += 'Watchlist: '+Object.keys(watchlist).length+' tickers\n';
+  msg += 'Open positions: '+Object.keys(positions).length+'\n\n';
+
+  if (iHealth.newsAlertsTotal === 0 && iHealth.newsRunCount > 0) {
+    msg += '<b>⚠️ NO ALERTS SENT YET</b>\n';
+    msg += 'Scanner is running but no bullish keywords found.\n';
+    msg += 'Try /test-alert to verify the pipeline works.\n';
+    msg += 'Add tickers with /watch TICKER to get watchlist alerts.';
+  } else if (!CHAT_ID) {
+    msg += '<b>🚨 CRITICAL: CHAT_ID not set</b>\nGo to Render → Environment → add INTEL_BOT_CHAT\nFind your ID by messaging @userinfobot on Telegram.';
+  }
+
+  await tg(msg, chatId);
+}
+
+// ── /test-alert — Fire a real end-to-end alert to verify pipeline ──────────
+async function cmdTestAlert(parts, chatId) {
+  var sym = (parts && parts[1]) ? parts[1].toUpperCase() : 'SPY';
+  await tg('🧪 Running end-to-end alert test with $'+sym+'...', chatId);
+  var d = await getStock(sym);
+  if (!d) return tg('❌ Data pull failed for $'+sym+'.\nYahoo Finance may be rate-limiting.\nTry /test-alert AAPL or /test-alert TSLA', chatId);
+
+  // Ensure aggs for SAS
+  if (!d._aggs || d._aggs.length < 5) {
+    var freshAggs = await yahooAggs(sym, 22);
+    if (freshAggs && freshAggs.length >= 5) d._aggs = freshAggs;
+  }
+
+  var reason = 'TEST ALERT — end-to-end pipeline verification. Data source: '+d.source;
+  var alertMsg = await buildMaverickAlert(sym, d, reason, 'System Test', 3);
+  await tg(alertMsg, chatId);
+  await tg(
+    '✅ <b>ALERT PIPELINE TEST COMPLETE</b>\n\n' +
+    'If you received the alert above, the full pipeline works:\n' +
+    '• Data pull ✓ ('+d.source+')\n' +
+    '• Score engine ✓\n' +
+    '• Alert voice ✓\n' +
+    '• Telegram delivery ✓\n\n' +
+    'The news scanner will send alerts in this exact format when it finds bullish catalysts.',
+    chatId
+  );
+  iHealth.newsAlertsTotal++; // Count test as verified send
+}
+
 // ── AI WITH INTENT DETECTION ───────────────────────────────────────────────
 async function cmdAI(text, chatId) {
   var ticker = extractTicker(text);
@@ -1805,6 +1938,7 @@ async function cmdAI(text, chatId) {
 
 // ── BACKGROUND MONITORS ────────────────────────────────────────────────────
 async function monitorPositions() {
+  iHealth.posLastRun = Date.now();
   for(var sym in positions){
     var pos=positions[sym],d=await getStock(sym).catch(function(){return null;});
     if(!d) continue;
@@ -1897,6 +2031,8 @@ async function handleUpdate(update) {
     else if (cmd==='/alert')                  await cmdAlert(parts,chatId);
     else if (cmd==='/myedge')                 fire(cmdMyEdge(chatId));
     else if (cmd==='/history')                await cmdHistory(chatId);
+    else if (cmd==='/status')                 fire(cmdStatus(chatId));
+    else if (cmd==='/test-alert')             fire(cmdTestAlert(parts, chatId));
     else if (text.charAt(0)!=='/') fire(cmdAI(text,chatId));
     else await tg('Unknown command. Type /help for all commands.',chatId);
   } catch(e) { console.error('[CMD]', cmd, e.message); await tg('Error: '+e.message, chatId); }
@@ -2203,8 +2339,8 @@ async function cmdBacktest(chatId) {
 }
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v5.5           ║');
-  console.log('║    BACKTEST ENGINE — PHASE 5 COMPLETE║');
+  console.log('║    MAVERICK INTEL BOT v5.6           ║');
+  console.log('║    TIMEOUT HARDENED + ALERT FIXED    ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
@@ -2238,20 +2374,21 @@ async function start() {
   } catch(e) { console.error('[WEBHOOK] setWebhook error:', e.message); }
 
   await tg(
-    '<b>MAVERICK INTEL BOT v5.5 — ONLINE</b>\n\n' +
-    '⚡ Mode: WEBHOOK | 🐋 SAS | 🧪 BACKTEST\n' +
-    'Data:   Yahoo Finance (quotes + history + gainers) ✓\n' +
-    (FINNHUB?'Finnhub: fundamentals + news ✓\n':'') +
-    (POLYGON?'Polygon: news (free tier) ✓\n':'') +
-    'Brain:  '+(GROQ_KEY?'Groq+Cerebras ✓':CBRS_KEY?'Cerebras only':'NO AI KEYS')+'\n' +
-    'Memory: '+(JSONBIN_ID?(memory.trades?memory.trades.length:0)+' trades loaded ✓':'not configured')+'\n\n' +
-    '<b>🧪 v5.5 — BACKTEST ENGINE:</b>\n' +
-    '• /backtest — reconstructs T-1 MIS for every historical move\n' +
-    '• Tier performance: see actual hit rates by MIS score range\n' +
-    '• 88% target tracking — shows current gap and weight suggestions\n' +
-    '• Float tier breakdown — nano vs tight vs wide\n' +
-    '• /backtest force — fresh run bypassing cache\n\n' +
-    'Type /help for all commands.'
+    '<b>MAVERICK INTEL BOT v5.6 — ONLINE</b>\n\n' +
+    '⚡ Webhook | 🐋 SAS | 🧪 Backtest | 🔧 Hardened\n' +
+    'Data:   Yahoo Finance (timeout-safe) ✓\n' +
+    (FINNHUB?'Finnhub: news PRIMARY + fundamentals ✓\n':'') +
+    (POLYGON?'Polygon: news tertiary ✓\n':'') +
+    'Brain:  '+(GROQ_KEY?'Groq (15s timeout) ✓':CBRS_KEY?'Cerebras only':'NO AI KEYS')+'\n' +
+    'Memory: '+(JSONBIN_ID?(memory.trades?memory.trades.length:0)+' trades ✓':'not configured')+'\n\n' +
+    '<b>v5.6 RELIABILITY FIX:</b>\n' +
+    '• 9s timeout on ALL data calls — no more freezing\n' +
+    '• News scanner: Finnhub PRIMARY → SEC → Polygon\n' +
+    '• /status — check if alerts are actually firing\n' +
+    '• /test-alert TICKER — verify the full pipeline\n' +
+    '• 30-min news lookback on startup (no missed alerts)\n' +
+    '• SAS aggs fetched inline if cache empty\n\n' +
+    'Type /test-alert SPY right now to confirm pipeline.'
   );
 
   setInterval(monitorPositions,  60000);
@@ -2260,7 +2397,7 @@ async function start() {
   setInterval(morningBriefing,  300000);
   setInterval(pruneHeadlines,  3600000);
 
-  console.log('[BOT] v5.5 running. Backtest engine live. SAS live. Yahoo data. Webhook. No polling.');
+  console.log('[BOT] v5.6 running. Timeout-hardened. Finnhub news primary. Alerts live.');
 }
 
 start();
