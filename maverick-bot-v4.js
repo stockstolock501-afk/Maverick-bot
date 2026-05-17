@@ -125,10 +125,24 @@ var watchlist        = {};
 var priceAlerts      = [];
 var chatHistory      = {};
 var lastUpdateId     = 0;
-var lastNewsTs       = Math.floor(Date.now() / 1000) - 1800; // 30 min lookback on start
+var lastNewsTs       = Math.floor(Date.now() / 1000) - 1800;
 var sentHeadlines    = new Set();
 var activeProtocol   = null;
 var lastBriefingDate = '';
+
+// ── TRADING UNIVERSE RULES ─────────────────────────────────────────────────
+// Hard ceiling for scans, alerts, news. Research-only above this price.
+var TRADE_MAX_PRICE = 20;
+
+// ── COUNTRY FLAG HELPER ────────────────────────────────────────────────────
+// Universal — call on every output so country is always visible.
+function cFlag(sym) {
+  var c = detectCountry(sym, '');
+  return c === 'US' ? '🇺🇸' : c === 'CN' ? '🇨🇳' : c === 'IL' ? '🇮🇱' : '🌐';
+}
+
+// ── SEPARATE COUNTERS: organic vs test ────────────────────────────────────
+var organicAlertsSent = 0;
 
 // ── INTERVAL HEALTH TRACKING ───────────────────────────────────────────────
 var iHealth = {
@@ -1822,44 +1836,54 @@ async function scanNewsIntel() {
   iHealth.newsRunCount++;
   var sent = 0;
 
-  // ── SOURCE 1: FINNHUB GENERAL NEWS (primary — always connected, no Polygon needed) ──
+  // ── SOURCE 1: TICKER-CENTRIC FINNHUB SCAN ─────────────────────────────────
+  // Scan active gainers + watchlist for company-specific news.
+  // This is reliable: we pick tickers first, then look for their news.
+  // Fixes the broken "general news → ticker extraction" approach.
   try {
     if (FINNHUB) {
-      var fhNews = await fh('/news?category=general&minId=0');
-      if (Array.isArray(fhNews)) {
-        var cutoff = lastNewsTs - 3600; // 1hr buffer
-        for (var fi = 0; fi < fhNews.length; fi++) {
-          var fn = fhNews[fi];
-          if (!fn.headline || fn.datetime <= cutoff) continue;
-          var fnKey = String(fn.id || fn.headline);
-          if (sentHeadlines.has(fnKey)) continue;
-          var fnBody = (fn.headline + ' ' + (fn.summary||'')).toLowerCase();
-          var fnHits = BULLISH_KW.filter(function(k){return fnBody.indexOf(k)!==-1;});
-          var fnNegs = BEARISH_KW.filter(function(k){return fnBody.indexOf(k)!==-1;});
-          var fnTick = (fn.related||'').split(',').map(function(t){return t.trim().toUpperCase();}).filter(function(t){return t.length>=1&&t.length<=5;})[0]||'';
-          if (fnHits.length >= 1 && fnNegs.length === 0 && fnTick) {
-            sentHeadlines.add(fnKey);
-            if (fn.datetime > lastNewsTs) lastNewsTs = fn.datetime;
-            var fnCat = identifyCatalyst(fn.headline);
-            var liveD = await getStock(fnTick).catch(function(){return null;});
-            if (liveD && fnCat.rank <= 3) {
-              var reason = fnCat.name + ' via Finnhub (' + Math.round((Date.now()/1000 - fn.datetime)/60) + 'm ago)';
-              var alertMsg = await buildMaverickAlert(fnTick, liveD, reason, fnCat.name, fnCat.rank);
-              await tg(alertMsg); sent++; iHealth.newsAlertsTotal++; await sleep(1200);
-            } else if (fnCat.rank <= 4) {
-              await tg('<b>📡 CATALYST — $'+fnTick+'</b>\n[Rank '+fnCat.rank+'] '+fnCat.name+'\n'+fn.headline+'\n/check '+fnTick+' | /science '+fnTick);
-              sent++; iHealth.newsAlertsTotal++; await sleep(1200);
+      var gainers = await getTopGainers();
+      var activeTickers = gainers.slice(0,10).map(function(g){return g.ticker;});
+      Object.keys(watchlist).forEach(function(t){ if(activeTickers.indexOf(t)===-1) activeTickers.push(t); });
+      var wFrom = new Date(Date.now()-86400000).toISOString().slice(0,10);
+      for (var ti=0; ti<activeTickers.length; ti++) {
+        var sym = activeTickers[ti];
+        if (!sym || sym.length > 5) continue;
+        try {
+          var tickerNews = await fh('/company-news?symbol='+sym+'&from='+wFrom+'&to='+todayStr());
+          if (!Array.isArray(tickerNews) || !tickerNews.length) { await sleep(200); continue; }
+          var fresh = tickerNews.filter(function(n){ return n.datetime > lastNewsTs-3600 && n.headline; });
+          for (var tn=0; tn<Math.min(fresh.length,3); tn++) {
+            var tnItem = fresh[tn];
+            var tnKey  = String(tnItem.id||tnItem.headline);
+            if (sentHeadlines.has(tnKey)) continue;
+            var tnBody = (tnItem.headline+' '+(tnItem.summary||'')).toLowerCase();
+            var tnHits = BULLISH_KW.filter(function(k){return tnBody.indexOf(k)!==-1;});
+            var tnNegs = BEARISH_KW.filter(function(k){return tnBody.indexOf(k)!==-1;});
+            if (tnHits.length >= 1 && tnNegs.length === 0) {
+              sentHeadlines.add(tnKey);
+              if (tnItem.datetime > lastNewsTs) lastNewsTs = tnItem.datetime;
+              var tnCat  = identifyCatalyst(tnItem.headline);
+              var tnLive = await getStock(sym).catch(function(){return null;});
+              // HARD RULE: Only alert on tradeable stocks (≤ $20)
+              if (!tnLive || tnLive.price > TRADE_MAX_PRICE || tnLive.price < 0.25) { await sleep(200); continue; }
+              var ageMin = Math.round((Date.now()/1000 - tnItem.datetime)/60);
+              var reason = tnCat.name+' — '+tnHits[0]+' ('+ageMin+'m ago)';
+              var alertMsg = await buildMaverickAlert(sym, tnLive, reason, tnCat.name, tnCat.rank);
+              await tg(alertMsg); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++;
+              await sleep(1500);
+            }
+            if (tnNegs.length >= 1) {
+              sentHeadlines.add(tnKey);
+              await tg('<b>⚠️ BEARISH — $'+sym+' '+cFlag(sym)+'</b>\n'+tnItem.headline+'\n'+tnNegs.slice(0,2).join(', '));
+              sent++; await sleep(1500);
             }
           }
-          if (fnNegs.length >= 1 && fnTick) {
-            sentHeadlines.add(fnKey);
-            await tg('<b>⚠️ BEARISH FLAG — $'+fnTick+'</b>\n'+fn.headline+'\nFlags: '+fnNegs.slice(0,2).join(', '));
-            sent++; await sleep(1200);
-          }
-        }
+          await sleep(300);
+        } catch(e) { /* skip ticker on error */ }
       }
     }
-  } catch (e) { console.error('[NEWS-FH-GENERAL]', e.message); }
+  } catch (e) { console.error('[NEWS-FH-TICKER]', e.message); }
 
   // ── SOURCE 2: SEC EDGAR 8-K FILINGS (completely free, high signal) ──────────
   try {
@@ -1878,10 +1902,10 @@ async function scanNewsIntel() {
         if (!tick || tick.length > 5) continue;
         sentHeadlines.add(eKey);
         var secD = await getStock(tick).catch(function(){return null;});
-        if (secD) {
+        if (secD && secD.price <= TRADE_MAX_PRICE && secD.price >= 0.25) {
           var secReason = 'SEC 8-K filing detected ('+src.file_date+') — potential catalyst';
           var secMsg = await buildMaverickAlert(tick, secD, secReason, 'SEC 8-K Filing', 3);
-          await tg(secMsg); sent++; iHealth.newsAlertsTotal++; await sleep(2000);
+          await tg(secMsg); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++; await sleep(2000);
         }
       }
     }
@@ -1905,13 +1929,13 @@ async function scanNewsIntel() {
           var ageMin = pubTs ? Math.round((Date.now()/1000-pubTs)/60) : 0;
           if (cat.rank <= 2) {
             var pLive = await getStock(ticker).catch(function(){return null;});
-            if (pLive) {
-              var pReason = cat.name+' via Polygon ('+ageMin+'m ago)';
+            if (pLive && pLive.price <= TRADE_MAX_PRICE && pLive.price >= 0.25) {
+              var pReason = cat.name+' via Polygon ('+ageMin+'m ago) '+cFlag(ticker);
               var pAlert = await buildMaverickAlert(ticker, pLive, pReason, cat.name, cat.rank);
-              await tg(pAlert); sent++; iHealth.newsAlertsTotal++; await sleep(1500);
+              await tg(pAlert); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++; await sleep(1500);
             }
           } else {
-            await tg('<b>📡 CATALYST — $'+ticks.slice(0,3).join(' $')+'</b>\n[Rank '+cat.rank+'] '+cat.name+'\n'+art.title+'\n/check '+ticker);
+            await tg('<b>📡 CATALYST — $'+ticks.slice(0,3).join(' $')+'</b> '+cFlag(ticker)+'\n[Rank '+cat.rank+'] '+cat.name+'\n'+art.title+'\n/check '+ticker);
             sent++; iHealth.newsAlertsTotal++; await sleep(1500);
           }
         }
@@ -1943,9 +1967,12 @@ async function scanNewsIntel() {
             sentHeadlines.add(wK);
             var wCat = identifyCatalyst(wItem.headline);
             var wLive = await getStock(wsym).catch(function(){return null;});
-            if (wLive) {
-              var wAlert = await buildMaverickAlert(wsym, wLive, 'Watchlist — '+wH[0], wCat.name, wCat.rank);
-              await tg(wAlert); sent++; iHealth.newsAlertsTotal++; await sleep(1500);
+            if (wLive && wLive.price <= TRADE_MAX_PRICE && wLive.price >= 0.25) {
+              var wAlert = await buildMaverickAlert(wsym, wLive, 'Watchlist — '+wH[0]+' '+cFlag(wsym), wCat.name, wCat.rank);
+              await tg(wAlert); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++; await sleep(1500);
+            } else if (wLive && wLive.price > TRADE_MAX_PRICE) {
+              await tg('<b>📊 RESEARCH ALERT — $'+wsym+' '+cFlag(wsym)+'</b> ($'+wLive.price+' — above trading zone)\n'+wItem.headline+'\n[Market research only — not a trade setup]');
+              sent++; await sleep(1500);
             }
           }
         }
@@ -2098,7 +2125,7 @@ async function cmdTopPick(chatId) {
   procEnd('toppick');
   if (!results.length) return tg('No qualifying setups found. Market may be quiet or pre/post-market.', chatId);
   var pick = results[0];
-  var msg = '🏆 <b>MY TOP PICK RIGHT NOW: $'+pick.sym+'</b>\n';
+  var msg = '🏆 <b>MY TOP PICK RIGHT NOW: $'+pick.sym+' '+cFlag(pick.sym)+'</b>\n';
   msg += 'Composite score: <b>'+pick.composite+'/100</b>\n';
   msg += 'MIS:'+pick.mis+' | SDI:'+pick.sdi+' | SAS:'+pick.sas+' | Setup:'+pick.setup+'\n';
   msg += '$'+pick.price+' ('+(pick.changePct>=0?'+':'')+rnd(pick.changePct,2)+'%) RVOL:'+pick.relVol+'x Float:'+pick.floatM+'M\n';
@@ -2115,47 +2142,42 @@ async function cmdTopPick(chatId) {
 
 async function cmdStart(chatId) {
   await tg(
-    '<b>MAVERICK INTEL BOT v5.1</b>\n\n' +
+    '<b>MAVERICK INTEL BOT v6.0</b>\n' +
+    '<i>Trading universe: $0.25–$'+TRADE_MAX_PRICE+' | 🇺🇸 +bonus  🇨🇳 -penalty  🇮🇱 excluded</i>\n\n' +
+    '<b>🏆 TOP PICK</b>\n' +
+    '/top-pick — best setup right now, full case auto-runs\n\n' +
     '<b>🌟 SUPERNOVA PROTOCOL</b>\n' +
-    '/supernova TICKER — 9-ingredient score, archetype, lifecycle, false signals, kill zones\n' +
-    '/supernova-scan — scan full universe for supernova candidates\n\n' +
+    '/supernova TICKER — 9-ingredient score, archetype, lifecycle, kill zones\n' +
+    '/supernova-scan — scan universe for supernova candidates\n\n' +
     '<b>📊 STOCK ANALYSIS</b>\n' +
-    '/check TICKER — full AI + live data (MIS, SDI, levels)\n' +
-    '/science TICKER — Maverick Ignition Score breakdown\n' +
+    '/check TICKER — 3-part: data snapshot → conviction case → action plan\n' +
+    '/science TICKER — full science module (MIS+SDI+SAS+SM%+Duration)\n' +
+    '/mis TICKER — alias for /science\n' +
     '/sdi TICKER — Short Danger Index\n' +
-    '/sas TICKER — 🐋 Stealth Accumulation Score (whale detection)\n' +
-    '/backtest — 🧪 Backtest MIS formula against 30-day history\n' +
-    '/scan — top setups scored + ranked now\n' +
-    '/squeeze — SDI-powered short squeeze candidates\n' +
-    '/gappers — live top gappers / gainers\n' +
+    '/sas TICKER — 🐋 Stealth Accumulation Score\n' +
+    '/trend TICKER — 📈 Trend Recognition Engine (MA, HH/HL, staircase)\n' +
+    '/scan — top setups scored + ranked\n' +
+    '/squeeze — short squeeze candidates\n' +
+    '/gappers — live top gappers/gainers\n' +
     '/news — latest catalysts ranked 1-5\n' +
-    '/autopsy — 30-day top mover pattern analysis\n\n' +
+    '/autopsy — 30-day top mover pattern dissection\n' +
+    '/backtest — MIS formula validated against history\n\n' +
     '<b>📅 BRIEFING</b>\n' +
-    '/briefing — trigger morning briefing manually anytime\n\n' +
+    '/briefing — morning briefing (manual trigger, any time)\n\n' +
     '<b>⚙️ PROTOCOLS</b>\n' +
-    '/ross — Ross Cameron Gap and Go\n' +
-    '/humble — Humble Trader continuation\n' +
-    '/maverick — Maverick adaptive (learns from your trades)\n' +
-    '/protocol off — deactivate\n\n' +
+    '/ross  /humble  /maverick  /protocol off\n\n' +
     '<b>📈 TRADE TRACKING</b>\n' +
     '/position TICKER ENTRY STOP TP1 TP2 SHARES\n' +
-    '/positions — open trades with live P&L\n' +
-    '/close TICKER EXITPRICE — close + log\n' +
-    '/watch TICKER — add to watchlist\n' +
-    '/alert TICKER PRICE above|below\n\n' +
-    '<b>🧠 LEARNING ENGINE</b>\n' +
-    '/myedge — your personal win rate by float/RVOL/protocol\n' +
+    '/positions  /close TICKER EXITPRICE\n' +
+    '/watch TICKER  /alert TICKER PRICE above|below\n\n' +
+    '<b>🧠 LEARNING</b>\n' +
+    '/myedge — win rate by float/RVOL/protocol\n' +
     '/history — last 10 closed trades\n\n' +
     '<b>🔧 DIAGNOSTICS</b>\n' +
-    '/status — interval health, data sources, alert count\n' +
-    '/test-alert TICKER — end-to-end alert pipeline test\n\n' +
+    '/status — health, cache, organic alert count\n' +
+    '/test-alert TICKER — end-to-end pipeline test\n\n' +
     '<b>💬 NATURAL LANGUAGE</b>\n' +
-    'Just type anything:\n' +
-    '"What\'s NIXX doing?" → live analysis\n' +
-    '"scan" → runs scanner\n' +
-    '"gainers" → top gappers\n' +
-    '"supernova MDAI" → supernova check\n' +
-    '"squeeze plays" → squeeze scan',
+    'Type anything: "PIII" "scan" "gainers" "trend TRT" "top pick"',
     chatId
   );
 }
@@ -2199,7 +2221,7 @@ async function cmdCheck(sym, chatId) {
 
   // ── MESSAGE 1: DATA SNAPSHOT ─────────────────────────────────────────────
   var m1 = '<b>🎯 $'+sym+' — '+conviction+'</b> | '+d.source+' '+countryFlag+'\n';
-  m1 += zone.label+'  ';
+  m1 += zone.label+'\n';
   m1 += '━━━━━━━━━━━━━━━━━━━━━━\n';
   m1 += '$'+d.price+' ('+changeStr+')';
   if (d.gapPct) m1 += '  Gap:+'+rnd(d.gapPct,1)+'%';
@@ -2283,8 +2305,9 @@ async function cmdCheck(sym, chatId) {
   m3 += 'TP2:         $'+tp2+' (+'+rnd((tp2-d.price)/d.price*100,1)+'%) — sell 30%\n';
   m3 += 'R:R:         '+rr+':1\n';
   m3 += 'Shares:      '+calcShares(d.price, stop)+' (risk-sized)\n\n';
-  if (zones.demand.length) m3 += 'Demand zones: '+zones.demand.join(' / ')+'\n';
-  if (zones.supply.length) m3 += 'Supply zones: '+zones.supply.join(' / ')+'\n';
+  if (zones.demand.length) m3 += '\n<b>📍 Historical support zones:</b> '+zones.demand.join(' / ')+'\n';
+  if (zones.supply.length) m3 += '<b>📍 Historical resistance zones:</b> '+zones.supply.join(' / ')+'\n';
+  m3 += '<i>(Prior consolidation areas — useful for context, not current entry targets)</i>\n';
   m3 += protoLine;
   m3 += '\n<b>SEQUENCE DETAIL:</b>\n';
   var primaryItems = seq.primary === 'A' ? seq.seqA : seq.seqB;
@@ -2378,7 +2401,9 @@ async function cmdScan(chatId) {
   for(var i=0;i<settled.length;i++){
     var r=settled[i]; if(r.status!=='fulfilled'||!r.value) continue;
     var d = r.value, sr = scoreSetup(d);
-    if (sr.excluded) continue;  // Skip IL/out-of-zone tickers
+    if (sr.excluded) continue;
+    // HARD RULE: top-pick only considers tradeable stocks (≤ $20)
+    if (d.price > TRADE_MAX_PRICE || d.price < 0.25) continue;
     var ok=!activeProtocol||!PROTOCOLS[activeProtocol]||PROTOCOLS[activeProtocol].filter(d);
     if(sr.score>=50&&ok){var mis=calcMIS(d,5);results.push(Object.assign({},d,{score:sr.score,flags:sr.flags,mis:mis.pct}));}
   }
@@ -2539,9 +2564,10 @@ async function cmdStatus(chatId) {
   var yTest = await yahooQuote('SPY').catch(function(){return null;});
   var fhTest = FINNHUB ? await fhQuote('SPY').catch(function(){return null;}) : null;
 
-  var msg = '<b>🔧 MAVERICK BOT STATUS v5.8</b>\n\n';
+  var msg = '<b>🔧 MAVERICK BOT STATUS v6.0</b>\n\n';
   msg += '<b>UPTIME:</b> '+upH+'h '+upM+'m\n';
-  msg += '<b>MODE:</b> Webhook ✓ (zero polling)\n\n';
+  msg += '<b>MODE:</b> Webhook ✓ (zero polling)\n';
+  msg += '<b>TRADING RULE:</b> Sub-$'+TRADE_MAX_PRICE+' only (alerts + scans)\n\n';
 
   msg += '<b>DATA SOURCES:</b>\n';
   msg += (yTest ? '✅' : '❌') + ' Yahoo Finance — ' + (yTest ? 'live $'+yTest.price : 'OFFLINE') + '\n';
@@ -2550,7 +2576,7 @@ async function cmdStatus(chatId) {
 
   msg += '<b>INTERVAL HEALTH:</b>\n';
   msg += '📡 News scanner: '+ago(iHealth.newsLastRun)+' ('+iHealth.newsRunCount+' runs)\n';
-  msg += '📢 Alerts sent: <b>'+iHealth.newsAlertsTotal+'</b> total\n';
+  msg += '📢 Organic alerts: <b>'+organicAlertsSent+'</b>  |  Test alerts: '+(iHealth.newsAlertsTotal - organicAlertsSent)+'\n';
   msg += '🌅 Briefing: '+ago(iHealth.briefLastRun)+'\n';
   msg += '📈 Position monitor: '+ago(iHealth.posLastRun)+'\n\n';
 
@@ -2576,7 +2602,7 @@ async function cmdStatus(chatId) {
     msg += '\n';
   }
 
-  if (iHealth.newsAlertsTotal === 0 && iHealth.newsRunCount > 0) {
+  if (organicAlertsSent === 0 && iHealth.newsRunCount > 0) {
     msg += '<b>⚠️ NO ALERTS SENT YET</b>\n';
     msg += 'Scanner is running but no bullish keywords found.\n';
     msg += 'Try /test-alert to verify the pipeline works.\n';
@@ -3076,6 +3102,22 @@ async function cmdBacktest(chatId) {
   }
   return runBacktest(chatId);
 }
+// ── BACKGROUND CACHE PRE-WARMER ────────────────────────────────────────────
+// Pre-fetches data for all active tickers so deep commands are instant.
+async function warmCache() {
+  var gainers = await getTopGainers().catch(function(){return [];});
+  var priority = gainers.slice(0,15).map(function(g){return g.ticker;});
+  Object.keys(watchlist).forEach(function(t){if(priority.indexOf(t)===-1)priority.push(t);});
+  BASE_SCAN.slice(0,20).forEach(function(t){if(priority.indexOf(t)===-1)priority.push(t);});
+  priority = priority.filter(function(v,i,a){return a.indexOf(v)===i && v && v.length<=5;}).slice(0,35);
+  console.log('[WARM] Pre-warming '+priority.length+' tickers...');
+  var warmed = 0;
+  for (var i=0; i<priority.length; i++) {
+    try { var d = await getStock(priority[i]); if(d) warmed++; await sleep(400); } catch(e) {}
+  }
+  console.log('[WARM] Cache ready. '+warmed+'/'+priority.length+' tickers loaded.');
+}
+
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
   console.log('║    MAVERICK INTEL BOT v6.0           ║');
@@ -3131,7 +3173,10 @@ async function start() {
   setInterval(scanNewsIntel,    120000);
   setInterval(morningBriefing,  300000);
   setInterval(pruneHeadlines,  3600000);
-  setInterval(runStaircaseScanner, 300000); // Every 5 min — staircase exception scanner
+  setInterval(runStaircaseScanner, 300000);
+  setInterval(warmCache, 1800000); // Re-warm every 30 min
+  // First warm at 45s after startup (let services stabilize)
+  setTimeout(warmCache, 45000);
 
   console.log('[BOT] v6.0 running. Staircase scanner live. TRE active. 65 tickers. No more TRT misses.');
 }
