@@ -1065,6 +1065,8 @@ function predictDuration(d, catRank) {
   }
   return { minMin, maxMin, style, hold, exitNote };
 }
+
+var PROTOCOLS = {
   ross: {
     name:'Ross Cameron Protocol', desc:'Gap and Go — first 5min candle break, exit by 11AM',
     filter:function(d){return d.gapPct>=10&&d.price>=2&&d.price<=20&&d.floatM<=10&&d.relVol>=3;},
