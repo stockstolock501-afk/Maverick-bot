@@ -580,8 +580,8 @@ async function getStock(sym) {
 
     if (!price || price <= 0) return null;
 
-    // PARALLEL: unified aggs (3-source, 4hr cached) + fundamentals (24hr cached)
-    var parallel = await Promise.allSettled([ getAggs(sym, 22), fhMetrics(sym) ]);
+    // PARALLEL: unified aggs (3-source, 4hr cached) + fundamentals (24hr cached) + profile (country)
+    var parallel = await Promise.allSettled([ getAggs(sym, 22), fhMetrics(sym), fh('/stock/profile2?symbol='+sym) ]);
 
     var aggs = (parallel[0].status==='fulfilled' && parallel[0].value) ? parallel[0].value : null;
 
@@ -616,7 +616,21 @@ async function getStock(sym) {
     var atr         = rnd(price*0.025,4);
     var daysToCover = floatM>0&&avgVol>0 ? rnd((floatM*1e6)/avgVol,2) : 99;
 
-    var result = { sym, price, changePct, gapPct, high, low, open, prevClose, volume, avgVol:rnd(avgVol,0), relVol, floatM, shortPct, week52High:week52H, week52Low:week52L, atr, daysToCover, source, _aggs:aggs };
+    // Country — from Finnhub profile (parallel[2])
+    var country = 'US', countryName = 'United States';
+    var profile = (parallel[2] && parallel[2].status==='fulfilled' && parallel[2].value) ? parallel[2].value : null;
+    if (profile && profile.country) {
+      country     = (profile.country || 'US').toUpperCase().trim();
+      countryName = profile.country || 'US';
+    }
+
+    // Hard exclude Israeli companies
+    if (country === 'IL' || country === 'ISR' || countryName.toLowerCase().includes('israel')) {
+      console.log('[EXCLUDED] ' + sym + ' — Israeli company (' + countryName + ')');
+      return null;
+    }
+
+    var result = { sym, price, changePct, gapPct, high, low, open, prevClose, volume, avgVol:rnd(avgVol,0), relVol, floatM, shortPct, week52High:week52H, week52Low:week52L, atr, daysToCover, country, source, _aggs:aggs };
     cacheSet(sym, result);
     return result;
   } catch(e) { console.error('[getStock]', sym, e.message); return null; }
@@ -652,10 +666,16 @@ function scoreSetup(d) {
   else if (d.changePct<-5) {score-=8;}
   if      (d.gapPct>=20){score+=12;flags.push('GAP +'+rnd(d.gapPct,1)+'%');}
   else if (d.gapPct>=10){score+=8;flags.push('GAP +'+rnd(d.gapPct,1)+'%');}
-  if      (d.price<1) {score+=10;flags.push('SUB-$1');}
-  else if (d.price<3) {score+=9;}
-  else if (d.price<5) {score+=6;}
-  else if (d.price<10){score+=3;}
+  // ── PRICE ZONE (Maverick preferred ranges) ───────────────────────────────
+  if      (d.price >= 0.25 && d.price <= 6.00) { score+=14; flags.push('PRIMARY ZONE $'+rnd(d.price,2)); }
+  else if (d.price <= 9.99)                     { score+=7;  flags.push('GOOD ZONE $'+rnd(d.price,2)); }
+  else if (d.price <= 20.00)                    { score+=0;  flags.push('NOT PREFERRED $'+rnd(d.price,2)); }
+  else                                          { score-=15; flags.push('OUT OF ZONE $'+rnd(d.price,2)+' — skipping'); }
+
+  // ── COUNTRY ADJUSTMENT ───────────────────────────────────────────────────
+  var cty = d.country || 'US';
+  if      (cty === 'US')                        { score+=5;  flags.push('🇺🇸 US +5'); }
+  else if (cty === 'CN' || cty === 'CHN')       { score-=5;  flags.push('🇨🇳 CN -5'); }
   if (d.shortPct>30&&d.relVol>3){score+=18;flags.push('SQUEEZE SETUP');}
   else if (d.shortPct>20){score+=9;flags.push('SHORT '+rnd(d.shortPct,1)+'%');}
   if (d.week52High>0){var pf=(d.week52High-d.price)/Math.max(d.week52High,0.01)*100; if(pf<2&&d.changePct>0){score+=10;flags.push('52W BREAKOUT');}}
@@ -711,9 +731,15 @@ function calcMIS(d, catRank) {
   if      (dtc<0.5){score+=7;components.push('DTC 7/7 — '+rnd(dtc,2)+'d TRAPPED');}
   else if (dtc<1.0){score+=5;components.push('DTC 5/7 — '+rnd(dtc,2)+'d');}
   else if (dtc<2.0){score+=3;components.push('DTC 3/7 — '+rnd(dtc,2)+'d');}
-  if      (d.price<2) {score+=5;components.push('Price 5/5 — sub-$2');}
-  else if (d.price<5) {score+=4;components.push('Price 4/5 — $2-5');}
-  else if (d.price<10){score+=2;components.push('Price 2/5 — $5-10');}
+  // Price zone scoring (Maverick preferred ranges)
+  if      (d.price>=0.25&&d.price<=6.00){score+=8;components.push('Price 8/8 — PRIMARY ZONE $'+rnd(d.price,2));}
+  else if (d.price<=9.99)               {score+=4;components.push('Price 4/8 — GOOD ZONE $'+rnd(d.price,2));}
+  else if (d.price<=20.00)              {score+=0;components.push('Price 0/8 — NOT PREFERRED $'+rnd(d.price,2));}
+  else                                  {score-=8;components.push('Price -8 — OUT OF ZONE $'+rnd(d.price,2));}
+  // Country adjustment
+  var ctyMIS = d.country || 'US';
+  if      (ctyMIS==='US')              {score+=4;components.push('Country +4 — 🇺🇸 US');}
+  else if (ctyMIS==='CN'||ctyMIS==='CHN'){score-=4;components.push('Country -4 — 🇨🇳 CN');}
   if (d.week52High>0&&d.price>=d.week52High*0.98&&d.changePct>0){score+=5;components.push('52W Breakout +5 BONUS');}
   var pct=Math.min(100,Math.round(score/90*100));
   var tier=pct>=80?'IGNITION READY':pct>=65?'HIGH POTENTIAL':pct>=50?'WATCH':'SKIP';
@@ -731,9 +757,10 @@ function calcSDI(d, catRank) {
   if      (d.shortPct>=30){score+=25;reasons.push('HEAVY SHORT '+rnd(d.shortPct,1)+'%');}
   else if (d.shortPct>=20){score+=15;reasons.push('High short '+rnd(d.shortPct,1)+'%');}
   else if (d.shortPct>=10){score+=8;reasons.push('Moderate short '+rnd(d.shortPct,1)+'%');}
-  if      (d.price<1){score+=20;reasons.push('SUB-$1 — unlimited % upside risk for shorts');}
-  else if (d.price<3){score+=15;reasons.push('Sub-$3 — high % move possible');}
-  else if (d.price<5){score+=8;reasons.push('Sub-$5 — elevated short risk');}
+  if      (d.price>=0.25&&d.price<=6.00){score+=20;reasons.push('PRIMARY ZONE $'+rnd(d.price,2)+' — maximum % move potential');}
+  else if (d.price<=9.99)               {score+=10;reasons.push('GOOD ZONE $'+rnd(d.price,2)+' — elevated short risk');}
+  else if (d.price<=20.00)              {score+=3; reasons.push('NOT PREFERRED $'+rnd(d.price,2)+' — limited % move');}
+  else                                  {score-=5; reasons.push('OUT OF ZONE $'+rnd(d.price,2)+' — Maverick does not trade here');}
   if      (catRank===1){score+=20;reasons.push('BINARY CATALYST — shorts cannot hedge');}
   else if (catRank===2){score+=12;reasons.push('Strong catalyst — short risk elevated');}
   else if (catRank===3){score+=5;reasons.push('Moderate catalyst');}
@@ -1213,11 +1240,11 @@ function scoreSupernova(d, catRank, headline) {
     detail: rnd(d.shortPct,1)+'% short — '+(shortPass ? 'heavy short interest, squeeze fuel loaded' : 'not enough shorts to force a squeeze run')
   });
 
-  // 6. PRICE UNDER $10 (maximum % move potential)
-  var pricePass = d.price < 10;
+  // 6. PRICE IN MAVERICK ZONE ($0.25-$9.99)
+  var pricePass = d.price >= 0.25 && d.price <= 9.99;
   ingredients.push({
-    name: 'Price < $10', pass: pricePass,
-    detail: '$'+d.price+' — '+(pricePass ? (d.price < 2 ? 'sub-$2, unlimited % upside' : 'sub-$10, high % move possible') : 'above $10, limits % move magnitude')
+    name: 'Price in Maverick Zone ($0.25-$9.99)', pass: pricePass,
+    detail: '$'+d.price+' — '+(d.price<=6.00?'PRIMARY ZONE (max bonus)':d.price<=9.99?'GOOD ZONE':d.price<=20?'NOT PREFERRED — reduces score':'OUT OF ZONE — excluded from scans')
   });
 
   // 7. DAYS TO COVER < 1 (shorts trapped)
@@ -1647,7 +1674,7 @@ async function morningBriefing(manual) {
       var g=gainers[i], day=g.day||{}, prev=g.prevDay||{};
       var price=day.c||(g.lastTrade&&g.lastTrade.p)||0, prevClose=prev.c||price;
       var changePct=prevClose>0?rnd((price-prevClose)/prevClose*100,2):(g.todaysChangePerc||0);
-      if (price<1||price>30||changePct<5) continue;
+      if (price<0.25||price>20||changePct<5) continue;  // Maverick price window: $0.25-$20
       var d=await getStock(g.ticker).catch(function(){return null;}); if(!d) continue;
       var sr=scoreSetup(d), mis=calcMIS(d,5);
       if (sr.score>=50) results.push(Object.assign({},d,{score:sr.score,flags:sr.flags,mis:mis.pct,misTier:mis.tier}));
@@ -1864,11 +1891,14 @@ async function cmdCheck(sym, chatId) {
   var tp2   = rnd(d.price + d.atr*4, 4);
   var rr    = rnd((tp1-d.price)/Math.max(d.price-stop,0.001),2);
   var conviction = sr.score>=85?'HIGH CONVICTION':sr.score>=70?'ELEVATED':sr.score>=55?'MODERATE':'LOW';
+  var ctyFlag = (d.country==='US')?'0001F1FA0001F1F8':(D.COUNTRY==='CN'||D.COUNTRY==='CHN')?'0001F1E80001F1F3 (-5)':'0001F310';
+  var ctyFlag = (d.country==='US')?'🇺🇸':(d.country==='CN'||d.country==='CHN')?'🇨🇳 (-5)':'🌐';
+  var pzLabel = d.price<=6?'PRIMARY ZONE':d.price<=9.99?'GOOD ZONE':d.price<=20?'NOT PREFERRED':'OUT OF ZONE';
 
   // ── MESSAGE 1: DATA SNAPSHOT ─────────────────────────────────────────────
-  var m1 = '<b>🎯 $'+sym+' — '+conviction+'</b> | '+d.source+'\n';
+  var m1 = '<b>🎯 $'+sym+' — '+conviction+'</b> | '+d.source+' '+ctyFlag+'\n';
   m1 += '━━━━━━━━━━━━━━━━━━━━━━\n';
-  m1 += '$'+d.price+' ('+changeStr+')';
+  m1 += '$'+d.price+' ('+changeStr+') ['+pzLabel+']';
   if (d.gapPct) m1 += '  Gap:+'+rnd(d.gapPct,1)+'%';
   m1 += '\nRVOL: <b>'+d.relVol+'x</b>  Float: <b>'+d.floatM+'M</b>  Short: '+rnd(d.shortPct,1)+'%\n';
   m1 += 'DTC: '+d.daysToCover+'d  ATR: $'+d.atr+'  AvgVol: '+d.avgVol+'\n';
