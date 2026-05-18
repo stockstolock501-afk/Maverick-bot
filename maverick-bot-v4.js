@@ -469,36 +469,67 @@ function getPersonalInsight() {
 //  Deduped queue prevents simultaneous identical calls.
 
 // ── YAHOO QUOTE ─────────────────────────────────────────────────────────────
+// CRITICAL: During pre-market (4AM-9:30AM ET) and after-hours (4PM-8PM ET),
+// we switch the primary price to preMarketPrice/postMarketPrice so every
+// engine — staircase, position monitor, scoring, alerts — sees LIVE data.
+// Pre-market IS the golden window. We cannot afford stale closes here.
 async function yahooQuote(sym) {
   return deduped('yq:'+sym, async function() {
     try {
       var r = await sFetch(
         'https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?interval=1d&range=2d',
-        { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/5.7)' } }
+        { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/6.5)' } }
       );
       var d    = await safeJson(r);
       var res  = d && d.chart && d.chart.result && d.chart.result[0];
       var meta = res && res.meta;
-      if (meta && meta.regularMarketPrice && meta.regularMarketPrice > 0) {
-        iHealth.dataOk++;
-        return {
-          price:      meta.regularMarketPrice,
-          prevClose:  meta.chartPreviousClose||meta.previousClose||meta.regularMarketPrice,
-          volume:     meta.regularMarketVolume||0,
-          high:       meta.regularMarketDayHigh||meta.regularMarketPrice,
-          low:        meta.regularMarketDayLow||meta.regularMarketPrice,
-          open:       meta.regularMarketOpen||meta.regularMarketPrice,
-          week52H:    meta.fiftyTwoWeekHigh||0,
-          week52L:    meta.fiftyTwoWeekLow||0,
-          // Extended hours — surface when market closed
-          preMarket:  meta.preMarketPrice||0,
-          preMarketChg: meta.preMarketChange||0,
-          postMarket: meta.postMarketPrice||0,
-          postMarketChg: meta.postMarketChange||0,
-          marketState: meta.marketState||'REGULAR', // PRE / REGULAR / POST / CLOSED
-          source: 'Yahoo'
-        };
+      if (!meta || !meta.regularMarketPrice) return null;
+
+      iHealth.dataOk++;
+      var marketState   = meta.marketState || 'REGULAR'; // PRE / REGULAR / POST / CLOSED
+      var regularPrice  = meta.regularMarketPrice;
+      var prevClose     = meta.chartPreviousClose || meta.previousClose || regularPrice;
+      var preMarketPx   = meta.preMarketPrice  || 0;
+      var postMarketPx  = meta.postMarketPrice || 0;
+
+      // ── LIVE PRICE SELECTION ──────────────────────────────────────────────
+      // Use the price that is actually moving RIGHT NOW.
+      // Pre-market: use preMarketPrice so every engine scores the actual move.
+      // After-hours: use postMarketPrice for the same reason.
+      // Regular session: use regularMarketPrice as always.
+      var activePrice = regularPrice;
+      var isPreMarket = marketState === 'PRE'  || (marketState !== 'REGULAR' && preMarketPx > 0 && postMarketPx === 0);
+      var isPostMarket= marketState === 'POST' || (marketState !== 'REGULAR' && postMarketPx > 0);
+
+      if (isPreMarket && preMarketPx > 0) {
+        activePrice = preMarketPx;
+      } else if (isPostMarket && postMarketPx > 0) {
+        activePrice = postMarketPx;
       }
+
+      // Pre-market volume (Yahoo sometimes returns it)
+      var preMarketVol = meta.preMarketVolume || 0;
+
+      return {
+        price:        activePrice,     // ← LIVE price: pre/post/regular
+        regularPrice: regularPrice,    // ← Previous session close for reference
+        prevClose:    prevClose,
+        volume:       meta.regularMarketVolume || 0,
+        high:         Math.max(meta.regularMarketDayHigh||activePrice, activePrice),
+        low:          Math.min(meta.regularMarketDayLow||activePrice, activePrice),
+        open:         meta.regularMarketOpen || regularPrice,
+        week52H:      meta.fiftyTwoWeekHigh  || 0,
+        week52L:      meta.fiftyTwoWeekLow   || 0,
+        preMarket:    preMarketPx,
+        preMarketChg: meta.preMarketChange   || 0,
+        preMarketVol: preMarketVol,
+        postMarket:   postMarketPx,
+        postMarketChg:meta.postMarketChange  || 0,
+        marketState:  marketState,
+        isPreMarket:  isPreMarket,
+        isPostMarket: isPostMarket,
+        source: 'Yahoo'
+      };
     } catch(e) { if (e.name!=='AbortError') console.error('[Yahoo]', sym, e.message); }
     return null;
   });
@@ -723,6 +754,13 @@ async function getStock(sym) {
     var atr         = rnd(price*0.025,4);
     var daysToCover = floatM>0&&avgVol>0 ? rnd((floatM*1e6)/avgVol,2) : 99;
 
+    // Log pre-market moves so they're visible in position monitor and alerts
+    var isPreMarket  = yq ? (yq.isPreMarket  || false) : false;
+    var isPostMarket = yq ? (yq.isPostMarket || false) : false;
+    if (isPreMarket && yq.preMarket > 0) {
+      console.log('[PRE-MKT] $'+sym+' '+rnd(changePct,1)+'% @ $'+price+' (reg close: $'+prevClose+')');
+    }
+
     // ── PRE-CROWD MATRIX B — Float Rotation % pre-market ────────────────────
     // If pre-market volume > 30% of float = explosive intraday rotation signal.
     var preMarketVol = yq ? (yq.preMarketVol||0) : 0;
@@ -905,10 +943,119 @@ function detectStaircaseScore(d, aggs) {
   return { score, tier, signals };
 }
 
-// ── STAIRCASE SCANNER — runs every 5 min during market hours ─────────────
+// ══════════════════════════════════════════════════════════════════════════
+// ── PRE-MARKET SCANNER — 4AM to 9:30AM ET, every 5 minutes ───────────────
+// ══════════════════════════════════════════════════════════════════════════
+// The golden window. Scans watchlist + algo arsenal + gainers for pre-market
+// movers using LIVE preMarketPrice. Fires alerts before retail even wakes up.
+// Three signals: gap %, float rotation %, and pre-market RVOL proxy.
+var preMarketAlertedToday = new Set();
+
+async function runPreMarketScanner() {
+  // CT time: pre-market ET (4AM-9:30AM ET) = 3AM-8:30AM CT
+  var hourCT  = nowHourCT();
+  var minCT   = new Date().getMinutes();
+  var timeCT  = hourCT + minCT / 60;
+  if (timeCT < 3 || timeCT >= 8.5) return; // Only 3AM-8:30AM CT
+
+  var today    = todayStr();
+  if (!runPreMarketScanner._lastDay || runPreMarketScanner._lastDay !== today) {
+    preMarketAlertedToday.clear();
+    runPreMarketScanner._lastDay = today;
+  }
+
+  // Universe: watchlist first (user's picks), then algo arsenal, then gainers
+  var universe = Object.keys(watchlist);
+  algoWatchlist.forEach(function(w){ if(universe.indexOf(w.sym)===-1) universe.push(w.sym); });
+  var gainers = gainersCache || [];
+  gainers.slice(0,15).forEach(function(g){ if(g.ticker && universe.indexOf(g.ticker)===-1) universe.push(g.ticker); });
+  BASE_SCAN.slice(0,20).forEach(function(s){ if(universe.indexOf(s)===-1) universe.push(s); });
+  universe = universe.filter(function(v,i,a){return a.indexOf(v)===i && v && v.length<=5;}).slice(0,50);
+
+  var hits = [];
+  console.log('[PRE-MKT-SCAN] Checking '+universe.length+' tickers at '+hourCT+':'+minCT+'CT');
+
+  for (var i=0; i<universe.length; i++) {
+    var sym = universe[i];
+    try {
+      // Always fresh quote during pre-market — bypass 60s cache for live data
+      var yq = await yahooQuote(sym);
+      if (!yq || !yq.isPreMarket || yq.preMarket <= 0) continue;
+      if (detectCountry(sym,'') === 'IL') continue;
+      if (yq.price > TRADE_MAX_PRICE || yq.price < 0.25) continue;
+
+      var gapPct     = yq.prevClose > 0 ? rnd((yq.price - yq.prevClose) / yq.prevClose * 100, 2) : 0;
+      if (Math.abs(gapPct) < 8) continue; // Only significant pre-market moves
+
+      var alertKey = 'pm:'+sym+':'+today;
+      if (preMarketAlertedToday.has(alertKey)) continue;
+
+      // Float rotation % (Pre-Crowd Matrix B)
+      var d = await getStock(sym).catch(function(){return null;});
+      if (!d) continue;
+
+      var floatRotPct = d.floatRotPct || 0;
+      var country     = detectCountry(sym,'');
+      if (country === 'IL') continue;
+
+      hits.push({
+        sym:       sym,
+        price:     yq.price,
+        prevClose: yq.prevClose,
+        gapPct:    gapPct,
+        floatM:    d.floatM,
+        floatRotPct: floatRotPct,
+        relVol:    d.relVol,
+        mis:       calcMIS(d,5).pct,
+        alertKey:  alertKey,
+        isWatch:   !!watchlist[sym]
+      });
+      await sleep(200);
+    } catch(e) {}
+  }
+
+  if (!hits.length) { console.log('[PRE-MKT-SCAN] No significant moves.'); return; }
+
+  // Sort by absolute gap size — biggest movers first
+  hits.sort(function(a,b){ return Math.abs(b.gapPct) - Math.abs(a.gapPct); });
+
+  for (var h=0; h<hits.length; h++) {
+    var hit = hits[h];
+    preMarketAlertedToday.add(hit.alertKey);
+
+    var direction = hit.gapPct >= 0 ? '🚀' : '🔻';
+    var gapStr    = (hit.gapPct >= 0 ? '+' : '') + rnd(hit.gapPct, 1) + '%';
+    var priority  = hit.floatRotPct >= 30 ? '🚨 EXPLOSIVE' : Math.abs(hit.gapPct) >= 30 ? '⚡ MAJOR GAP' : '📡 PRE-MKT';
+    var zone      = priceZone(hit.price).label;
+    var flag      = cFlag(hit.sym);
+
+    var msg = direction+' <b>'+priority+' — $'+hit.sym+' '+flag+'</b>\n\n';
+    msg += '<b>Pre-market: $'+hit.price+'</b> ('+gapStr+' from $'+hit.prevClose+')\n';
+    msg += 'Float: '+hit.floatM+'M  |  '+zone+'\n';
+    msg += 'MIS: '+hit.mis+'/100\n';
+    if (hit.floatRotPct >= 15) {
+      msg += '🐋 <b>Float rotation: '+hit.floatRotPct+'%</b> of float traded pre-market';
+      msg += hit.floatRotPct >= 30 ? ' — EXPLOSIVE INTRADAY SETUP\n' : ' — elevated\n';
+    }
+    if (hit.isWatch) msg += '📋 <b>On your watchlist</b>\n';
+    msg += '\n';
+    if (hit.gapPct >= 15) msg += 'This could run hard at 9:30 open if volume confirms.\n';
+    else if (hit.gapPct <= -15) msg += 'Significant gap down. Watch for bounce or continued fade.\n';
+    msg += '\n/check '+hit.sym+' | /science '+hit.sym;
+
+    await tg(msg);
+    organicAlertsSent++;
+    await sleep(1500);
+  }
+  console.log('[PRE-MKT-SCAN] Sent '+hits.length+' pre-market alert(s).');
+}
 async function runStaircaseScanner() {
   var hourCT = nowHourCT();
-  if (hourCT < 9 || hourCT >= 16) return;
+  var minCT  = new Date().getMinutes();
+  var timeCT = hourCT + minCT / 60;
+  // Run during regular hours AND pre-market (staircase can form pre-market too)
+  var isActive = (timeCT >= 3 && timeCT < 8.5) || (hourCT >= 9 && hourCT < 16);
+  if (!isActive) return;
 
   // Full universe: gainers + watchlist + expanded base
   var universe=[], gainers=await getTopGainers();
@@ -2480,13 +2627,19 @@ async function scanNewsIntel() {
 // ── MORNING BRIEFING ───────────────────────────────────────────────────────
 async function morningBriefing(manual) {
   var hour=nowHourCT(), today=todayStr();
+  var minCT = new Date().getMinutes();
+  var timeCT = hour + minCT/60;
   iHealth.briefLastRun = Date.now();
   if (!manual) {
-    if (hour<4||hour>=11) return;
-    if (lastBriefingDate===today) return;
+    // 3AM-8:30AM CT = pre-market ET | 9AM-11AM CT = regular morning
+    var inPreMarket = timeCT >= 3 && timeCT < 8.5;
+    var inMorning   = hour >= 9 && hour < 11;
+    if (!inPreMarket && !inMorning) return;
+    if (lastBriefingDate===today && !inPreMarket) return;
   }
   lastBriefingDate=today;
-  await tg('<b>MAVERICK MORNING BRIEFING v4.1</b>\n'+today+' | '+hour+':00 CT\n\nPulling top setups...');
+  var isPreMkt = timeCT >= 3 && timeCT < 8.5;
+  await tg('<b>🌅 MAVERICK '+(isPreMkt?'PRE-MARKET':'MORNING')+' BRIEFING</b>\n'+today+' | '+hour+':'+String(minCT).padStart(2,'0')+' CT'+(isPreMkt?'\n⚡ Pre-market prices active — live data':'')+'\n\nPulling top setups...');
   var gainers=await getTopGainers(), results=[];
   if (gainers.length) {
     for (var i=0;i<Math.min(gainers.length,15);i++) {
@@ -3298,15 +3451,21 @@ async function cmdAI(text, chatId) {
 async function monitorPositions() {
   iHealth.posLastRun = Date.now();
   for(var sym in positions){
-    var pos=positions[sym],d=await getStock(sym).catch(function(){return null;});
+    var pos=positions[sym];
+    // Clear quote cache for position tickers — always get freshest price
+    delete dataCache[sym];
+    var d=await getStock(sym).catch(function(){return null;});
     if(!d) continue;
-    var price=d.price,pct=(price-pos.entry)/pos.entry*100,stopDist=(price-pos.stop)/pos.stop*100;
+    // Use the live price — already handles pre/post market via yahooQuote fix
+    var price=d.price;
+    var marketLabel = d.isPreMarket ? ' 🌅 pre-mkt' : d.isPostMarket ? ' 🌙 AH' : '';
+    var pct=(price-pos.entry)/pos.entry*100, stopDist=(price-pos.stop)/pos.stop*100;
     var zones=calcDemandSupplyZones(d._aggs||[]);
     var zoneStr=zones.demand.length?'\nDemand below: '+zones.demand[0]:'';
 
     if(stopDist<3&&!pos.alerts.stopWarn){
       pos.alerts.stopWarn=true;
-      await tg('<b>⚠️ $'+sym+' just pinged my stop warning.</b>\n\nPrice $'+price+' is within 3% of your stop at $'+pos.stop+'. RVOL is '+d.relVol+'x.\n\nIf the thesis is broken — exit now. A small controlled loss is better than letting this turn into a big one. Don\'t hope, act.'+zoneStr);
+      await tg('<b>⚠️ $'+sym+' just pinged my stop warning.</b>'+marketLabel+'\n\nPrice $'+price+' is within 3% of your stop at $'+pos.stop+'. RVOL is '+d.relVol+'x.\n\nIf the thesis is broken — exit now. A small controlled loss is better than letting this turn into a big one. Don\'t hope, act.'+zoneStr);
     } else if(stopDist>=6){pos.alerts.stopWarn=false;}
 
     if(price<=pos.stop){
@@ -3732,8 +3891,8 @@ async function warmCache() {
 
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v6.4           ║');
-  console.log('║    HARDENED + PERSISTENT + PCMB      ║');
+  console.log('║    MAVERICK INTEL BOT v6.5           ║');
+  console.log('║    PRE-MARKET LIVE — GOLDEN WINDOW   ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
@@ -3767,16 +3926,17 @@ async function start() {
   } catch(e) { console.error('[WEBHOOK] setWebhook error:', e.message); }
 
   await tg(
-    '<b>MAVERICK INTEL BOT v6.4 — ONLINE</b>\n\n' +
-    '🔒 Hardened | 💾 Persistent | 🐋 Pre-Crowd Matrix B\n\n' +
-    '<b>v6.4 FIXES:</b>\n' +
-    '• safeJson/safeText — body parse timeout on every API call\n' +
-    '• deduped() deadlock protection — 12s hard kill on stuck promises\n' +
-    '• Memory persistence — watchlist, sentHeadlines, staircaseTracker survive restarts\n' +
-    '• Focus mode ticker detection — only ALL-CAPS words are tickers\n' +
-    '• Pre-Crowd Matrix B — float rotation % before open\n' +
-    '  30%+ pre-market float rotation = 🚨 EXPLOSIVE SETUP flag\n\n' +
-    'Type /top-pick for best setup now.'
+    '<b>MAVERICK INTEL BOT v6.5 — ONLINE</b>\n\n' +
+    '🌅 PRE-MARKET LIVE — The Golden Window is open\n\n' +
+    '<b>v6.5 — PRE-MARKET ENGINE:</b>\n' +
+    '• ALL prices now switch to live preMarketPrice during 4-9:30AM ET\n' +
+    '• Pre-market scanner fires every 5min — 4AM to 9:30AM ET\n' +
+    '• Gaps >8% trigger immediate alert with float rotation %\n' +
+    '• Morning briefing fires during pre-market with live prices\n' +
+    '• Staircase scanner active during pre-market hours\n' +
+    '• Position monitor uses live pre/post market price — no stale data\n' +
+    '• SBFM +596%, GOVX +181% type moves will NOT be missed again\n\n' +
+    'Type /briefing to see current pre-market setups.'
   );
 
   setInterval(monitorPositions,  60000);
@@ -3785,12 +3945,15 @@ async function start() {
   setInterval(morningBriefing,  300000);
   setInterval(pruneHeadlines,  3600000);
   setInterval(runStaircaseScanner, 300000);
+  setInterval(runPreMarketScanner, 300000); // Every 5 min — pre-market golden window
   setInterval(runAlgoAndIntradayScan, 600000);
   setInterval(warmCache, 1800000);
   setTimeout(warmCache, 45000);
   setTimeout(runAlgoAndIntradayScan, 90000);
+  // Fire pre-market scanner immediately at startup if we're in the window
+  setTimeout(runPreMarketScanner, 15000);
 
-  console.log('[BOT] v6.4 running. Hardened. Persistent memory. Pre-Crowd Matrix B. Focus mode clean.');
+  console.log('[BOT] v6.5 running. Pre-market live prices. Golden window active. Position monitor live.');
 }
 
 start();
