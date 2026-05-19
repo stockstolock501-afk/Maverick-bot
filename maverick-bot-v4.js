@@ -274,6 +274,26 @@ function nowHourCT() {
   } catch (e) { return (new Date().getUTCHours() - 5 + 24) % 24; }
 }
 
+// ── MINUTE-AWARE CT TIME — use this for all market timing checks ───────────
+// Market hours in CT (Central Time):
+//   Pre-market:  3:00AM CT – 8:30AM CT  (4AM-9:30AM ET)
+//   Regular:     8:30AM CT – 3:00PM CT  (9:30AM-4PM ET)
+//   After-hours: 3:00PM CT – 7:00PM CT  (4PM-8PM ET)
+function nowTimeCT() {
+  try {
+    var fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: 'numeric', hour12: false });
+    var parts = fmt.formatToParts(new Date());
+    var h = parseInt(parts.find(function(p){return p.type==='hour';}).value, 10);
+    var m = parseInt(parts.find(function(p){return p.type==='minute';}).value, 10);
+    return h + m/60;
+  } catch(e) { return nowHourCT(); }
+}
+
+function isMarketOpen()    { var t = nowTimeCT(); return t >= 8.5 && t < 15; }   // 8:30AM–3PM CT
+function isPreMarketHours(){ var t = nowTimeCT(); return t >= 3   && t < 8.5; }  // 3AM–8:30AM CT
+function isAfterHours()    { var t = nowTimeCT(); return t >= 15  && t < 19; }   // 3PM–7PM CT
+function isExtendedHours() { return isPreMarketHours() || isAfterHours(); }
+
 function pruneHeadlines() {
   if (sentHeadlines.size > 500) {
     var arr = Array.from(sentHeadlines).slice(-200);
@@ -744,7 +764,15 @@ async function getStock(sym) {
     if (metrics && metrics.metric) {
       var m = metrics.metric;
       if (m.sharesFloat&&m.sharesFloat>0) floatM=m.sharesFloat;
-      if (m.shortInterestPercentOfFloat) shortPct=m.shortInterestPercentOfFloat;
+      // Short interest — try multiple field names (Finnhub naming varies by plan)
+      var rawShort = m.shortInterestPercentOfFloat || m.shortPercent || m.shortRatio || 0;
+      if (rawShort > 0) shortPct = rawShort;
+      // Proxy estimate when Finnhub has no data: DTC-based approximation
+      // DTC = (float * short%) / avgVol → short% = (DTC * avgVol) / float
+      // We don't know DTC yet, but if Finnhub returned shortRatio (DTC): estimate
+      if (shortPct === 0 && m.shortRatio && m.shortRatio > 0 && floatM > 0 && avgVol > 0) {
+        shortPct = rnd((m.shortRatio * avgVol) / (floatM * 1e6) * 100, 1);
+      }
       if (m['52WeekHigh']&&!week52H) week52H=m['52WeekHigh'];
       if (m['52WeekLow']&&!week52L)  week52L=m['52WeekLow'];
     }
@@ -1054,7 +1082,7 @@ async function runStaircaseScanner() {
   var minCT  = new Date().getMinutes();
   var timeCT = hourCT + minCT / 60;
   // Run during regular hours AND pre-market (staircase can form pre-market too)
-  var isActive = (timeCT >= 3 && timeCT < 8.5) || (hourCT >= 9 && hourCT < 16);
+  var isActive = isPreMarketHours() || isMarketOpen();
   if (!isActive) return;
 
   // Full universe: gainers + watchlist + expanded base
@@ -1654,7 +1682,8 @@ function calcIntradayMomentum(d) {
 
   // 1. VOLUME PACE — project full-day volume vs daily average
   // If it's 11AM and volume is already at 80% of avg — someone is buying hard.
-  var tradingElapsed = Math.max(0.25, hourCT - 9.5);
+  var timeCT2 = nowTimeCT();
+  var tradingElapsed = Math.max(0.25, timeCT2 - 8.5); // market opens 8:30AM CT
   var volumePace = d.avgVol > 0 ?
     rnd((d.volume / tradingElapsed) * 6.5 / d.avgVol, 2) : 1;
   if      (volumePace >= 6) { score+=30; signals.push('🐋 Volume pace '+volumePace+'x — on track to print '+rnd(volumePace,1)+'x daily average. INSTITUTIONAL accumulation at scale.'); }
@@ -1764,7 +1793,7 @@ async function updateAlgoWatchlist() {
       var sc  = detectStaircaseScore(d, d._aggs||[]);
       // Composite algo score — weighted toward intraday signals during market hours
       var hourCT = nowHourCT();
-      var isOpen = hourCT >= 9 && hourCT < 16;
+      var isOpen = isMarketOpen();
       var composite = isOpen
         ? rnd((mis.pct*0.25)+(sas.score*0.20)+(im.score*0.30)+(sc.score*0.15)+(trend.strength*0.10),1)
         : rnd((mis.pct*0.35)+(sas.score*0.30)+(sdi.score*0.20)+(sr.score*0.15),1);
@@ -1875,7 +1904,7 @@ async function cmdMyWatch(chatId) {
 // Intraday momentum alerts only during market hours.
 async function runAlgoAndIntradayScan() {
   var hourCT = nowHourCT();
-  var isMarketHours = hourCT >= 9 && hourCT < 16;
+  var isMarketHoursNow = isMarketOpen();
 
   // Reset intraday dedup at start of new day
   var today = todayStr();
@@ -1888,7 +1917,7 @@ async function runAlgoAndIntradayScan() {
   await updateAlgoWatchlist();
 
   // Intraday momentum scan — market hours only
-  if (!isMarketHours) return;
+  if (!isMarketHoursNow) return;
 
   // Scan the algo watchlist + user watchlist (data already cached from algo update)
   var intradayUniverse = algoWatchlist.map(function(w){return w.sym;});
@@ -1927,8 +1956,8 @@ async function runAlgoAndIntradayScan() {
 // ── /intraday — on-demand intraday scan ─────────────────────────────────
 async function cmdIntraday(chatId) {
   var hourCT = nowHourCT();
-  if (hourCT < 9 || hourCT >= 16) {
-    return tg('📊 Market is closed. Intraday scanner only runs 9:30AM-4PM CT.\nUse /awatch to see the algo arsenal for next session.', chatId);
+  if (!isMarketOpen() && !isPreMarketHours()) {
+    return tg('📊 Market is closed.\nIntraday scanner runs 8:30AM–3PM CT (regular session)\nPre-market scanner runs 3AM–8:30AM CT\nUse /awatch to see the algo arsenal for next session.', chatId);
   }
   await tg('⏳ Running Live Intraday Momentum Scanner...\nVWAP proxy + volume pace + from-open move (~30s)', chatId);
   var gainers = await getTopGainers();
@@ -2030,6 +2059,105 @@ async function cmdFocusChat(text, chatId) {
 
   if (reply) await tg(reply, chatId);
   else await tg('AI brain offline. Try again in a moment.', chatId);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── BUY-TO-COVER CASCADE DETECTOR ─────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+function calcCascadeConditions(d) {
+  var score=0, stage=0, signals=[], warnings=[];
+  var dtc=d.daysToCover||99, short=d.shortPct||0, rvol=d.relVol||0, floatM=d.floatM||50;
+
+  if      (dtc<0.25){score+=30;signals.push('🚨 DTC '+rnd(dtc,2)+'d — CRITICAL: shorts need 6hr+ to cover');}
+  else if (dtc<0.5) {score+=22;signals.push('⚡ DTC '+rnd(dtc,2)+'d — shorts trapped, ~half-day to cover');}
+  else if (dtc<0.75){score+=14;signals.push('👀 DTC '+rnd(dtc,2)+'d — pressure building');}
+  else if (dtc<1.5) {score+=6;signals.push('DTC '+rnd(dtc,2)+'d — moderate');}
+  else {warnings.push('DTC '+rnd(dtc,2)+'d — too long, cascade less likely');}
+
+  if      (short>=30){score+=25;signals.push('🔥 Short '+rnd(short,1)+'% — extreme fuel. Every 1% costs shorts dearly.');}
+  else if (short>=20){score+=16;signals.push('⚡ Short '+rnd(short,1)+'% — significant fuel');}
+  else if (short>=10){score+=8;signals.push('Short '+rnd(short,1)+'% — moderate');}
+  else if (short>0)  {score+=3;signals.push('Short '+rnd(short,1)+'% — light');}
+  else {warnings.push('Short 0% — no confirmed short data (check manually via /sdi)');}
+
+  if      (rvol>=20){score+=25;signals.push('🐋 RVOL '+rvol+'x — WHALE. Institutional buying overwhelming shorts.');}
+  else if (rvol>=10){score+=18;signals.push('⚡ RVOL '+rvol+'x — institutional interest confirmed');}
+  else if (rvol>=5) {score+=10;signals.push('RVOL '+rvol+'x — elevated, not yet cascade-level');}
+  else if (rvol>=3) {score+=4;signals.push('RVOL '+rvol+'x — building');}
+  else {warnings.push('RVOL '+rvol+'x — low. Need volume to ignite cascade.');}
+
+  if      (floatM<1) {score+=15;signals.push('💎 NANO FLOAT '+floatM+'M — <1M shares. Shorts fighting over scraps.');}
+  else if (floatM<3) {score+=10;signals.push('Float '+floatM+'M — tight. Limited inventory to cover against.');}
+  else if (floatM<10){score+=5;signals.push('Float '+floatM+'M — workable');}
+  else {warnings.push('Float '+floatM+'M — wide float reduces cascade potential');}
+
+  if (priceZone(d.price).label.includes('PRIMARY')){score+=5;signals.push('PRIMARY ZONE — maximum volatility territory');}
+
+  score = Math.min(100,score);
+  if      (score>=80){stage=3;}
+  else if (score>=60){stage=2;}
+  else if (score>=40){stage=1;}
+
+  var stageLabel=stage===3?'🚨 CASCADE IMMINENT':stage===2?'⚡ TRAP FORMING':stage===1?'👀 PRE-CONDITIONS':'❌ NO CASCADE';
+  var range=(d.high||0)-(d.low||0), closePos=range>0?(d.price-(d.low||0))/range:0.5;
+  var cascadeEnding=rvol<3&&closePos<0.35;
+  var cascadeMinPct=dtc<1?Math.min(150,rnd(30/Math.max(dtc,0.1),0)):20;
+  var cascadeMaxPct=Math.min(400,rnd(cascadeMinPct*2.5,0));
+
+  return {score,stage,stageLabel,signals,warnings,dtc,short,rvol,floatM,
+    cascadeRange:'+'+cascadeMinPct+'% — +'+cascadeMaxPct+'%',
+    entryZone:'$'+rnd(d.price*0.99,4)+' — $'+rnd(d.price*1.01,4),
+    stopBelow:'$'+rnd(d.price*0.93,4),
+    cascadeEnding,closePos};
+}
+
+async function cmdCascade(sym, chatId) {
+  procStart('cascade:'+sym,'/cascade',sym);
+  await tg('⏳ Running Buy-to-Cover Cascade analysis on $'+sym+'...',chatId);
+  var d=await getStock(sym); procEnd('cascade:'+sym);
+  if(!d) return tg('Cannot pull data for $'+sym,chatId);
+  var casc=calcCascadeConditions(d);
+  var msg='🌀 <b>CASCADE DETECTOR — $'+sym+' '+cFlag(sym)+'</b>\n';
+  msg+='━━━━━━━━━━━━━━━━━━━━━━\n';
+  msg+=casc.stageLabel+'  Score: <b>'+casc.score+'/100</b>\n\n';
+  if(casc.stage>=2){msg+='<b>🎯 PROJECTED RANGE: '+casc.cascadeRange+'</b>\nEntry: '+casc.entryZone+'\nStop: '+casc.stopBelow+'\n\n';}
+  msg+='<b>CONDITIONS:</b>\n'; casc.signals.forEach(function(s){msg+='• '+s+'\n';});
+  if(casc.warnings.length){msg+='\n<b>⚠️ GAPS:</b>\n';casc.warnings.forEach(function(w){msg+='• '+w+'\n';});}
+  if(casc.cascadeEnding){msg+='\n🏁 <b>CASCADE ENDING</b> — RVOL fading + price near LOD. Scale out now.\n';}
+  else if(casc.stage>=2){msg+='\n<b>EXIT SIGNALS:</b>\n• RVOL < 3x (shorts done covering)\n• First candle closes below 35% of range\n• Price breaks VWAP proxy for 2+ candles\n';}
+  msg+='\n$'+d.price+' ('+(d.changePct>=0?'+':'')+rnd(d.changePct,1)+'%)  RVOL:'+d.relVol+'x  DTC:'+d.daysToCover+'d  Short:'+rnd(d.shortPct,1)+'%';
+  if(casc.stage>=3){msg+='\n\n🚨 <b>IMMINENT.</b> Shorts at pain threshold.\n/check '+sym+' for full case.';}
+  else if(casc.stage>=2){msg+='\n\n⚡ Watch for RVOL spike above 10x — that\'s the trigger.\n/watch '+sym+' to track.';}
+  await tg(msg,chatId);
+}
+
+async function cmdStaircase(chatId) {
+  await tg('⏳ Running staircase scan...',chatId);
+  var universe=Object.keys(watchlist);
+  algoWatchlist.forEach(function(w){if(universe.indexOf(w.sym)===-1)universe.push(w.sym);});
+  BASE_SCAN.slice(0,20).forEach(function(t){if(universe.indexOf(t)===-1)universe.push(t);});
+  universe=universe.filter(function(v,i,a){return a.indexOf(v)===i;}).slice(0,30);
+  var results=[];
+  for(var i=0;i<universe.length;i++){
+    var sym=universe[i];
+    try{
+      var d=await getStock(sym);
+      if(!d||d.price>TRADE_MAX_PRICE||d.price<0.25||detectCountry(sym,'')===('IL')||d.changePct<4) continue;
+      var sc=detectStaircaseScore(d,d._aggs||[]);
+      if(sc.score>=35) results.push({sym,price:d.price,changePct:d.changePct,relVol:d.relVol,score:sc.score,tier:sc.tier,tracked:!!staircaseTracker[sym],elapsed:staircaseTracker[sym]?Math.round((Date.now()-staircaseTracker[sym].firstSeen)/60000):0});
+      await sleep(200);
+    }catch(e){}
+  }
+  if(!results.length) return tg('🪜 No active staircases detected.\nNeed: 5%+ move + price near HOD + RVOL > 2x\n\nAdd tickers: /watch TICKER',chatId);
+  results.sort(function(a,b){return b.score-a.score;});
+  var msg='🪜 <b>STAIRCASE SCAN</b>\n\n';
+  results.slice(0,8).forEach(function(r){
+    msg+=(r.score>=75?'🔥':'⚡')+' <b>$'+r.sym+'</b> '+cFlag(r.sym)+' — '+r.score+'/100 ['+r.tier+']\n';
+    msg+='$'+r.price+' (+'+rnd(r.changePct,1)+'%) RVOL:'+r.relVol+'x'+(r.tracked?' | Tracking:'+r.elapsed+'min':'')+'\n';
+    msg+='/check '+r.sym+'  /cascade '+r.sym+'\n\n';
+  });
+  msg+='Auto-alerts fire at 30min (soft) + 60min (hard) per name.';
+  await tg(msg,chatId);
 }
 
 var PROTOCOLS = {
@@ -2289,49 +2417,50 @@ function detectFalseSignals(d, catRank, headline) {
 
 // ── 5-PHASE LIFECYCLE ENGINE ──────────────────────────────────────────────
 function detectLifecyclePhase(d) {
-  var hourCT = nowHourCT();
+  var timeCT_lc = nowTimeCT();
+  var hourCT_lc = Math.floor(timeCT_lc);
   var changeAbs = Math.abs(d.changePct);
 
-  // Phase 5: Distribution / Fade — late day, volume dying
-  if (hourCT >= 14 && d.relVol < 1.5 && d.changePct < d.changePct * 0.5)
+  // Phase 5: Distribution / Fade — late CT day (ET 2PM+)
+  if (timeCT_lc >= 13 && d.relVol < 1.5 && d.changePct < d.changePct * 0.5)
     return { phase: 5, name: 'PHASE 5 — DISTRIBUTION/FADE', emoji: '🔴', action: 'EXIT. Whales distributing. Retail holding the bag. If you\'re in, get out now.', entryOk: false };
 
-  // Phase 4: Late Run / Exhaustion
-  if (hourCT >= 13 && d.changePct >= 30 && d.relVol >= 3)
-    return { phase: 4, name: 'PHASE 4 — LATE RUN/EXHAUSTION', emoji: '🟠', action: 'DANGER ZONE. Move is extended. Only trail existing position. No new entries. Exit before 3:45PM CT.', entryOk: false };
+  // Phase 4: Late Run / Exhaustion (ET noon+)
+  if (timeCT_lc >= 12 && d.changePct >= 30 && d.relVol >= 3)
+    return { phase: 4, name: 'PHASE 4 — LATE RUN/EXHAUSTION', emoji: '🟠', action: 'DANGER ZONE. Move is extended. Only trail existing position. No new entries. Exit before 2:45PM CT.', entryOk: false };
 
-  // Phase 3: Mid-Day Continuation
-  if (hourCT >= 11 && hourCT < 14 && d.changePct >= 15 && d.relVol >= 3)
+  // Phase 3: Mid-Day Continuation (ET 11AM-2PM = CT 10AM-1PM)
+  if (timeCT_lc >= 10 && timeCT_lc < 13 && d.changePct >= 15 && d.relVol >= 3)
     return { phase: 3, name: 'PHASE 3 — MID-DAY CONTINUATION', emoji: '🟡', action: 'PARTIAL ENTRY OK on pullback to VWAP. Tighter size than Phase 1-2. Stop below mid-day low.', entryOk: true };
 
-  // Dead Zone
-  if (hourCT >= 11 && hourCT < 13 && d.relVol < 2)
-    return { phase: 0, name: 'DEAD ZONE (11AM-1PM CT)', emoji: '⚫', action: 'Volume dry. No edge. Wait for Phase 3 continuation or walk away.', entryOk: false };
+  // Dead Zone (ET 11AM-1PM = CT 10AM-12PM)
+  if (timeCT_lc >= 10 && timeCT_lc < 12 && d.relVol < 2)
+    return { phase: 0, name: 'DEAD ZONE (10AM-12PM CT)', emoji: '⚫', action: 'Volume dry. No edge. Wait for Phase 3 continuation or walk away.', entryOk: false };
 
-  // Phase 2: First Pullback / Dip Buy
-  if (hourCT >= 10 && hourCT < 12 && d.changePct >= 10 && d.relVol >= 3)
+  // Phase 2: First Pullback / Dip Buy (ET 10-11AM = CT 9-10AM)
+  if (timeCT_lc >= 9 && timeCT_lc < 11 && d.changePct >= 10 && d.relVol >= 3)
     return { phase: 2, name: 'PHASE 2 — FIRST PULLBACK / DIP BUY', emoji: '🟢', action: 'PRIME ENTRY WINDOW. Dip to VWAP or 9EMA. This is your Archetype B setup. Stop below Phase 1 low.', entryOk: true };
 
-  // Phase 1: Morning Ignition
-  if (hourCT >= 9 && hourCT < 11 && d.changePct >= 5 && d.relVol >= 2)
+  // Phase 1: Morning Ignition (ET 9:30-10:30AM = CT 8:30-9:30AM)
+  if (timeCT_lc >= 8.5 && timeCT_lc < 10 && d.changePct >= 5 && d.relVol >= 2)
     return { phase: 1, name: 'PHASE 1 — MORNING IGNITION', emoji: '🟢', action: 'PRIMARY ENTRY ZONE. First candle break or pullback to VWAP. Highest probability window for supernova runs.', entryOk: true };
 
   // Pre-Ignition
-  if (hourCT < 9 || (d.gapPct >= 10 && hourCT === 9))
-    return { phase: 0, name: 'PRE-IGNITION', emoji: '🔵', action: 'Pre-market. Watch but do not enter. Wait for first 5-min candle to close. Gap must hold at open.', entryOk: false };
+  if (timeCT_lc < 8.5 || (d.gapPct >= 10 && timeCT_lc < 9))
+    return { phase: 0, name: 'PRE-IGNITION', emoji: '🔵', action: 'Pre-market. Watch but do not enter. Wait for first 5-min candle to close at open (8:30AM CT). Gap must hold.', entryOk: false };
 
   return { phase: 0, name: 'NO CLEAR PHASE', emoji: '⚪', action: 'Setup not in an active window. Wait or monitor.', entryOk: false };
 }
 
 // ── KILL ZONE EXIT SIGNALS ────────────────────────────────────────────────
 function getKillZoneSignals(d) {
-  var hourCT = nowHourCT();
+  var timeCT_kz = nowTimeCT();
   var signals = [], critical = false;
 
-  if (hourCT >= 15 && hourCT < 16) { signals.push('HARD EXIT ZONE — 3:45PM CT rule: flatten all positions before close'); critical = true; }
+  if (timeCT_kz >= 14.5 && timeCT_kz < 15) { signals.push('HARD EXIT ZONE — 2:45PM CT: flatten all positions 15 min before CT close'); critical = true; }
   if (d.relVol < 1.5 && d.changePct > 0) { signals.push('RVOL DYING — '+d.relVol+'x: volume fading means distribution. Whales exiting.'); }
   if (d.changePct < 0 && d.relVol > 2) { signals.push('HIGH VOLUME REVERSAL — selling on big volume. Thesis broken.'); critical = true; }
-  if (hourCT >= 11 && hourCT <= 13 && d.relVol < 2) { signals.push('DEAD ZONE TRAP — 11AM-1PM low-volume grind. Easy to get faked out.'); }
+  if (timeCT_kz >= 10 && timeCT_kz <= 12 && d.relVol < 2) { signals.push('DEAD ZONE TRAP — 10AM-12PM CT low-volume grind. Easy to get faked out.'); }
   if (d.high > 0 && d.price < d.low * 1.02) { signals.push('NEW LOW OF DAY — price breaking down. Stop should already be hit.'); critical = true; }
   if (d.changePct >= 80) { signals.push('PARABOLIC (+'+rnd(d.changePct,0)+'%) — scale out minimum 50%. Vertical moves always mean-revert.'); }
 
@@ -2640,45 +2769,51 @@ async function morningBriefing(manual) {
   lastBriefingDate=today;
   var isPreMkt = timeCT >= 3 && timeCT < 8.5;
   await tg('<b>🌅 MAVERICK '+(isPreMkt?'PRE-MARKET':'MORNING')+' BRIEFING</b>\n'+today+' | '+hour+':'+String(minCT).padStart(2,'0')+' CT'+(isPreMkt?'\n⚡ Pre-market prices active — live data':'')+'\n\nPulling top setups...');
-  var gainers=await getTopGainers(), results=[];
-  if (gainers.length) {
-    for (var i=0;i<Math.min(gainers.length,15);i++) {
-      var g=gainers[i], day=g.day||{}, prev=g.prevDay||{};
-      var price=day.c||(g.lastTrade&&g.lastTrade.p)||0, prevClose=prev.c||price;
-      var changePct=prevClose>0?rnd((price-prevClose)/prevClose*100,2):(g.todaysChangePerc||0);
-      if (price<1||price>30||changePct<5) continue;
-      var d=await getStock(g.ticker).catch(function(){return null;}); if(!d) continue;
-      var sr=scoreSetup(d), mis=calcMIS(d,5);
-      if (sr.score>=50) results.push(Object.assign({},d,{score:sr.score,flags:sr.flags,mis:mis.pct,misTier:mis.tier}));
-    }
-  } else {
-    var settled=await Promise.allSettled(BASE_SCAN.slice(0,10).map(function(s){return getStock(s);}));
-    for (var j=0;j<settled.length;j++){
-      var rj=settled[j]; if(rj.status!=='fulfilled'||!rj.value) continue;
-      var sr2=scoreSetup(rj.value), mis2=calcMIS(rj.value,5);
-      if(sr2.score>=55) results.push(Object.assign({},rj.value,{score:sr2.score,flags:sr2.flags,mis:mis2.pct,misTier:mis2.tier}));
-    }
+  // Briefing content: use live universe with REAL prices (pre-market OR regular)
+  var universe = [], gainers = await getTopGainers();
+  if (gainers.length) gainers.forEach(function(g){ if(g.ticker) universe.push(g.ticker); });
+  Object.keys(watchlist).forEach(function(t){ if(universe.indexOf(t)===-1) universe.push(t); });
+  algoWatchlist.forEach(function(w){ if(universe.indexOf(w.sym)===-1) universe.push(w.sym); });
+  BASE_SCAN.slice(0,20).forEach(function(t){ if(universe.indexOf(t)===-1) universe.push(t); });
+  universe = universe.filter(function(v,i,a){return a.indexOf(v)===i && v && v.length<=5;}).slice(0,30);
+
+  var results = [];
+  for (var i=0; i<universe.length; i++) {
+    var ticker = universe[i];
+    try {
+      var d = await getStock(ticker).catch(function(){return null;});
+      if (!d) continue;
+      if (d.price > TRADE_MAX_PRICE || d.price < 0.25) continue;
+      if (detectCountry(ticker,'') === 'IL') continue;
+      // Use changePct which now reflects PRE-MARKET move when in pre-market hours
+      if (Math.abs(d.changePct) < 5 && d.relVol < 2) continue;
+      var sr = scoreSetup(d), mis = calcMIS(d, 5);
+      if (sr.excluded) continue;
+      results.push(Object.assign({}, d, { setup: sr.score, mis: mis.pct, misTier: mis.tier, flags: sr.flags }));
+    } catch(e) {}
   }
-  results.sort(function(a,b){return (b.mis+b.score)-(a.mis+a.score);});
-  if (!results.length){await tg('No high-conviction setups in premarket. Stay patient. Market opens 9:30AM ET.');return;}
+  results.sort(function(a,b){return (b.mis+b.setup)-(a.mis+a.setup);});
+  var isPreMktNow = isPreMarketHours();
+  if (!results.length){
+    await tg((isPreMktNow?'🌅 Pre-market scan complete.':'📊 Morning scan complete.')+' No high-conviction setups yet (need 5%+ move + 2x RVOL).\nMarket opens 8:30AM CT. Watching for catalysts.');
+    return;
+  }
   var proto=activeProtocol?PROTOCOLS[activeProtocol].name:'Maverick Standard';
-  var msg='<b>🌅 MAVERICK MORNING BRIEFING</b>\n'+todayStr()+' | Protocol: '+proto+'\n\n';
-  msg+='I\'ve scanned the market and found '+ Math.min(5,results.length)+' setup'+(Math.min(5,results.length)>1?'s':'')+' worth watching:\n\n';
+  var msg='<b>'+(isPreMktNow?'🌅 PRE-MARKET':'☀️ MORNING')+' BRIEFING</b> | '+todayStr()+' | '+proto+'\n';
+  msg+=(isPreMktNow?'⚡ Using live pre-market prices\n':'')+'\n';
+  msg+='Found '+Math.min(5,results.length)+' setup'+(Math.min(5,results.length)>1?'s':'')+' worth watching:\n\n';
   for (var n=0;n<Math.min(5,results.length);n++){
-    var d2=results[n], lbl=d2.score>=80?'🔥 HOT':d2.score>=65?'⚡ WARM':'👀 WATCH';
+    var d2=results[n], lbl=d2.mis>=80?'🔥 HOT':d2.mis>=65?'⚡ WARM':'👀 WATCH';
     var stop2=rnd(d2.price-d2.atr*1.5,4), tp12=rnd(d2.price+d2.atr*2,4), tp22=rnd(d2.price+d2.atr*4,4);
     var proj=project30MinMove(d2,5);
-    var zones2=calcDemandSupplyZones(d2._aggs||[]);
-    msg+=lbl+' <b>$'+d2.sym+'</b> — Score:'+d2.score+' MIS:'+d2.mis+'\n';
+    msg+=lbl+' <b>$'+d2.sym+'</b> '+cFlag(d2.sym)+' — MIS:'+d2.mis+' Setup:'+d2.setup+'\n';
     msg+='$'+d2.price+' ('+(d2.changePct>=0?'+':'')+rnd(d2.changePct,1)+'%) RVOL:'+d2.relVol+'x Float:'+d2.floatM+'M\n';
-    msg+='Projecting '+proj.pct+'%+ in 30min ['+proj.confidence+']\n';
-    msg+='Buy: $'+rnd(d2.price*0.988,4)+'-$'+rnd(d2.price*1.005,4)+' | SL: $'+stop2+' | TP1: $'+tp12+' | TP2: $'+tp22+'\n';
-    if(zones2.demand.length) msg+='Demand: '+zones2.demand.join(' / ')+'\n';
-    if(zones2.supply.length) msg+='Supply: '+zones2.supply.join(' / ')+'\n';
+    msg+='Proj: +'+proj.pct+'%+ in 30min ['+proj.confidence+']\n';
+    msg+='Buy: $'+rnd(d2.price*0.988,4)+'-$'+rnd(d2.price*1.005,4)+'  SL:$'+stop2+'  TP1:$'+tp12+'\n';
     if(d2.flags&&d2.flags.length) msg+=d2.flags.slice(0,2).join(' | ')+'\n';
     msg+='\n';
   }
-  msg+='Market opens 9:30AM ET. /supernova TICKER for full breakdown.';
+  msg+='Market opens 8:30AM CT / 9:30AM ET. /check TICKER for full analysis.';
   await tg(msg);
 }
 
@@ -3231,17 +3366,35 @@ async function cmdPosition(parts, chatId) {
 
 async function cmdPositions(chatId) {
   var keys=Object.keys(positions);
-  if(!keys.length) return tg('No open positions.\n\n/position TICKER ENTRY STOP TP1', chatId);
-  var msg='<b>OPEN POSITIONS</b>\n\n';
+  if(!keys.length) return tg('No open positions.\n\nLog one: /position TICKER ENTRY STOP TP1 TP2 SHARES', chatId);
+  var msg='<b>📈 OPEN POSITIONS</b>\n\n';
   for(var i=0;i<keys.length;i++){
-    var sym=keys[i],pos=positions[sym],d=await getStock(sym).catch(function(){return null;});
-    if(!d){msg+='<b>$'+sym+'</b> — data unavailable\n\n';continue;}
-    var pl=rnd((d.price-pos.entry)/pos.entry*100,2),plD=rnd((d.price-pos.entry)*pos.shares,2);
-    var stopDist=rnd((d.price-pos.stop)/d.price*100,1),tp1D=pos.tp1?rnd((pos.tp1-d.price)/d.price*100,1):null;
-    msg+=(pl>=0?'UP':'DOWN')+' <b>$'+sym+'</b>\nEntry $'+pos.entry+' → Now $'+d.price+' ['+( d.source||'?')+']\n';
+    var sym=keys[i], pos=positions[sym];
+    // Clear cache to get freshest price
+    delete dataCache[sym];
+    var d=await getStock(sym).catch(function(){return null;});
+    var livePrice = d ? d.price : null;
+    var marketLabel = d && d.isPreMarket ? ' 🌅' : d && d.isPostMarket ? ' 🌙' : '';
+
+    if(!livePrice){
+      // Show stored position data even when live price fails
+      msg+='⚠️ <b>$'+sym+'</b> '+cFlag(sym)+' — live price unavailable\n';
+      msg+='Entry: $'+pos.entry+' | Stop: $'+pos.stop+'\n';
+      msg+='TP1: '+(pos.tp1?'$'+pos.tp1:'not set')+'  TP2: '+(pos.tp2?'$'+pos.tp2:'not set')+'\n';
+      msg+='Shares: '+pos.shares+'  (P&L pending live data)\n\n';
+      continue;
+    }
+    var pl=rnd((livePrice-pos.entry)/pos.entry*100,2);
+    var plD=rnd((livePrice-pos.entry)*pos.shares,2);
+    var stopDist=rnd((livePrice-pos.stop)/livePrice*100,1);
+    var tp1Dist=pos.tp1?rnd((pos.tp1-livePrice)/livePrice*100,1):null;
+    msg+=(pl>=0?'🟢 UP':'🔴 DOWN')+' <b>$'+sym+'</b> '+cFlag(sym)+marketLabel+'\n';
+    msg+='Entry $'+pos.entry+' → Now $'+livePrice+' ['+( d.source||'?')+']\n';
     msg+='P&L: '+(pl>=0?'+':'')+pl+'% ($'+(plD>=0?'+':'')+plD+')\n';
-    msg+='Stop: $'+pos.stop+' ('+stopDist+'% away)'+(stopDist<3?' ⚠️ CLOSE':'')+'\n';
-    msg+='TP1: '+(pos.tp1?'$'+pos.tp1+' ('+tp1D+'% away)':'not set')+'\n\n';
+    msg+='Stop: $'+pos.stop+' ('+stopDist+'% away)'+(Math.abs(stopDist)<3?' ⚠️ CLOSE':'')+'\n';
+    msg+='TP1: '+(pos.tp1?'$'+pos.tp1+' ('+(tp1Dist>=0?'+':'')+tp1Dist+'% away)':'not set')+'\n';
+    if(pos.tp2) msg+='TP2: $'+pos.tp2+'\n';
+    msg+='RVOL: '+d.relVol+'x  Float: '+d.floatM+'M  Short: '+rnd(d.shortPct,1)+'%\n\n';
   }
   await tg(msg, chatId);
 }
@@ -3552,6 +3705,9 @@ async function handleUpdate(update) {
     else if (cmd==='/protocol')               await cmdProtocol(parts,chatId);
     else if (cmd==='/position')               await cmdPosition(parts,chatId);
     else if (cmd==='/positions')              fire(cmdPositions(chatId));
+    else if (cmd==='/cascade'&&parts[1])      fire(cmdCascade(parts[1].toUpperCase(),chatId));
+    else if (cmd==='/cascade')                await tg('Usage: /cascade TICKER  e.g. /cascade GOVX',chatId);
+    else if (cmd==='/staircase'||cmd==='/sc') fire(cmdStaircase(chatId));
     else if (cmd==='/close'&&parts[1])        await cmdClose(parts,chatId);
     else if (cmd==='/watch'&&parts[1])        await cmdWatch(parts[1],chatId);
     else if (cmd==='/alert')                  await cmdAlert(parts,chatId);
@@ -3891,8 +4047,8 @@ async function warmCache() {
 
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v6.5           ║');
-  console.log('║    PRE-MARKET LIVE — GOLDEN WINDOW   ║');
+  console.log('║    MAVERICK INTEL BOT v6.6           ║');
+  console.log('║    CASCADE + TIMEZONE + 6 FIXES      ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
