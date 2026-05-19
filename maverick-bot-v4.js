@@ -3563,7 +3563,20 @@ async function cmdPosition(parts, chatId) {
   var rr=rnd((+tp1-+entry)/Math.max(+entry-+stop,0.001),2);
   positions[ticker]={entry:+entry,stop:+stop,tp1:+tp1,tp2:tp2?+tp2:null,shares:+shares,protocol:activeProtocol||'maverick',entryTime:Date.now(),alerts:{stopWarn:false,tp1:false,tp2:false,overextended:false}};
   var risk=rnd(Math.abs(+entry-+stop)*+shares,2), reward1=rnd(Math.abs(+tp1-+entry)*+shares,2);
-  await tg('<b>$'+ticker+' TRACKED</b>\n\nEntry:  $'+entry+'\nStop:   $'+stop+' ('+rnd((+stop-+entry)/+entry*100,1)+'%)\nTP1:    $'+tp1+' (+'+rnd((+tp1-+entry)/+entry*100,1)+'%)\nTP2:    '+(tp2?'$'+tp2:'not set')+'\nShares: '+shares+'\nRisk:   $'+risk+'  Reward@TP1: $'+reward1+'  R:R: '+rr+':1\nProtocol: '+(activeProtocol||'maverick')+'\n\nAlerts set for stop, TP1, TP2.', chatId);
+  await saveMemory();
+
+  // ── ANTI-FOMO EXTENSION GUARD ─────────────────────────────────────────────
+  var d = await getStock(ticker).catch(function(){return null;});
+  var extensionAlert = '';
+  if (d) {
+    var esnip = calcVWAPSniper(d, 0);
+    var eExt  = rnd((+entry - esnip.vwapProxy) / Math.max(esnip.vwapProxy, 0.01) * 100, 1);
+    if      (eExt >= 12) { extensionAlert = '\n\n🚨 <b>ANTI-FOMO ALERT:</b> Entry $'+entry+' is <b>'+eExt+'% above VWAP ($'+esnip.vwapProxy+')</b>. Overextended zone. High mean-reversion risk. Consider waiting for VWAP pullback or size down significantly.'; }
+    else if (eExt >= 7)  { extensionAlert = '\n\n⚠️ Entry '+eExt+'% above VWAP — extended but manageable. Keep stop tight.'; }
+    else if (eExt < 0)   { extensionAlert = '\n\n✅ Entry '+Math.abs(eExt)+'% below VWAP ($'+esnip.vwapProxy+') — ideal institutional accumulation zone. Good entry location.'; }
+  }
+
+  await tg('<b>$'+ticker+' TRACKED</b> '+cFlag(ticker)+'\n\nEntry:  $'+entry+'\nStop:   $'+stop+' ('+rnd((+stop-+entry)/+entry*100,1)+'%)\nTP1:    $'+tp1+' (+'+rnd((+tp1-+entry)/+entry*100,1)+'%)\nTP2:    '+(tp2?'$'+tp2:'not set')+'\nShares: '+shares+'\nRisk:   $'+risk+'  Reward@TP1: $'+reward1+'  R:R: '+rr+':1'+extensionAlert+'\n\n🛰️ Telemetry active. Confidence pulse every 5min.\n/confidence '+ticker+' for full analysis.', chatId);
 }
 
 async function cmdPositions(chatId) {
@@ -4279,52 +4292,118 @@ function calcTradeConfidence(pos, d) {
   var score = 0;
   var reasons = [], warnings = [], pullbackContext = '';
 
-  var rvol    = d.relVol;
+  var rvol      = d.relVol;
   var lifecycle = detectLifecyclePhase(d);
-  var im      = calcIntradayMomentum ? calcIntradayMomentum(d) : { aboveVwap: false, vwapProxy: price, fromOpen: 0 };
+  var vwap      = calcVWAPSniper(d, 0); // VWAP proxy from current session data
+  var vwapProxy = vwap.vwapProxy;
+  var aboveVwap = vwap.aboveVwap;
+  var vwapExt   = vwap.vwapDevPct; // % above/below VWAP
 
-  // ── RVOL — are buyers still here? ────────────────────────────────────────
-  if      (rvol >= 8)  { score += 30; reasons.push('RVOL '+rvol+'x — institutional buying STILL active. They haven\'t left.'); }
-  else if (rvol >= 4)  { score += 20; reasons.push('RVOL '+rvol+'x — elevated. Thesis supported by volume.'); }
-  else if (rvol >= 2)  { score += 10; reasons.push('RVOL '+rvol+'x — above average. Monitoring.'); }
-  else                  { score -= 10; warnings.push('RVOL '+rvol+'x — volume fading. This is your #1 exit signal.'); }
+  // ── PILLAR 1: VOLUME PACE (replaces raw RVOL) ─────────────────────────────
+  // Compare current session volume pace to historical average daily pace.
+  // Time-adjusts so 10AM volume is compared to what's NORMAL at 10AM, not EOD.
+  var timeCT_conf  = nowTimeCT();
+  var mktElapsed   = Math.max(1, (timeCT_conf - 8.5) * 60); // minutes since open (CT)
+  var expectedVol  = d.avgVol > 0 ? (d.avgVol / 390) * mktElapsed : 0; // expected at this pace
+  var volumePaceRatio = expectedVol > 0 ? rnd(d.volume / expectedVol, 2) : rvol;
 
-  // ── VWAP PROXY — are buyers in control? ──────────────────────────────────
-  if (im.aboveVwap)     { score += 20; reasons.push('Above VWAP proxy ($'+im.vwapProxy+') — bulls in structural control. Every buyer since open is profitable.'); }
-  else                  { score -= 5;  warnings.push('Below VWAP proxy ($'+im.vwapProxy+') — bears have short-term edge. Normal if early in pullback.'); }
+  if      (volumePaceRatio >= 5) { score += 30; reasons.push('Volume pace '+volumePaceRatio+'x above expected — institutional accumulation CONFIRMED. They are still here.'); }
+  else if (volumePaceRatio >= 2) { score += 20; reasons.push('Volume pace '+volumePaceRatio+'x — elevated buying. Thesis is supported.'); }
+  else if (volumePaceRatio >= 1) { score += 10; reasons.push('Volume pace '+volumePaceRatio+'x — normal. Market in equilibrium.'); }
+  else                            { score -= 10; warnings.push('Volume pace '+volumePaceRatio+'x — below expected. Institutional interest fading.'); }
 
-  // ── LIFECYCLE PHASE — where are you in the move? ─────────────────────────
-  if (lifecycle.phase <= 2)  { score += 20; reasons.push(lifecycle.name+' — still early. The main move hasn\'t happened yet. This is where patience pays.'); }
-  else if (lifecycle.phase === 3){ score += 10; reasons.push('Phase 3 continuation — still running but tightening stops makes sense.'); }
-  else if (lifecycle.phase >= 4) { score -= 15; warnings.push(lifecycle.name+' — late phase. Thesis is aging. Start planning your exit.'); }
+  // ── PILLAR 2: VOLUME-CLASSIFIED PULLBACK ──────────────────────────────────
+  // This is the key insight: NOT all pullbacks are equal.
+  // LOW VOLUME pullback = healthy shakeout (whales NOT distributing)
+  // HIGH VOLUME pullback = institutional flush (whales ARE selling)
+  var isPullback  = price < entry;
+  var isDeadVol   = volumePaceRatio < 0.5; // Volume less than half of normal pace
+  var isHighVol   = volumePaceRatio >= 2;
 
-  // ── STOP DISTANCE — is your position structurally safe? ──────────────────
-  var stopDist = pos.stop > 0 ? rnd((price - pos.stop) / price * 100, 1) : 0;
-  if      (stopDist > 15)  { score += 15; reasons.push('Stop $'+pos.stop+' is '+stopDist+'% below — well protected. This is breathing room, not failure.'); }
-  else if (stopDist > 8)   { score += 8;  reasons.push('Stop '+stopDist+'% away — acceptable cushion.'); }
-  else if (stopDist > 3)   { score += 3;  warnings.push('Stop only '+stopDist+'% away. Consider trailing to breakeven if up 10%+.'); }
-  else if (stopDist > 0)   { score -= 5;  warnings.push('Stop within 3% — may fire on normal volatility. Evaluate vs thesis.'); }
-
-  // ── PULLBACK CONTEXT — is this normal or a problem? ──────────────────────
-  if (pct < 0) {
-    var pullbackPct = Math.abs(pct);
-    if (pullbackPct < 5 && im.aboveVwap && rvol >= 3) {
-      pullbackContext = '📊 <b>Pullback context:</b> -'+rnd(pullbackPct,1)+'% from entry is NORMAL Phase 2 behavior. Stocks never go straight up. RVOL '+rvol+'x is still elevated — the move is NOT over. The whales who caused this are still in the building.';
-    } else if (pullbackPct < 10 && score >= 35) {
-      pullbackContext = '📊 <b>Pullback context:</b> -'+rnd(pullbackPct,1)+'% from entry. Thesis '+(score>=50?'still intact':'under review')+'. Your stop at $'+pos.stop+' is the true decision line — not this pullback.';
-    } else if (pullbackPct >= 10) {
-      pullbackContext = '⚠️ <b>Pullback context:</b> -'+rnd(pullbackPct,1)+'% from entry is significant. Review: is the original catalyst still valid? Is RVOL holding?';
+  if (isPullback) {
+    if (isDeadVol) {
+      // Healthy: whales not participating in the sell-off
+      score += 8;
+      reasons.push('DEAD-VOLUME PULLBACK — price dipping on '+volumePaceRatio+'x volume pace. Whales are NOT selling. This is a retail shakeout, not distribution. The structure is healthy.');
+    } else if (isHighVol) {
+      // Dangerous: institutions are actively exiting
+      score -= 25;
+      warnings.push('HIGH-VOLUME FLUSH — pullback occurring on '+volumePaceRatio+'x volume pace. Institutional selling detected. This is NOT a normal shakeout. Review your stop level immediately.');
     }
-  } else if (pct > 0 && pct < 8 && pos.tp1 > 0) {
-    // Early gain — the sell-too-early trap
-    var tp1Dist = rnd((pos.tp1 - price) / price * 100, 1);
-    pullbackContext = '💡 <b>Hold context:</b> Up +'+rnd(pct,1)+'%, TP1 is still +'+tp1Dist+'% away. Your original analysis set TP1 at $'+pos.tp1+' for a reason. The market hasn\'t changed — your emotions have. Hold the plan.';
+    // Normal volume pullback — neutral, no score change
   }
 
-  score = Math.min(100, Math.max(0, score));
-  var tier = score>=70?'💚 HOLD WITH CONVICTION':score>=50?'🟡 THESIS INTACT — HOLD':score>=35?'🟠 WATCH CLOSELY':' 🔴 REVIEW YOUR STOP';
+  // ── PILLAR 3: VWAP STRUCTURAL CONTROL ────────────────────────────────────
+  if (aboveVwap) {
+    score += 20;
+    reasons.push('Above VWAP ($'+vwapProxy+') — every buyer since open is profitable. Bulls in structural control. Whales anchored to VWAP must BUY dips below it.');
+  } else {
+    score -= 5;
+    warnings.push('Below VWAP ($'+vwapProxy+') — bears have short-term structural edge. Watch for reclaim. If price snaps back above VWAP on volume, thesis restarts.');
+  }
 
-  return { score, tier, reasons, warnings, pullbackContext, pct, stopDist, lifecycle, rvol, aboveVwap: im.aboveVwap };
+  // ── PILLAR 4: ANTI-FOMO EXTENSION GUARD ─────────────────────────────────
+  // If price is 12%+ above VWAP, you are chasing an overextended move.
+  // Mean-reversion algorithms WILL pull this back. This is not entry — it's exit.
+  if (!isPullback && vwapExt >= 12) {
+    score -= 30;
+    warnings.push('OVEREXTENDED: $'+price+' is '+rnd(vwapExt,1)+'% above VWAP. You are inside an institutional distribution window. High probability mean-reversion incoming. DO NOT ENTER HERE.');
+  } else if (!isPullback && vwapExt >= 7) {
+    score -= 10;
+    warnings.push('EXTENDED '+rnd(vwapExt,1)+'% above VWAP. Acceptable if RVOL still strong. Tighten stop before adding.');
+  }
+
+  // ── PILLAR 5: LOCAL HIGHER-LOW STRUCTURE ─────────────────────────────────
+  // Track the last 3 session lows from aggs data as the "staircase support floor."
+  // If today's low breaks below that — structure broken. Not a buy.
+  var localSupport = 0;
+  if (d._aggs && d._aggs.length >= 3) {
+    var last3Lows = d._aggs.slice(-3).map(function(b){ return b.l||b.low||0; }).filter(function(l){ return l>0; });
+    if (last3Lows.length >= 2) {
+      localSupport = Math.max.apply(null, last3Lows.slice(0,-1)); // second-to-last low = local support
+      if (price < localSupport * 0.98) { // 2% tolerance
+        score -= 25;
+        warnings.push('STRUCTURE BREACH: Price $'+price+' broke below local higher-low support at $'+rnd(localSupport,4)+'. Staircase invalidated. Evaluate position immediately.');
+      } else if (price >= localSupport) {
+        score += 10;
+        reasons.push('Staircase structure intact — local support $'+rnd(localSupport,4)+' holding. Higher-low confirmed.');
+      }
+    }
+  }
+
+  // ── LIFECYCLE PHASE ────────────────────────────────────────────────────────
+  if (lifecycle.phase <= 2)     { score += 15; reasons.push(lifecycle.name+' — early phase. The main move hasn\'t happened yet. Patience here is your edge.'); }
+  else if (lifecycle.phase === 3){ score += 8;  reasons.push('Phase 3 continuation — still valid. Tighten stop to trail the move.'); }
+  else if (lifecycle.phase >= 4) { score -= 15; warnings.push(lifecycle.name+' — late in the move. Start scaling out.'); }
+
+  // ── STOP DISTANCE ─────────────────────────────────────────────────────────
+  var stopDist = pos.stop > 0 ? rnd((price - pos.stop) / price * 100, 1) : 0;
+  if      (stopDist > 15) { score += 10; reasons.push('Stop $'+pos.stop+' is '+stopDist+'% below — well protected. This is room to breathe.'); }
+  else if (stopDist > 8)  { score += 5;  reasons.push('Stop '+stopDist+'% away — healthy cushion.'); }
+  else if (stopDist > 3)  { warnings.push('Stop only '+stopDist+'% away. Consider trailing to breakeven now that you\'re in profit.'); }
+  else if (stopDist > 0)  { score -= 5;  warnings.push('Stop within 3% — normal volatility could fire it. Is your thesis still valid?'); }
+
+  score = Math.min(100, Math.max(0, score));
+
+  // ── PULLBACK CONTEXT — the psychological anchor ────────────────────────────
+  if (isPullback) {
+    var pullbackPct = Math.abs(pct);
+    if (isDeadVol && aboveVwap) {
+      pullbackContext = '🛰️ <b>General\'s Order:</b> -'+rnd(pullbackPct,1)+'% on DEAD volume ('+volumePaceRatio+'x pace). The algorithms are shaking weak hands before the next leg up. Whales are NOT selling. The mathematical structure is intact. <b>Do not touch the keyboard.</b>';
+    } else if (isHighVol) {
+      pullbackContext = '⚠️ <b>General\'s Order:</b> -'+rnd(pullbackPct,1)+'% on HIGH volume ('+volumePaceRatio+'x pace). This is REAL selling. Your stop at $'+pos.stop+' is now the decision line — not your emotions.';
+    } else {
+      pullbackContext = '📊 <b>Hold context:</b> -'+rnd(pullbackPct,1)+'% from entry. Volume is neutral ('+volumePaceRatio+'x). Stop at $'+pos.stop+' is the line. Until that breaks, the thesis is still valid.';
+    }
+  } else if (pct > 0 && pct < 8 && pos.tp1 > 0) {
+    var tp1Dist = rnd((pos.tp1 - price) / price * 100, 1);
+    pullbackContext = '💡 <b>General\'s Order:</b> Up +'+rnd(pct,1)+'%, TP1 is still +'+tp1Dist+'% away at $'+pos.tp1+'. Your original analysis defined this target for a reason. The market structure hasn\'t changed. <b>Your emotions have. Hold the plan.</b>';
+  }
+
+  var tier = score>=75?'💚 STRONG HOLD':score>=55?'🟡 HOLD — THESIS INTACT':score>=40?'🟠 MONITOR CORRIDOR':score>=25?'🔴 REVIEW STOP':'🚨 MATHEMATICAL EXIT SIGNAL';
+
+  return { score, tier, reasons, warnings, pullbackContext, pct, stopDist, lifecycle,
+           rvol, aboveVwap, vwapProxy, vwapExt, volumePaceRatio, isPullback, isDeadVol, isHighVol, localSupport };
 }
 
 // ── TRADE CONFIDENCE PULSE — fires every 5 min on open positions ──────────
@@ -4335,7 +4414,7 @@ async function sendTradeConfidencePulse() {
 
   for (var si=0; si<syms.length; si++) {
     var sym = syms[si], pos = positions[sym];
-    delete dataCache[sym]; // Always fresh data for positions
+    delete dataCache[sym];
     var d = await getStock(sym).catch(function(){return null;});
     if (!d) continue;
 
@@ -4344,29 +4423,49 @@ async function sendTradeConfidencePulse() {
     var pctStr = (conf.pct >= 0 ? '+' : '') + rnd(conf.pct, 2) + '%';
     var marketLabel = d.isPreMarket ? ' 🌅' : d.isPostMarket ? ' 🌙' : '';
 
-    var msg = conf.tier + '\n';
-    msg += '<b>$'+sym+'</b> '+cFlag(sym)+marketLabel+' — $'+price+' ('+pctStr+' from entry $'+pos.entry+')\n';
-    msg += 'Confidence: <b>'+conf.score+'/100</b>\n\n';
+    // ── TELEMETRY FORMAT — designed to replace emotional chart-watching ───────
+    var scoreBar = conf.score >= 75 ? '🟩🟩🟩🟩🟩' :
+                   conf.score >= 55 ? '🟩🟩🟩🟨⬜' :
+                   conf.score >= 40 ? '🟨🟨⬜⬜⬜' :
+                   conf.score >= 25 ? '🟥🟥⬜⬜⬜' : '🟥🟥🟥🟥🟥';
 
-    if (conf.reasons.length) {
-      msg += '<b>Why the thesis is still valid:</b>\n';
-      conf.reasons.slice(0, 3).forEach(function(r){ msg += '• '+r+'\n'; });
-    }
+    var msg = '🛰️ <b>MAVERICK LIVE TELEMETRY — $'+sym+' '+cFlag(sym)+'</b>'+marketLabel+'\n';
+    msg += '───────────────────────\n';
+    msg += '• <b>Price:</b> $'+price+'  |  <b>Entry:</b> $'+pos.entry+'  |  <b>P&amp;L:</b> '+pctStr+'\n';
+    msg += '• <b>Math Conviction:</b> <code>[ '+conf.score+' / 100 ]</code>  '+scoreBar+'\n';
+    msg += '• <b>Tactical Status:</b> <b>'+conf.tier+'</b>\n\n';
 
-    if (conf.warnings.length) {
-      msg += '\n<b>Watch these:</b>\n';
-      conf.warnings.forEach(function(w){ msg += '• '+w+'\n'; });
-    }
+    msg += '<b>Pillar Analytics:</b>\n';
+    msg += '• Vol Pace: '+conf.volumePaceRatio+'x expected'+(conf.isDeadVol && conf.isPullback?' — DEAD VOLUME (healthy shakeout)':conf.isHighVol && conf.isPullback?' — HIGH VOLUME (real selling)':'')+'\n';
+    msg += '• VWAP: $'+conf.vwapProxy+' — price '+(conf.aboveVwap?'ABOVE ✅':'BELOW ❌')+(conf.vwapExt !== 0?' ('+rnd(conf.vwapExt,1)+'%)':'')+'\n';
+    msg += '• Structure: '+(conf.localSupport > 0?'Higher-low $'+rnd(conf.localSupport,4)+' '+(d.price>=conf.localSupport*0.98?'HOLDING ✅':'BROKEN ❌'):'Tracking...')+'\n';
+    msg += '• Phase: '+conf.lifecycle.name+'\n\n';
 
-    // Stop vs TP context — the asymmetry reminder
-    msg += '\nStop: $'+pos.stop;
-    if (conf.stopDist > 0) msg += ' ('+conf.stopDist+'% away)';
+    // Stop/TP asymmetry — always show this
+    msg += '• Stop: $'+pos.stop+(conf.stopDist>0?' ('+conf.stopDist+'% away)':' ⚠️ AT RISK')+'\n';
     if (pos.tp1) {
       var tp1Dist = rnd((pos.tp1 - price) / price * 100, 1);
-      msg += '  →  TP1: $'+pos.tp1+' (+'+(tp1Dist>=0?tp1Dist:0)+'% away)';
+      msg += '• TP1:  $'+pos.tp1+' ('+(tp1Dist>=0?'+'+tp1Dist:'REACHED')+'%)\n';
+    }
+    if (pos.tp2) {
+      var tp2Dist = rnd((pos.tp2 - price) / price * 100, 1);
+      msg += '• TP2:  $'+pos.tp2+' ('+(tp2Dist>=0?'+'+tp2Dist:'REACHED')+'%)\n';
     }
 
-    if (conf.pullbackContext) msg += '\n\n'+conf.pullbackContext;
+    if (conf.pullbackContext) msg += '\n'+conf.pullbackContext;
+
+    // Pillar deductions when score is degrading
+    if (conf.warnings.length && conf.score < 55) {
+      msg += '\n<b>⚠️ Deductions Active:</b>\n';
+      conf.warnings.slice(0,2).forEach(function(w){ msg += '• '+w+'\n'; });
+    }
+
+    // The hard orders
+    if (conf.score >= 75 && !conf.isPullback) {
+      msg += '\n⚖️ <i>General\'s Order: The math says hold. Your thesis is structurally intact. Step away from the broker screen.</i>';
+    } else if (conf.score < 35) {
+      msg += '\n⚖️ <i>General\'s Order: Below conviction floor. Thesis is under stress. Let your stop do its job — don\'t override it with hope.</i>';
+    }
 
     await tg(msg);
     await sleep(1000);
@@ -4377,39 +4476,57 @@ async function sendTradeConfidencePulse() {
 async function cmdConfidence(sym, chatId) {
   var pos = positions[sym];
   if (!pos) return tg('No tracked position for $'+sym+'.\n\nLog one first: /position '+sym+' ENTRY STOP TP1 TP2 SHARES', chatId);
-  await tg('⏳ Running Trade Confidence analysis for $'+sym+'...', chatId);
+  await tg('⏳ Running Trade Confidence Engine for $'+sym+'...', chatId);
   delete dataCache[sym];
   var d = await getStock(sym).catch(function(){return null;});
-  if (!d) return tg('Cannot pull live data for $'+sym+'. Position data shown below:\nEntry:$'+pos.entry+' Stop:$'+pos.stop+' TP1:'+(pos.tp1||'not set'), chatId);
+  if (!d) return tg('Cannot pull live data for $'+sym+'.\nStored: Entry $'+pos.entry+' | Stop $'+pos.stop+' | TP1 '+(pos.tp1||'not set'), chatId);
 
-  var conf = calcTradeConfidence(pos, d);
+  var conf   = calcTradeConfidence(pos, d);
   var pctStr = (conf.pct >= 0 ? '+' : '') + rnd(conf.pct, 2) + '%';
+  var scoreBar = conf.score>=75?'🟩🟩🟩🟩🟩':conf.score>=55?'🟩🟩🟩🟨⬜':conf.score>=40?'🟨🟨⬜⬜⬜':conf.score>=25?'🟥🟥⬜⬜⬜':'🟥🟥🟥🟥🟥';
 
-  var msg = '<b>🧠 TRADE CONFIDENCE — $'+sym+' '+cFlag(sym)+'</b>\n';
+  var msg = '🛰️ <b>MAVERICK CONVICTION ENGINE — $'+sym+' '+cFlag(sym)+'</b>\n';
   msg += '━━━━━━━━━━━━━━━━━━━━━━\n';
-  msg += conf.tier+'\n';
-  msg += 'Confidence score: <b>'+conf.score+'/100</b>\n';
-  msg += 'P&L from entry: <b>'+pctStr+'</b> ($'+pos.entry+' → $'+d.price+')\n\n';
+  msg += '• <b>Price:</b> $'+d.price+'  |  <b>Entry:</b> $'+pos.entry+'  |  <b>P&amp;L:</b> '+pctStr+'\n';
+  msg += '• <b>Conviction Score:</b> <code>[ '+conf.score+' / 100 ]</code>  '+scoreBar+'\n';
+  msg += '• <b>Status:</b> <b>'+conf.tier+'</b>\n\n';
 
-  msg += '<b>THESIS CHECK:</b>\n';
-  conf.reasons.forEach(function(r){ msg += '✅ '+r+'\n'; });
+  msg += '<b>PILLAR STATUS:</b>\n';
+  msg += '  Vol Pace:  '+conf.volumePaceRatio+'x expected';
+  if (conf.isDeadVol && conf.isPullback) msg += '  ← DEAD VOLUME (healthy shakeout ✅)';
+  else if (conf.isHighVol && conf.isPullback) msg += '  ← HIGH VOLUME (real selling ⚠️)';
+  msg += '\n';
+  msg += '  VWAP:      $'+conf.vwapProxy+' — '+(conf.aboveVwap?'ABOVE ✅':'BELOW ❌')+'  ('+rnd(conf.vwapExt,1)+'%)\n';
+  if (conf.vwapExt >= 12) msg += '  ⚠️ OVEREXTENDED +'+rnd(conf.vwapExt,1)+'% above VWAP — mean-reversion risk\n';
+  msg += '  Structure: '+(conf.localSupport>0?'Higher-low $'+rnd(conf.localSupport,4)+' '+(d.price>=conf.localSupport*0.98?'INTACT ✅':'BROKEN ❌'):'Insufficient data')+'\n';
+  msg += '  Phase:     '+conf.lifecycle.name+'\n\n';
+
+  if (conf.reasons.length) {
+    msg += '<b>HOLDS THE THESIS:</b>\n';
+    conf.reasons.slice(0,4).forEach(function(r){ msg += '✅ '+r+'\n'; });
+  }
   if (conf.warnings.length) {
-    msg += '\n<b>CONCERNS:</b>\n';
+    msg += '\n<b>ACTIVE DEDUCTIONS:</b>\n';
     conf.warnings.forEach(function(w){ msg += '⚠️ '+w+'\n'; });
   }
 
   msg += '\n<b>LEVELS:</b>\n';
   msg += 'Entry: $'+pos.entry+'\n';
   msg += 'Stop:  $'+pos.stop+(conf.stopDist>0?' ('+conf.stopDist+'% away)':'')+'\n';
-  if (pos.tp1) { var tp1d=rnd((pos.tp1-d.price)/d.price*100,1); msg += 'TP1:   $'+pos.tp1+' (+'+(tp1d>=0?tp1d:0)+'% away) — sell 50%\n'; }
-  if (pos.tp2) { var tp2d=rnd((pos.tp2-d.price)/d.price*100,1); msg += 'TP2:   $'+pos.tp2+' (+'+(tp2d>=0?tp2d:0)+'% away) — sell 30%\n'; }
+  if (pos.tp1) { var td1=rnd((pos.tp1-d.price)/d.price*100,1); msg += 'TP1:   $'+pos.tp1+(td1>=0?' (+'+td1+'% away) — sell 50%':' ✅ REACHED')+'\n'; }
+  if (pos.tp2) { var td2=rnd((pos.tp2-d.price)/d.price*100,1); msg += 'TP2:   $'+pos.tp2+(td2>=0?' (+'+td2+'% away) — sell 30%':' ✅ REACHED')+'\n'; }
 
   if (conf.pullbackContext) msg += '\n'+conf.pullbackContext;
 
-  if (conf.score >= 70) {
-    msg += '\n\n<b>BOTTOM LINE: Hold the position.</b>\nYour thesis is intact. Fear is not a strategy. The bot is watching it for you.';
-  } else if (conf.score < 40) {
-    msg += '\n\n<b>BOTTOM LINE: Review your stop.</b>\nConditions are deteriorating. Don\'t hope — protect capital.';
+  msg += '\n━━━━━━━━━━━━━━━━━━━━━━\n';
+  if (conf.score >= 75) {
+    msg += '⚖️ <b>General\'s Order: HOLD.</b>\nThe mathematical structure is intact. Step away from the broker screen. Your stop is set. Let the thesis work.';
+  } else if (conf.score >= 55) {
+    msg += '⚖️ <b>General\'s Order: HOLD but stay alert.</b>\nThesis is valid but conditions are mixed. Watch for VWAP to hold and volume pace to stabilize.';
+  } else if (conf.score >= 40) {
+    msg += '⚖️ <b>General\'s Order: MONITORING CORRIDOR.</b>\nScore is degrading. Do not add. Trail your stop to breakeven if you haven\'t already.';
+  } else {
+    msg += '⚖️ <b>General\'s Order: MATHEMATICAL EXIT SIGNAL.</b>\nBelow conviction floor. The structure is breaking down. Let your stop execute — do not override it with hope.';
   }
 
   await tg(msg, chatId);
