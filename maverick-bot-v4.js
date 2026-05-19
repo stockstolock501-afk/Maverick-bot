@@ -1220,78 +1220,196 @@ function scoreSetup(d) {
 }
 
 // ── CATALYST TAXONOMY ──────────────────────────────────────────────────────
+// ── CATALYST MAP — Research-Calibrated (Day Trade Genome Report, May 2026) ──
+// Rank 1 = Tier 1 catalysts: Legal/Court ruling, FDA binary, Earnings+Squeeze
+// Research finding: 100% of >200% movers had Tier-1 catalysts.
+// Legal/court ruling is the #1 catalyst by avg magnitude (+300-515%).
 var CATALYST_MAP = {
-  'fda approval':{rank:1,name:'FDA Approval'},'fda approved':{rank:1,name:'FDA Approved'},
-  'fda clearance':{rank:1,name:'FDA Clearance'},'phase 3 results':{rank:1,name:'Phase 3 Results'},
-  'breakthrough':{rank:1,name:'Breakthrough Data'},'positive data':{rank:1,name:'Positive Clinical Data'},
-  'merger':{rank:2,name:'Merger'},'acquisition':{rank:2,name:'Acquisition'},'buyout':{rank:2,name:'Buyout'},
-  'short squeeze':{rank:2,name:'Short Squeeze'},'government contract':{rank:2,name:'Gov Contract'},
-  'barda contract':{rank:2,name:'BARDA Contract'},'dod contract':{rank:2,name:'DOD Contract'},
-  'uplisting':{rank:2,name:'Uplisting'},'trading halted':{rank:2,name:'Trading Halt'},
-  'earnings beat':{rank:3,name:'Earnings Beat'},'beat estimates':{rank:3,name:'Beat Estimates'},
-  'record revenue':{rank:3,name:'Record Revenue'},'raised guidance':{rank:3,name:'Raised Guidance'},
-  'partnership':{rank:3,name:'Partnership'},'nasdaq compliance':{rank:3,name:'Nasdaq Compliance'},
-  'positive results':{rank:3,name:'Positive Results'},'clinical data':{rank:3,name:'Clinical Data'},
+  // ── TIER 1A: LEGAL / COURT (NEW — avg +300-515%, highest magnitude) ──────
+  'jury verdict':{rank:1,name:'Jury Verdict 🏛️'},'court ruling':{rank:1,name:'Court Ruling 🏛️'},
+  'patent ruling':{rank:1,name:'Patent Ruling 🏛️'},'patent win':{rank:1,name:'Patent Win 🏛️'},
+  'supreme court':{rank:1,name:'Supreme Court Ruling 🏛️'},'court victory':{rank:1,name:'Court Victory 🏛️'},
+  'judgment':{rank:1,name:'Court Judgment 🏛️'},'damages awarded':{rank:1,name:'Damages Awarded 🏛️'},
+  'won lawsuit':{rank:1,name:'Lawsuit Win 🏛️'},'patent affirmed':{rank:1,name:'Patent Affirmed 🏛️'},
+  '6-k':{rank:1,name:'Form 6-K (Court/Patent)'},'6k filing':{rank:1,name:'Form 6-K Filing'},
+
+  // ── TIER 1B: FDA / BIOTECH BINARY (avg +150-400%) ─────────────────────────
+  'fda approval':{rank:1,name:'FDA Approval 🧬'},'fda approved':{rank:1,name:'FDA Approved 🧬'},
+  'fda clearance':{rank:1,name:'FDA Clearance 🧬'},'pdufa':{rank:1,name:'PDUFA Approval 🧬'},
+  'phase 3 results':{rank:1,name:'Phase 3 Data 🧬'},'phase 3 trial':{rank:1,name:'Phase 3 Trial 🧬'},
+  'breakthrough designation':{rank:1,name:'Breakthrough Designation 🧬'},
+  'positive data':{rank:1,name:'Positive Clinical Data 🧬'},'clinical readout':{rank:1,name:'Clinical Readout 🧬'},
+  'orphan drug':{rank:1,name:'Orphan Drug Designation 🧬'},
+
+  // ── TIER 2: EARNINGS + SQUEEZE / MAJOR DEAL (avg +150-225%) ─────────────
+  'earnings beat':{rank:2,name:'Earnings Beat + Revenue Growth 💰'},
+  'beat estimates':{rank:2,name:'Beat Estimates 💰'},'record revenue':{rank:2,name:'Record Revenue 💰'},
+  'revenue growth':{rank:2,name:'Revenue Growth 💰'},'returned to profitability':{rank:2,name:'Profitable 💰'},
+  'acquisition':{rank:2,name:'Acquisition 🤝'},'buyout':{rank:2,name:'Buyout 🤝'},
+  'merger':{rank:2,name:'Merger 🤝'},'going private':{rank:2,name:'Going Private 🤝'},
+  'short squeeze':{rank:2,name:'Short Squeeze Signal ⚡'},
+
+  // ── TIER 3: AI/TECH NARRATIVE / SECTOR THEME (avg +100-200%) ─────────────
+  'ai partnership':{rank:3,name:'AI Partnership 🤖'},'ai contract':{rank:3,name:'AI Contract 🤖'},
+  'artificial intelligence':{rank:3,name:'AI Announcement 🤖'},
+  'government contract':{rank:3,name:'Gov Contract 🏛️'},'barda contract':{rank:3,name:'BARDA Contract'},
+  'dod contract':{rank:3,name:'DOD Contract'},'defense contract':{rank:3,name:'Defense Contract'},
+  'partnership agreement':{rank:3,name:'Partnership 🤝'},'strategic partnership':{rank:3,name:'Strategic Partnership'},
+  'contract award':{rank:3,name:'Contract Award 📋'},'bitcoin':{rank:3,name:'Crypto Catalyst ₿'},
+  'crypto':{rank:3,name:'Crypto Catalyst ₿'},'blockchain':{rank:3,name:'Blockchain Catalyst ₿'},
+  'electric vehicle':{rank:3,name:'EV Catalyst ⚡'},'ev sector':{rank:3,name:'EV Sector ⚡'},
+  'raised guidance':{rank:3,name:'Raised Guidance 📈'},'uplisting':{rank:3,name:'Uplisting 🔼'},
+  'nasdaq compliance':{rank:3,name:'Nasdaq Compliance 🔼'},'positive results':{rank:3,name:'Positive Results'},
+  'clinical data':{rank:3,name:'Clinical Data 🧬'},'reverse split':{rank:3,name:'Reverse Split / ADS'},
+  'ads ratio':{rank:3,name:'ADS Restructuring'},'buyback':{rank:3,name:'Buyback'},
+
+  // ── TIER 4: MINOR CATALYSTS (avg +20-60%) ───────────────────────────────
   'upgraded':{rank:4,name:'Analyst Upgrade'},'price target raised':{rank:4,name:'PT Raised'},
-  'buyback':{rank:4,name:'Buyback'},'reverse split':{rank:4,name:'Reverse Split'}
+  'analyst upgrade':{rank:4,name:'Analyst Upgrade'},'coverage initiated':{rank:4,name:'Coverage Initiated'},
+  'trading halted':{rank:4,name:'Trading Halt Notice'}
 };
+
+// ── BULLISH KEYWORDS — Research-Expanded ─────────────────────────────────────
+// Added: legal victory terms, AI narrative terms, crypto/EV sector terms
+var BULLISH_KW = [
+  // Legal/Court (NEW — highest magnitude catalyst per research)
+  'jury verdict','court ruling','patent ruling','patent win','supreme court','court victory',
+  'judgment','damages awarded','won lawsuit','patent affirmed','6-k','awarded damages',
+  // FDA/Biotech
+  'fda approval','fda approved','fda clearance','pdufa','phase 3 results','phase 3 trial',
+  'breakthrough designation','orphan drug','positive data','clinical readout',
+  // M&A / Earnings
+  'merger','acquisition','buyout','earnings beat','beat estimates','record revenue',
+  'revenue growth','returned to profitability','raised guidance','short squeeze',
+  // AI/Tech/Sector themes (per research, narrative amplification is primary catalyst)
+  'ai partnership','ai contract','artificial intelligence','ai patent','machine learning',
+  'government contract','barda contract','dod contract','defense contract',
+  'partnership agreement','contract award','uplisting','nasdaq compliance',
+  'bitcoin','crypto','blockchain','electric vehicle',
+  // Momentum continuation
+  'positive results','clinical data','data readout','reverse split','buyback',
+  'going private','strategic partnership'
+];
+
+var BEARISH_KW = [
+  'going concern','dilution','public offering','atm offering','shelf registration',
+  'bankruptcy','delisting','class action','default','missed estimates','downgraded',
+  'lowered guidance','fraud','sec investigation','restatement','fails to','failure to',
+  'termination of','not approved','withdrawn','negative results','trial failure',
+  'dose limiting','discontinued'
+];
 
 function identifyCatalyst(headline) {
   if (!headline) return { rank:5, name:'No Catalyst' };
   var body=headline.toLowerCase(), bestRank=5, bestName='Unknown Catalyst';
-  Object.keys(CATALYST_MAP).forEach(function(k){ if(body.indexOf(k)!==-1&&CATALYST_MAP[k].rank<bestRank){bestRank=CATALYST_MAP[k].rank;bestName=CATALYST_MAP[k].name;} });
+  Object.keys(CATALYST_MAP).forEach(function(k){
+    if(body.indexOf(k)!==-1 && CATALYST_MAP[k].rank < bestRank) {
+      bestRank=CATALYST_MAP[k].rank; bestName=CATALYST_MAP[k].name;
+    }
+  });
   return { rank:bestRank, name:bestName };
 }
 
-// ── MAVERICK IGNITION SCORE ────────────────────────────────────────────────
+// ── CATALYST PROXY — When no news is identified ───────────────────────────────
+// Research finding: every major mover gave advance notice through detectable signals.
+// When catalyst is unknown (rank 5), use RVOL + gap + float as implied catalyst proxy.
+// RVOL 5x+ on low float = something is happening. Treat as rank 3, not rank 5.
+function proxyCatalystRank(d, rawRank) {
+  if (rawRank <= 3) return rawRank; // Known catalyst — use as-is
+  // Proxy: strong RVOL + significant gap on small float = implied Tier 3 catalyst
+  if (d.relVol >= 5 && d.changePct >= 15 && d.floatM <= 15) return 3;
+  if (d.relVol >= 10 && d.changePct >= 10) return 3;
+  if (d.relVol >= 3 && d.changePct >= 20 && d.floatM <= 5) return 3;
+  return rawRank; // No proxy — stays rank 4 or 5
+}
+
+// ── FLOAT PRESSURE RATIO (FPR) — Day Trade Genome Research ───────────────────
+// Formula: FPR = (RVOL × Short Float %) / Float Size (millions)
+// Research thresholds: >0.50 = high squeeze probability | >1.0 = parabolic potential
+// AIXI example: (97 × 0.20) / 10.5 = 1.85 — extreme reading, +515% followed
+function calcFPR(d) {
+  if (!d.floatM || d.floatM <= 0) return 0;
+  var shortFrac = (d.shortPct || 0) / 100;
+  return rnd((d.relVol * shortFrac) / d.floatM, 3);
+}
 function calcMIS(d, catRank) {
-  catRank=catRank||5; var score=0, components=[];
+  catRank = catRank||5;
+  catRank = proxyCatalystRank(d, catRank); // Apply proxy when catalyst unknown
+  var score=0, components=[];
   var country = d.country || detectCountry(d.sym, '');
   var zone    = priceZone(d.price);
+  var fpr     = calcFPR(d);
 
   // Hard exclusions
-  if (country==='IL' || d.price < 0.25) return { raw:0, pct:0, tier:'EXCLUDED', components:['Hard excluded'], expectedMove:'0%' };
+  if (country==='IL' || d.price < 0.25) return { raw:0, pct:0, tier:'EXCLUDED', components:['Hard excluded'], expectedMove:'0%', fpr:0 };
 
-  if      (d.floatM<1) {score+=20;components.push('Float 20/20 — NANO');}
-  else if (d.floatM<5) {score+=16;components.push('Float 16/20 — tight');}
-  else if (d.floatM<15){score+=10;components.push('Float 10/20 — workable');}
-  else if (d.floatM<30){score+=4;components.push('Float 4/20 — wide');}
-  else {components.push('Float 0/20 — too large');}
-  if      (d.relVol>=10){score+=18;components.push('RVOL 18/18 — '+d.relVol+'x WHALE');}
-  else if (d.relVol>=5) {score+=14;components.push('RVOL 14/18 — '+d.relVol+'x');}
-  else if (d.relVol>=3) {score+=9;components.push('RVOL 9/18 — '+d.relVol+'x');}
-  else if (d.relVol>=2) {score+=5;components.push('RVOL 5/18 — '+d.relVol+'x');}
-  else {components.push('RVOL 0/18 — weak');}
-  var catPts=[15,12,8,4,0][Math.min(catRank-1,4)]; score+=catPts; components.push('Catalyst '+catPts+'/15 — rank '+catRank+'/5');
-  if      (d.shortPct>=30){score+=12;components.push('Short 12/12 — '+rnd(d.shortPct,1)+'% heavy');}
-  else if (d.shortPct>=20){score+=8;components.push('Short 8/12 — '+rnd(d.shortPct,1)+'%');}
-  else if (d.shortPct>=10){score+=4;components.push('Short 4/12 — '+rnd(d.shortPct,1)+'%');}
-  else {components.push('Short 0/12 — '+rnd(d.shortPct,1)+'%');}
-  if      (d.gapPct>=20){score+=8;components.push('Gap 8/8 — +'+rnd(d.gapPct,1)+'%');}
-  else if (d.gapPct>=10){score+=5;components.push('Gap 5/8 — +'+rnd(d.gapPct,1)+'%');}
-  else if (d.gapPct>=5) {score+=2;components.push('Gap 2/8 — +'+rnd(d.gapPct,1)+'%');}
+  // ── CATALYST — 25pts (research: 60% of the trade) ─────────────────────────
+  var catPts=[25,20,14,7,2][Math.min(catRank-1,4)];
+  score+=catPts;
+  components.push('Catalyst '+catPts+'/25 — '+(['Tier 1 Legal/FDA 🏛️🧬','Tier 2 Earnings+Squeeze 💰','Tier 3 AI/Sector/Partner 🤖','Tier 4 Minor','Unknown (proxy applied)'][Math.min(catRank-1,4)]));
+
+  // ── FLOAT — 20pts (research: <10M = 90% of top gainers) ────────────────────
+  if      (d.floatM<1)  {score+=20;components.push('Float 20/20 — NANO (<1M) 🔥');}
+  else if (d.floatM<3)  {score+=18;components.push('Float 18/20 — ULTRA TIGHT (<3M)');}
+  else if (d.floatM<5)  {score+=15;components.push('Float 15/20 — TIGHT (<5M) — squeeze territory');}
+  else if (d.floatM<10) {score+=11;components.push('Float 11/20 — LOW (<10M) — research sweet spot');}
+  else if (d.floatM<20) {score+=6; components.push('Float 6/20 — MODERATE (<20M)');}
+  else if (d.floatM<50) {score+=2; components.push('Float 2/20 — WIDE (<50M)');}
+  else                   {components.push('Float 0/20 — >50M (research: disqualifier for explosive moves)');}
+
+  // ── RVOL — 18pts (research: 5x+ = 80% of top gainers, 10x+ = institutional) ──
+  if      (d.relVol>=10){score+=18;components.push('RVOL 18/18 — '+d.relVol+'x WHALE-LEVEL');}
+  else if (d.relVol>=5) {score+=14;components.push('RVOL 14/18 — '+d.relVol+'x (research primary threshold)');}
+  else if (d.relVol>=3) {score+=8; components.push('RVOL 8/18 — '+d.relVol+'x elevated');}
+  else if (d.relVol>=2) {score+=4; components.push('RVOL 4/18 — '+d.relVol+'x building');}
+  else                   {components.push('RVOL 0/18 — '+d.relVol+'x below threshold');}
+
+  // ── SHORT INTEREST — 15pts (research: >20% = rocket fuel) ─────────────────
+  if      (d.shortPct>=30){score+=15;components.push('Short 15/15 — '+rnd(d.shortPct,1)+'% EXTREME — involuntary buyers');}
+  else if (d.shortPct>=20){score+=12;components.push('Short 12/15 — '+rnd(d.shortPct,1)+'% HIGH fuel');}
+  else if (d.shortPct>=15){score+=8; components.push('Short 8/15 — '+rnd(d.shortPct,1)+'% (research threshold)');}
+  else if (d.shortPct>=10){score+=4; components.push('Short 4/15 — '+rnd(d.shortPct,1)+'%');}
+  else if (d.shortPct>0)  {score+=1; components.push('Short 1/15 — '+rnd(d.shortPct,1)+'% minimal');}
+  else                     {components.push('Short 0/15 — unconfirmed (verify manually)');}
+
+  // ── GAP — 10pts (research: optimal 15-80%; >80% = partially exhausted) ─────
+  if      (d.gapPct>=15&&d.gapPct<=80){score+=10;components.push('Gap 10/10 — +'+rnd(d.gapPct,1)+'% OPTIMAL (research: 15-80%)');}
+  else if (d.gapPct>=10&&d.gapPct<15) {score+=6; components.push('Gap 6/10 — +'+rnd(d.gapPct,1)+'% building');}
+  else if (d.gapPct>=5&&d.gapPct<10)  {score+=3; components.push('Gap 3/10 — +'+rnd(d.gapPct,1)+'% modest');}
+  else if (d.gapPct>80)                {score+=5; components.push('Gap 5/10 — +'+rnd(d.gapPct,1)+'% OVER-EXTENDED (pre-exhaustion risk)');}
+
+  // ── DTC — 8pts (research: >4 = meaningful, >8 = explosive) ────────────────
   var dtc=d.daysToCover||99;
-  if      (dtc<0.5){score+=7;components.push('DTC 7/7 — '+rnd(dtc,2)+'d TRAPPED');}
-  else if (dtc<1.0){score+=5;components.push('DTC 5/7 — '+rnd(dtc,2)+'d');}
-  else if (dtc<2.0){score+=3;components.push('DTC 3/7 — '+rnd(dtc,2)+'d');}
+  if      (dtc>=8) {score+=8;components.push('DTC 8/8 — '+rnd(dtc,1)+'d EXPLOSIVE SQUEEZE ZONE');}
+  else if (dtc>=4) {score+=6;components.push('DTC 6/8 — '+rnd(dtc,1)+'d meaningful (research: >4)');}
+  else if (dtc>=2) {score+=3;components.push('DTC 3/8 — '+rnd(dtc,1)+'d moderate');}
+  else if (dtc>=1) {score+=1;components.push('DTC 1/8 — '+rnd(dtc,1)+'d low');}
 
-  // Price zone scoring (replaces flat price score)
-  if (zone.mis !== 0) {
-    score += zone.mis;
-    components.push('Price '+zone.mis+'/8 — '+zone.label+' $'+d.price);
-  } else {
-    components.push('Price 0/8 — '+zone.label+' $'+d.price);
+  // ── COMPRESSED SPRING — 8pts (research: within 20% of 52W low = amplifier) ─
+  if (d.week52Low > 0 && d.week52Low < d.price) {
+    var distFrom52L = (d.price - d.week52Low) / Math.max(d.week52Low, 0.01);
+    if      (distFrom52L <= 0.1) { score+=8; components.push('COMPRESSED SPRING 8/8 — within 10% of 52W low $'+d.week52Low); }
+    else if (distFrom52L <= 0.2) { score+=6; components.push('Compressed 6/8 — within 20% of 52W low (research amplifier)'); }
+    else if (distFrom52L <= 0.3) { score+=3; components.push('Recovering 3/8 — within 30% of 52W low'); }
   }
 
-  // Country adjustment
-  if      (country==='US') { score+=4; components.push('Country +4 — 🇺🇸 US'); }
-  else if (country==='CN') { score-=4; components.push('Country -4 — 🇨🇳 CN penalty'); }
+  // ── FPR BONUS — Float Pressure Ratio (proprietary research indicator) ──────
+  if      (fpr >= 1.0) { score+=8; components.push('FPR '+fpr+' — PARABOLIC (>1.0 threshold) 🔥'); }
+  else if (fpr >= 0.5) { score+=5; components.push('FPR '+fpr+' — HIGH SQUEEZE (>0.5 threshold)'); }
+  else if (fpr >= 0.2) { score+=2; components.push('FPR '+fpr+' building'); }
 
-  if (d.week52High>0&&d.price>=d.week52High*0.98&&d.changePct>0){score+=5;components.push('52W Breakout +5 BONUS');}
-  var pct=Math.min(100,Math.round(score/90*100));
-  var tier=pct>=80?'IGNITION READY':pct>=65?'HIGH POTENTIAL':pct>=50?'WATCH':'SKIP';
-  var expectedMove=pct>=80?'50-200%':pct>=65?'25-75%':pct>=50?'15-35%':'<15%';
-  return { raw:score, pct, tier, components, expectedMove };
+  // Price zone
+  if (zone.mis !== 0) { score+=zone.mis; components.push('Price '+zone.mis+'/8 — '+zone.label+' $'+d.price); }
+  else { components.push('Price 0/8 — '+zone.label+' $'+d.price); }
+
+  if (country==='US') { score+=3; components.push('Country +3 — 🇺🇸 US'); }
+  else if (country==='CN') { score-=4; components.push('Country -4 — 🇨🇳 CN'); }
+  if (d.week52High>0&&d.price>=d.week52High*0.98&&d.changePct>0){score+=5;components.push('52W Breakout +5 — short stops cascade zone');}
+
+  var pct=Math.min(100,Math.round(score/120*100));
+  var tier=pct>=75?'🔥 IGNITION READY':pct>=60?'⚡ HIGH POTENTIAL':pct>=45?'👀 WATCH':pct>=30?'📋 DEVELOPING':'SKIP';
+  var expectedMove=pct>=75?'50-400%+':pct>=60?'25-100%':pct>=45?'15-35%':pct>=30?'10-20%':'<10%';
+  return { raw:score, pct, tier, components, expectedMove, fpr, catRank };
 }
 
 // ── SHORT DANGER INDEX ─────────────────────────────────────────────────────
@@ -1803,15 +1921,17 @@ async function updateAlgoWatchlist() {
       var im  = calcIntradayMomentum(d);
       var trend = calcTrend(d, d._aggs||[]);
       var sc  = detectStaircaseScore(d, d._aggs||[]);
-      // Composite algo score — weighted toward intraday signals during market hours
-      var hourCT = nowHourCT();
+      var fpr = calcFPR(d);
+      // Research-calibrated composite: catalyst proxy + FPR now weighted in
       var isOpen = isMarketOpen();
       var composite = isOpen
-        ? rnd((mis.pct*0.25)+(sas.score*0.20)+(im.score*0.30)+(sc.score*0.15)+(trend.strength*0.10),1)
-        : rnd((mis.pct*0.35)+(sas.score*0.30)+(sdi.score*0.20)+(sr.score*0.15),1);
-      var convTier = composite>=70?'HIGH 🔥':composite>=50?'MED ⚡':'LOW 👀';
-      var reason = convTier+' | MIS:'+mis.pct+' SAS:'+sas.score+(im.score>=55?' 🐋INTRADAY':'')+(sc.score>=55?' 🪜STAIRCASE':'');
-      scored.push({ sym, score:composite, convTier, mis:mis.pct, sdi:sdi.score, sas:sas.score, imScore:im.score, price:d.price, changePct:d.changePct, relVol:d.relVol, reason, trend:trend.direction, floatM:d.floatM });
+        ? rnd((mis.pct*0.25)+(sas.score*0.18)+(im.score*0.27)+(sc.score*0.15)+(trend.strength*0.08)+(Math.min(fpr*50,12)*0.07),1)
+        : rnd((mis.pct*0.35)+(sas.score*0.28)+(sdi.score*0.18)+(sr.score*0.12)+(Math.min(fpr*50,12)*0.07),1);
+      var convTier = composite>=65?'HIGH 🔥':composite>=45?'MED ⚡':'LOW 👀';
+      // Show MIS 25+ in algowatchlist — research shows even developing setups matter
+      if (composite < 20 && mis.pct < 25) continue;
+      var reason = convTier+' | MIS:'+mis.pct+' SAS:'+sas.score+(fpr>=0.5?' FPR:'+fpr+'🔥':'')+(im.score>=55?' 🐋INTRADAY':'')+(sc.score>=55?' 🪜STAIRCASE':'');
+      scored.push({ sym, score:composite, convTier, mis:mis.pct, sdi:sdi.score, sas:sas.score, imScore:im.score, fpr, price:d.price, changePct:d.changePct, relVol:d.relVol, reason, trend:trend.direction, floatM:d.floatM });
     } catch(e) {}
     await sleep(100);
   }
@@ -2920,7 +3040,9 @@ async function morningBriefing(manual) {
       if (Math.abs(d.changePct) < 5 && d.relVol < 2) continue;
       var sr = scoreSetup(d), mis = calcMIS(d, 5);
       if (sr.excluded) continue;
-      results.push(Object.assign({}, d, { setup: sr.score, mis: mis.pct, misTier: mis.tier, flags: sr.flags }));
+      // Research: show setups MIS 30+ (not 65+). Label them honestly.
+      if (d.changePct < 3 && d.relVol < 1.5 && mis.pct < 30) continue;
+      results.push(Object.assign({}, d, { setup: sr.score, mis: mis.pct, misTier: mis.tier, flags: sr.flags, fpr: mis.fpr }));
     } catch(e) {}
   }
   results.sort(function(a,b){return (b.mis+b.setup)-(a.mis+a.setup);});
@@ -2937,8 +3059,9 @@ async function morningBriefing(manual) {
     var d2=results[n], lbl=d2.mis>=80?'🔥 HOT':d2.mis>=65?'⚡ WARM':'👀 WATCH';
     var stop2=rnd(d2.price-d2.atr*1.5,4), tp12=rnd(d2.price+d2.atr*2,4), tp22=rnd(d2.price+d2.atr*4,4);
     var proj=project30MinMove(d2,5);
-    msg+=lbl+' <b>$'+d2.sym+'</b> '+cFlag(d2.sym)+' — MIS:'+d2.mis+' Setup:'+d2.setup+'\n';
+    msg+=lbl+' <b>$'+d2.sym+'</b> '+cFlag(d2.sym)+' — MIS:'+d2.mis+' ['+d2.misTier+']\n';
     msg+='$'+d2.price+' ('+(d2.changePct>=0?'+':'')+rnd(d2.changePct,1)+'%) RVOL:'+d2.relVol+'x Float:'+d2.floatM+'M\n';
+    if (d2.fpr && d2.fpr >= 0.5) msg += '⚡ FPR:'+d2.fpr+' ('+(d2.fpr>=1.0?'PARABOLIC 🔥':'high squeeze')+') | ';
     msg+='Proj: +'+proj.pct+'%+ in 30min ['+proj.confidence+']\n';
     msg+='Buy: $'+rnd(d2.price*0.988,4)+'-$'+rnd(d2.price*1.005,4)+'  SL:$'+stop2+'  TP1:$'+tp12+'\n';
     if(d2.flags&&d2.flags.length) msg+=d2.flags.slice(0,2).join(' | ')+'\n';
@@ -3174,7 +3297,17 @@ async function cmdCheck(sym, chatId) {
   }
   m1 += '\n';
   m1 += 'RVOL: <b>'+d.relVol+'x</b>  Float: <b>'+d.floatM+'M</b>  Short: '+rnd(d.shortPct,1)+'%\n';
-  // VWAP Sniper alert
+  // FPR — Float Pressure Ratio (research proprietary indicator)
+  var misCheck = calcMIS(d, catRank);
+  if (misCheck.fpr >= 1.0)  m1 += '🔥 <b>FPR '+misCheck.fpr+'</b> — PARABOLIC potential (research threshold >1.0)\n';
+  else if (misCheck.fpr >= 0.5) m1 += '⚡ <b>FPR '+misCheck.fpr+'</b> — HIGH squeeze probability (>0.5)\n';
+  else if (misCheck.fpr > 0) m1 += 'FPR: '+misCheck.fpr+'\n';
+  // Research: entry timing — optimal 9:45AM-11AM ET / 8:45AM-10AM CT. After 10AM CT: lower win rate
+  var checkTimeCT = nowTimeCT();
+  if (checkTimeCT >= 10 && checkTimeCT < 15) {
+    m1 += '⏰ <b>TIME NOTE:</b> Research shows momentum entries after 10AM CT have declining win rates. Phase 3 continuation only.\n';
+  }
+  // VWAP sniper
   if (vwapSniper.isSniperEntry) {
     m1 += '\n'+vwapSniper.sniperNote+'\n';
   } else {
@@ -4585,8 +4718,8 @@ async function warmCache() {
 
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v6.7           ║');
-  console.log('║    NLP+CASCADE+CONFIDENCE ENGINE     ║');
+  console.log('║    MAVERICK INTEL BOT v6.8           ║');
+  console.log('║    GENOME-CALIBRATED RESEARCH ENGINE  ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
@@ -4647,7 +4780,7 @@ async function start() {
   setTimeout(runAlgoAndIntradayScan, 90000);
   setTimeout(runPreMarketScanner, 15000);
 
-  console.log('[BOT] v6.7 running. All weapons hot. NLP+Cascade+Confidence+WashFilter+VWAPSniper+InverseCatalyst+HaltRisk.');
+  console.log('[BOT] v6.8 running. Genome-calibrated. Legal/court Tier-1. FPR active. Catalyst proxy. Compressed spring. Thresholds lowered.');
 }
 
 start();
