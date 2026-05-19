@@ -2093,6 +2093,16 @@ function calcCascadeConditions(d) {
 
   if (priceZone(d.price).label.includes('PRIMARY')){score+=5;signals.push('PRIMARY ZONE — maximum volatility territory');}
 
+  // ── 52-WEEK PIVOT BREACH — mechanical cascade trigger ─────────────────────
+  // Retail short sellers program stop-losses right above the 52W high.
+  // Price breaching that level triggers automated buy-to-cover market orders.
+  if (d.week52High > 0 && d.week52High < 9999) {
+    var distFrom52W = (d.week52High - d.price) / d.week52High;
+    if      (distFrom52W < 0)    { score += 20; signals.push('🚨 ABOVE 52W HIGH ($'+d.week52High+') — retail short stops ALREADY triggered. Cascade IS happening.'); }
+    else if (distFrom52W < 0.02) { score += 20; signals.push('🎯 Within 2% of 52W HIGH ($'+d.week52High+'). Retail short buy-stops cluster HERE. Breach = mechanical cascade.'); }
+    else if (distFrom52W < 0.05) { score += 10; signals.push('52W High approaching at $'+d.week52High+' ('+rnd(distFrom52W*100,1)+'% away). Short stops loading.'); }
+  }
+
   score = Math.min(100,score);
   if      (score>=80){stage=3;}
   else if (score>=60){stage=2;}
@@ -2595,6 +2605,81 @@ async function ai(system, user, maxTokens, chatId) {
   return null;
 }
 
+// ── AI JSON PARSER — temperature 0.0, ultra-low tokens, pure structured output ──
+// Used for NLP sentiment parsing. Forces deterministic JSON, not prose.
+// Cerebras first — fastest inference for structured output.
+async function aiJson(systemPrompt, userContent, maxTok) {
+  maxTok = maxTok || 100;
+  var messages = [
+    { role: 'user', content: '[SYSTEM] '+systemPrompt },
+    { role: 'user', content: userContent }
+  ];
+  if (CBRS_KEY) {
+    try {
+      var r = await tFetch('https://api.cerebras.ai/v1/chat/completions', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+CBRS_KEY},
+        body: JSON.stringify({ model:'llama3.1-8b', max_tokens:maxTok, temperature:0.0, messages })
+      }, 6000);
+      var d = await safeJson(r);
+      var t = d&&d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content;
+      if (t) return t.trim();
+    } catch(e) {}
+  }
+  if (GROQ_KEY) {
+    try {
+      var r2 = await tFetch('https://api.groq.com/openai/v1/chat/completions', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},
+        body: JSON.stringify({ model:'llama-3.3-70b-versatile', max_tokens:maxTok, temperature:0.0, messages })
+      }, 8000);
+      var d2 = await safeJson(r2);
+      var t2 = d2&&d2.choices&&d2.choices[0]&&d2.choices[0].message&&d2.choices[0].message.content;
+      if (t2) return t2.trim();
+    } catch(e) {}
+  }
+  return null;
+}
+
+// ── MD5 HEADLINE HASHING — Fixed-size fingerprints instead of full text ───────
+// Stores a 12-char hash instead of 200-char headline. Keeps JSONBin payload tiny.
+var crypto = require('crypto');
+function headlineHash(text) {
+  try { return crypto.createHash('md5').update(String(text)).digest('hex').slice(0,12); }
+  catch(e) { return String(text).slice(0,12); }
+}
+
+// ── TWO-PHASE NLP SENTIMENT PARSER ────────────────────────────────────────────
+// Phase 1: Fast regex keyword scan (existing BULLISH_KW / BEARISH_KW)
+// Phase 2: AI JSON context verification — catches "fails to get FDA approval",
+//          "termination of merger", "ATM offering" that keywords miss entirely.
+// Only runs Phase 2 when Phase 1 produces a match — keeps latency near zero.
+async function parseHeadlineSentiment(ticker, headline) {
+  try {
+    var systemPrompt =
+      'You are an HFT-grade market sentiment parser for low-float micro-cap stocks. ' +
+      'Output ONLY raw minified JSON — no markdown, no explanation, no text outside the object. ' +
+      'Format: {"is_catalyst":true/false,"sentiment":"BULLISH/BEARISH/NEUTRAL",' +
+      '"catalyst_tier":1,"short_squeeze_risk":true/false,"dilution_event":true/false} ' +
+      'Strict Rules: ' +
+      'Tier 1=FDA Approval/major merger/acquisition. Tier 2=Phase 3 success/major contract. ' +
+      'Tier 3=Earnings beat/revenue record/partnership. Tier 4=Minor deal/uplisting. Tier 5=PR/minor. ' +
+      'Flag ANY shelf registration, ATM offering, S-1 or S-3 amendment as dilution_event=true + BEARISH. ' +
+      'If headline contains "fails","terminates","withdraws","postpones","discontinues","not approved",' +
+      '"going concern" mark as BEARISH regardless of subject matter. ' +
+      'If headline contains "false","rumor","clarification" mark NEUTRAL. ' +
+      'Never output anything except the raw JSON object.';
+
+    var raw = await aiJson(systemPrompt, 'Ticker:'+ticker+' Headline:"'+headline.slice(0,200)+'"', 80);
+    if (!raw) return null;
+    var clean = raw.replace(/```json|```|\n/g,'').trim();
+    // Find JSON object in response
+    var start = clean.indexOf('{'), end = clean.lastIndexOf('}');
+    if (start === -1 || end === -1) return null;
+    return JSON.parse(clean.slice(start, end+1));
+  } catch(e) { return null; }
+}
+
 // ── NEWS SCANNING ──────────────────────────────────────────────────────────
 var BULLISH_KW=['fda approval','fda approved','fda clearance','merger','acquisition','buyout','earnings beat','short squeeze','trading halted','halt','government contract','phase 3 results','phase 3 trial','uplisting','nasdaq compliance','barda contract','dod contract','positive data','breakthrough','upgraded','price target raised','record revenue','beat estimates','raised guidance','partnership agreement','clinical data','positive results','contract award','data readout'];
 var BEARISH_KW=['going concern','dilution','public offering','atm offering','shelf registration','bankruptcy','delisting','class action','default','missed estimates','downgraded','lowered guidance','fraud','sec investigation','restatement'];
@@ -2625,26 +2710,51 @@ async function scanNewsIntel() {
           for (var tn=0; tn<Math.min(fresh.length,3); tn++) {
             var tnItem = fresh[tn];
             var tnKey  = String(tnItem.id||tnItem.headline);
-            if (sentHeadlines.has(tnKey)) continue;
+            if (sentHeadlines.has(headlineHash(tnKey))) continue;
             var tnBody = (tnItem.headline+' '+(tnItem.summary||'')).toLowerCase();
             var tnHits = BULLISH_KW.filter(function(k){return tnBody.indexOf(k)!==-1;});
             var tnNegs = BEARISH_KW.filter(function(k){return tnBody.indexOf(k)!==-1;});
-            if (tnHits.length >= 1 && tnNegs.length === 0) {
-              sentHeadlines.add(tnKey);
+
+            // ── PHASE 2: AI CONTEXTUAL VERIFICATION ───────────────────────
+            // Only fires when Phase 1 keyword scan found a match.
+            // Catches false positives: "fails to get FDA approval" triggers on "FDA approval"
+            // Catches dilution events keywords miss: "S-3 shelf registration"
+            var nlpResult = null;
+            if ((tnHits.length >= 1 || tnNegs.length >= 1) && (GROQ_KEY||CBRS_KEY)) {
+              nlpResult = await parseHeadlineSentiment(sym, tnItem.headline);
+            }
+
+            // Use NLP result when available, fall back to keyword scan
+            var isBullish = false, isBearish = false;
+            if (nlpResult) {
+              isBullish = nlpResult.is_catalyst && nlpResult.sentiment === 'BULLISH' && !nlpResult.dilution_event;
+              isBearish = nlpResult.sentiment === 'BEARISH' || nlpResult.dilution_event;
+              if (nlpResult.dilution_event) {
+                // Dilution detected — override any bullish keyword hits
+                isBullish = false; isBearish = true;
+                console.log('[NLP] Dilution event detected for $'+sym+': "'+tnItem.headline.slice(0,60)+'"');
+              }
+            } else {
+              isBullish = tnHits.length >= 1 && tnNegs.length === 0;
+              isBearish = tnNegs.length >= 1;
+            }
+            if (isBullish) {
+              sentHeadlines.add(headlineHash(tnKey));
               if (tnItem.datetime > lastNewsTs) lastNewsTs = tnItem.datetime;
-              var tnCat  = identifyCatalyst(tnItem.headline);
+              var tnCat  = nlpResult ? { rank: nlpResult.catalyst_tier||5, name: identifyCatalyst(tnItem.headline).name } : identifyCatalyst(tnItem.headline);
               var tnLive = await getStock(sym).catch(function(){return null;});
-              // HARD RULE: Only alert on tradeable stocks (≤ $20)
               if (!tnLive || tnLive.price > TRADE_MAX_PRICE || tnLive.price < 0.25) { await sleep(200); continue; }
               var ageMin = Math.round((Date.now()/1000 - tnItem.datetime)/60);
-              var reason = tnCat.name+' — '+tnHits[0]+' ('+ageMin+'m ago)';
+              var squeezeFlag = nlpResult && nlpResult.short_squeeze_risk ? ' ⚡ SHORT SQUEEZE RISK' : '';
+              var reason = tnCat.name + squeezeFlag + ' ('+ageMin+'m ago' + (nlpResult?' | AI verified':'') + ')';
               var alertMsg = await buildMaverickAlert(sym, tnLive, reason, tnCat.name, tnCat.rank);
               await tg(alertMsg); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++;
               await sleep(1500);
             }
-            if (tnNegs.length >= 1) {
-              sentHeadlines.add(tnKey);
-              await tg('<b>⚠️ BEARISH — $'+sym+' '+cFlag(sym)+'</b>\n'+tnItem.headline+'\n'+tnNegs.slice(0,2).join(', '));
+            if (isBearish) {
+              sentHeadlines.add(headlineHash(tnKey));
+              var dilutionFlag = nlpResult && nlpResult.dilution_event ? '💧 DILUTION EVENT — ' : '';
+              await tg('<b>⚠️ BEARISH — $'+sym+' '+cFlag(sym)+'</b>\n'+dilutionFlag+tnItem.headline+(nlpResult?' [AI confirmed]':''));
               sent++; await sleep(1500);
             }
           }
@@ -2666,10 +2776,10 @@ async function scanNewsIntel() {
       for (var ek = 0; ek < Math.min(eHits.length, 8); ek++) {
         var src = eHits[ek] && eHits[ek]._source; if (!src) continue;
         var eKey = (src.entity_name||'')+'|'+(src.file_date||'');
-        if (sentHeadlines.has(eKey)) continue;
+        if (sentHeadlines.has(headlineHash(eKey))) continue;
         var tick = ((src.ticker||'')||(src.tickers&&src.tickers[0])||'').toUpperCase().trim();
         if (!tick || tick.length > 5) continue;
-        sentHeadlines.add(eKey);
+        sentHeadlines.add(headlineHash(eKey));
         var secD = await getStock(tick).catch(function(){return null;});
         if (secD && secD.price <= TRADE_MAX_PRICE && secD.price >= 0.25) {
           var secReason = 'SEC 8-K filing detected ('+src.file_date+') — potential catalyst';
@@ -2687,13 +2797,13 @@ async function scanNewsIntel() {
       for (var i = 0; i < articles.length; i++) {
         var art = articles[i], pubTs = art.published_utc ? new Date(art.published_utc).getTime()/1000 : 0;
         if (pubTs && pubTs <= lastNewsTs) continue;
-        var key = art.id || art.title; if (sentHeadlines.has(key)) continue;
+        var key = art.id || art.title; if (sentHeadlines.has(headlineHash(key))) continue;
         var body = (art.title+' '+(art.description||'')).toLowerCase();
         var hits = BULLISH_KW.filter(function(k){return body.indexOf(k)!==-1;});
         var negs = BEARISH_KW.filter(function(k){return body.indexOf(k)!==-1;});
         var ticks = (art.tickers||[]).filter(function(t){return t&&t.length>=1&&t.length<=5;});
         if (hits.length>=1 && negs.length===0 && ticks.length>=1) {
-          sentHeadlines.add(key);
+          sentHeadlines.add(headlineHash(key));
           var cat = identifyCatalyst(art.title), ticker = ticks[0];
           var ageMin = pubTs ? Math.round((Date.now()/1000-pubTs)/60) : 0;
           if (cat.rank <= 2) {
@@ -2709,7 +2819,7 @@ async function scanNewsIntel() {
           }
         }
         if (negs.length>=1 && ticks.length>=1) {
-          sentHeadlines.add(key);
+          sentHeadlines.add(headlineHash(key));
           await tg('<b>⚠️ BEARISH — $'+ticks[0]+'</b>\n'+art.title+'\nFlags: '+negs.slice(0,2).join(', '));
           await sleep(1500);
         }
@@ -2729,11 +2839,11 @@ async function scanNewsIntel() {
         var fresh = wNews.filter(function(n){return n.datetime > lastNewsTs-3600 && n.headline;});
         for (var wn = 0; wn < Math.min(fresh.length,2); wn++) {
           var wItem = fresh[wn], wK = String(wItem.id||wItem.headline);
-          if (sentHeadlines.has(wK)) continue;
+          if (sentHeadlines.has(headlineHash(wK))) continue;
           var wBody = (wItem.headline+' '+(wItem.summary||'')).toLowerCase();
           var wH = BULLISH_KW.filter(function(k){return wBody.indexOf(k)!==-1;});
           if (wH.length) {
-            sentHeadlines.add(wK);
+            sentHeadlines.add(headlineHash(wK));
             var wCat = identifyCatalyst(wItem.headline);
             var wLive = await getStock(wsym).catch(function(){return null;});
             if (wLive && wLive.price <= TRADE_MAX_PRICE && wLive.price >= 0.25) {
@@ -3705,6 +3815,8 @@ async function handleUpdate(update) {
     else if (cmd==='/protocol')               await cmdProtocol(parts,chatId);
     else if (cmd==='/position')               await cmdPosition(parts,chatId);
     else if (cmd==='/positions')              fire(cmdPositions(chatId));
+    else if (cmd==='/confidence'&&parts[1])   fire(cmdConfidence(parts[1].toUpperCase(),chatId));
+    else if (cmd==='/confidence')             await tg('Usage: /confidence TICKER  e.g. /confidence GOVX\n(Must have position tracked via /position first)',chatId);
     else if (cmd==='/cascade'&&parts[1])      fire(cmdCascade(parts[1].toUpperCase(),chatId));
     else if (cmd==='/cascade')                await tg('Usage: /cascade TICKER  e.g. /cascade GOVX',chatId);
     else if (cmd==='/staircase'||cmd==='/sc') fire(cmdStaircase(chatId));
@@ -4029,7 +4141,161 @@ async function cmdBacktest(chatId) {
   }
   return runBacktest(chatId);
 }
-// ── BACKGROUND CACHE PRE-WARMER ────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// ── TRADE CONFIDENCE ENGINE ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// The single most important psychological tool in the system.
+// Fires every 5 minutes on open positions. Shows whether the ORIGINAL THESIS
+// is still intact — so fear doesn't make the trading decision.
+//
+// Addresses the core behavioral trap:
+//   → Buying at the top because of FOMO (no context for entry)
+//   → Selling too early because a normal pullback feels like failure
+//   → Missing the actual move by exiting at +3% when TP1 was +40%
+//
+// The engine separates: "this is normal volatility" from "thesis is broken."
+
+function calcTradeConfidence(pos, d) {
+  var price = d.price, entry = pos.entry;
+  var pct   = rnd((price - entry) / entry * 100, 2);
+  var score = 0;
+  var reasons = [], warnings = [], pullbackContext = '';
+
+  var rvol    = d.relVol;
+  var lifecycle = detectLifecyclePhase(d);
+  var im      = calcIntradayMomentum ? calcIntradayMomentum(d) : { aboveVwap: false, vwapProxy: price, fromOpen: 0 };
+
+  // ── RVOL — are buyers still here? ────────────────────────────────────────
+  if      (rvol >= 8)  { score += 30; reasons.push('RVOL '+rvol+'x — institutional buying STILL active. They haven\'t left.'); }
+  else if (rvol >= 4)  { score += 20; reasons.push('RVOL '+rvol+'x — elevated. Thesis supported by volume.'); }
+  else if (rvol >= 2)  { score += 10; reasons.push('RVOL '+rvol+'x — above average. Monitoring.'); }
+  else                  { score -= 10; warnings.push('RVOL '+rvol+'x — volume fading. This is your #1 exit signal.'); }
+
+  // ── VWAP PROXY — are buyers in control? ──────────────────────────────────
+  if (im.aboveVwap)     { score += 20; reasons.push('Above VWAP proxy ($'+im.vwapProxy+') — bulls in structural control. Every buyer since open is profitable.'); }
+  else                  { score -= 5;  warnings.push('Below VWAP proxy ($'+im.vwapProxy+') — bears have short-term edge. Normal if early in pullback.'); }
+
+  // ── LIFECYCLE PHASE — where are you in the move? ─────────────────────────
+  if (lifecycle.phase <= 2)  { score += 20; reasons.push(lifecycle.name+' — still early. The main move hasn\'t happened yet. This is where patience pays.'); }
+  else if (lifecycle.phase === 3){ score += 10; reasons.push('Phase 3 continuation — still running but tightening stops makes sense.'); }
+  else if (lifecycle.phase >= 4) { score -= 15; warnings.push(lifecycle.name+' — late phase. Thesis is aging. Start planning your exit.'); }
+
+  // ── STOP DISTANCE — is your position structurally safe? ──────────────────
+  var stopDist = pos.stop > 0 ? rnd((price - pos.stop) / price * 100, 1) : 0;
+  if      (stopDist > 15)  { score += 15; reasons.push('Stop $'+pos.stop+' is '+stopDist+'% below — well protected. This is breathing room, not failure.'); }
+  else if (stopDist > 8)   { score += 8;  reasons.push('Stop '+stopDist+'% away — acceptable cushion.'); }
+  else if (stopDist > 3)   { score += 3;  warnings.push('Stop only '+stopDist+'% away. Consider trailing to breakeven if up 10%+.'); }
+  else if (stopDist > 0)   { score -= 5;  warnings.push('Stop within 3% — may fire on normal volatility. Evaluate vs thesis.'); }
+
+  // ── PULLBACK CONTEXT — is this normal or a problem? ──────────────────────
+  if (pct < 0) {
+    var pullbackPct = Math.abs(pct);
+    if (pullbackPct < 5 && im.aboveVwap && rvol >= 3) {
+      pullbackContext = '📊 <b>Pullback context:</b> -'+rnd(pullbackPct,1)+'% from entry is NORMAL Phase 2 behavior. Stocks never go straight up. RVOL '+rvol+'x is still elevated — the move is NOT over. The whales who caused this are still in the building.';
+    } else if (pullbackPct < 10 && score >= 35) {
+      pullbackContext = '📊 <b>Pullback context:</b> -'+rnd(pullbackPct,1)+'% from entry. Thesis '+(score>=50?'still intact':'under review')+'. Your stop at $'+pos.stop+' is the true decision line — not this pullback.';
+    } else if (pullbackPct >= 10) {
+      pullbackContext = '⚠️ <b>Pullback context:</b> -'+rnd(pullbackPct,1)+'% from entry is significant. Review: is the original catalyst still valid? Is RVOL holding?';
+    }
+  } else if (pct > 0 && pct < 8 && pos.tp1 > 0) {
+    // Early gain — the sell-too-early trap
+    var tp1Dist = rnd((pos.tp1 - price) / price * 100, 1);
+    pullbackContext = '💡 <b>Hold context:</b> Up +'+rnd(pct,1)+'%, TP1 is still +'+tp1Dist+'% away. Your original analysis set TP1 at $'+pos.tp1+' for a reason. The market hasn\'t changed — your emotions have. Hold the plan.';
+  }
+
+  score = Math.min(100, Math.max(0, score));
+  var tier = score>=70?'💚 HOLD WITH CONVICTION':score>=50?'🟡 THESIS INTACT — HOLD':score>=35?'🟠 WATCH CLOSELY':' 🔴 REVIEW YOUR STOP';
+
+  return { score, tier, reasons, warnings, pullbackContext, pct, stopDist, lifecycle, rvol, aboveVwap: im.aboveVwap };
+}
+
+// ── TRADE CONFIDENCE PULSE — fires every 5 min on open positions ──────────
+async function sendTradeConfidencePulse() {
+  if (!isMarketOpen() && !isPreMarketHours()) return;
+  var syms = Object.keys(positions);
+  if (!syms.length) return;
+
+  for (var si=0; si<syms.length; si++) {
+    var sym = syms[si], pos = positions[sym];
+    delete dataCache[sym]; // Always fresh data for positions
+    var d = await getStock(sym).catch(function(){return null;});
+    if (!d) continue;
+
+    var conf = calcTradeConfidence(pos, d);
+    var price = d.price;
+    var pctStr = (conf.pct >= 0 ? '+' : '') + rnd(conf.pct, 2) + '%';
+    var marketLabel = d.isPreMarket ? ' 🌅' : d.isPostMarket ? ' 🌙' : '';
+
+    var msg = conf.tier + '\n';
+    msg += '<b>$'+sym+'</b> '+cFlag(sym)+marketLabel+' — $'+price+' ('+pctStr+' from entry $'+pos.entry+')\n';
+    msg += 'Confidence: <b>'+conf.score+'/100</b>\n\n';
+
+    if (conf.reasons.length) {
+      msg += '<b>Why the thesis is still valid:</b>\n';
+      conf.reasons.slice(0, 3).forEach(function(r){ msg += '• '+r+'\n'; });
+    }
+
+    if (conf.warnings.length) {
+      msg += '\n<b>Watch these:</b>\n';
+      conf.warnings.forEach(function(w){ msg += '• '+w+'\n'; });
+    }
+
+    // Stop vs TP context — the asymmetry reminder
+    msg += '\nStop: $'+pos.stop;
+    if (conf.stopDist > 0) msg += ' ('+conf.stopDist+'% away)';
+    if (pos.tp1) {
+      var tp1Dist = rnd((pos.tp1 - price) / price * 100, 1);
+      msg += '  →  TP1: $'+pos.tp1+' (+'+(tp1Dist>=0?tp1Dist:0)+'% away)';
+    }
+
+    if (conf.pullbackContext) msg += '\n\n'+conf.pullbackContext;
+
+    await tg(msg);
+    await sleep(1000);
+  }
+}
+
+// ── /confidence TICKER — on-demand confidence analysis ────────────────────
+async function cmdConfidence(sym, chatId) {
+  var pos = positions[sym];
+  if (!pos) return tg('No tracked position for $'+sym+'.\n\nLog one first: /position '+sym+' ENTRY STOP TP1 TP2 SHARES', chatId);
+  await tg('⏳ Running Trade Confidence analysis for $'+sym+'...', chatId);
+  delete dataCache[sym];
+  var d = await getStock(sym).catch(function(){return null;});
+  if (!d) return tg('Cannot pull live data for $'+sym+'. Position data shown below:\nEntry:$'+pos.entry+' Stop:$'+pos.stop+' TP1:'+(pos.tp1||'not set'), chatId);
+
+  var conf = calcTradeConfidence(pos, d);
+  var pctStr = (conf.pct >= 0 ? '+' : '') + rnd(conf.pct, 2) + '%';
+
+  var msg = '<b>🧠 TRADE CONFIDENCE — $'+sym+' '+cFlag(sym)+'</b>\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━\n';
+  msg += conf.tier+'\n';
+  msg += 'Confidence score: <b>'+conf.score+'/100</b>\n';
+  msg += 'P&L from entry: <b>'+pctStr+'</b> ($'+pos.entry+' → $'+d.price+')\n\n';
+
+  msg += '<b>THESIS CHECK:</b>\n';
+  conf.reasons.forEach(function(r){ msg += '✅ '+r+'\n'; });
+  if (conf.warnings.length) {
+    msg += '\n<b>CONCERNS:</b>\n';
+    conf.warnings.forEach(function(w){ msg += '⚠️ '+w+'\n'; });
+  }
+
+  msg += '\n<b>LEVELS:</b>\n';
+  msg += 'Entry: $'+pos.entry+'\n';
+  msg += 'Stop:  $'+pos.stop+(conf.stopDist>0?' ('+conf.stopDist+'% away)':'')+'\n';
+  if (pos.tp1) { var tp1d=rnd((pos.tp1-d.price)/d.price*100,1); msg += 'TP1:   $'+pos.tp1+' (+'+(tp1d>=0?tp1d:0)+'% away) — sell 50%\n'; }
+  if (pos.tp2) { var tp2d=rnd((pos.tp2-d.price)/d.price*100,1); msg += 'TP2:   $'+pos.tp2+' (+'+(tp2d>=0?tp2d:0)+'% away) — sell 30%\n'; }
+
+  if (conf.pullbackContext) msg += '\n'+conf.pullbackContext;
+
+  if (conf.score >= 70) {
+    msg += '\n\n<b>BOTTOM LINE: Hold the position.</b>\nYour thesis is intact. Fear is not a strategy. The bot is watching it for you.';
+  } else if (conf.score < 40) {
+    msg += '\n\n<b>BOTTOM LINE: Review your stop.</b>\nConditions are deteriorating. Don\'t hope — protect capital.';
+  }
+
+  await tg(msg, chatId);
+}
 // Pre-fetches data for all active tickers so deep commands are instant.
 async function warmCache() {
   var gainers = await getTopGainers().catch(function(){return [];});
@@ -4047,8 +4313,8 @@ async function warmCache() {
 
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v6.6           ║');
-  console.log('║    CASCADE + TIMEZONE + 6 FIXES      ║');
+  console.log('║    MAVERICK INTEL BOT v6.7           ║');
+  console.log('║    NLP+CASCADE+CONFIDENCE ENGINE     ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
@@ -4101,12 +4367,12 @@ async function start() {
   setInterval(morningBriefing,  300000);
   setInterval(pruneHeadlines,  3600000);
   setInterval(runStaircaseScanner, 300000);
-  setInterval(runPreMarketScanner, 300000); // Every 5 min — pre-market golden window
+  setInterval(runPreMarketScanner, 300000);
   setInterval(runAlgoAndIntradayScan, 600000);
+  setInterval(sendTradeConfidencePulse, 300000); // Every 5 min — confidence pulse on open positions
   setInterval(warmCache, 1800000);
   setTimeout(warmCache, 45000);
   setTimeout(runAlgoAndIntradayScan, 90000);
-  // Fire pre-market scanner immediately at startup if we're in the window
   setTimeout(runPreMarketScanner, 15000);
 
   console.log('[BOT] v6.5 running. Pre-market live prices. Golden window active. Position monitor live.');
