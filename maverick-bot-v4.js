@@ -1,6 +1,6 @@
 /**
  * ╔══════════════════════════════════════════════════════════╗
- * ║         MAVERICK INTEL BOT v6.7 — ASYMMETRIC WARFARE      ║
+ * ║         MAVERICK INTEL BOT v7.0 — ASYMMETRIC WARFARE      ║
  * ║                                                          ║
  * ║  v5.0 — PHASE 3: PROJECT SUPERNOVA SCIENCE              ║
  * ║  • /supernova TICKER — Full Supernova Protocol score     ║
@@ -54,7 +54,7 @@ var server    = http.createServer(function(req, res) {
   var upStr = upH+'h '+upM+'m '+upS+'s';
   var posCount = Object.keys(positions||{}).length;
   var wlCount  = Object.keys(watchlist||{}).length;
-  var html = '<!DOCTYPE html><html><head><title>MAVERICK INTEL BOT v6.7</title>' +
+  var html = '<!DOCTYPE html><html><head><title>MAVERICK INTEL BOT v7.0</title>' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<meta http-equiv="refresh" content="30">' +
     '<style>' +
@@ -72,7 +72,7 @@ var server    = http.createServer(function(req, res) {
     '@keyframes p{0%,100%{opacity:1}50%{opacity:0.3}}' +
     'footer{margin-top:20px;font-size:0.7em;color:#444;text-align:center;}' +
     '</style></head><body>' +
-    '<h1><span class="pulse"></span>MAVERICK INTEL BOT <span class="tag">v5.2</span></h1>' +
+    '<h1><span class="pulse"></span>MAVERICK INTEL BOT <span class="tag">v7.0</span></h1>' +
     '<div class="up">● ONLINE</div>' +
     '<div class="mode">⚡ WEBHOOK MODE — Zero polling. Zero conflict. Telegram pushes directly here.</div>' +
     '<div class="grid">' +
@@ -100,7 +100,7 @@ var server    = http.createServer(function(req, res) {
     '<div class="row"><span>News Scanner</span><span class="ok">2min cycle ✓</span></div>' +
     '</div>' +
     '</div>' +
-    '<footer>MAVERICK INTEL BOT v6.7 · Webhook Mode · Page refreshes every 30s</footer>' +
+    '<footer>MAVERICK INTEL BOT v7.0 · Webhook Mode · Page refreshes every 30s</footer>' +
     '</body></html>';
   res.writeHead(200, { 'Content-Type': 'text/html' });
   res.end(html);
@@ -1464,6 +1464,14 @@ function calcMIS(d, catRank) {
   else if (country==='CN') { score-=4; components.push('Country -4 — 🇨🇳 CN'); }
   if (d.week52High>0&&d.price>=d.week52High*0.98&&d.changePct>0){score+=5;components.push('52W Breakout +5 — short stops cascade zone');}
 
+  // ── FLUSH ABSORPTION BONUS — highest-probability entry signal ─────────────
+  // Post-flush: institutions just bought cheap inventory. They defend their level.
+  var flushData = calcFlushScore(d);
+  if (flushData.score > 0) {
+    score += flushData.score;
+    flushData.notes.slice(0,2).forEach(function(n){ components.push(n); });
+  }
+
   var pct=Math.min(100,Math.round(score/120*100));
   var tier=pct>=75?'🔥 IGNITION READY':pct>=60?'⚡ HIGH POTENTIAL':pct>=45?'👀 WATCH':pct>=30?'📋 DEVELOPING':'SKIP';
   var expectedMove=pct>=75?'50-400%+':pct>=60?'25-100%':pct>=45?'15-35%':pct>=30?'10-20%':'<10%';
@@ -1473,24 +1481,45 @@ function calcMIS(d, catRank) {
 // ── SHORT DANGER INDEX ─────────────────────────────────────────────────────
 function calcSDI(d, catRank) {
   catRank=catRank||5; var score=0, reasons=[];
+  // ── DTC — Research calibrated: >4 = meaningful, >8 = explosive ────────────
+  // Previous thresholds (< 0.5d, < 1d, < 2d) were inverted vs research findings.
+  // Research: >4 days = meaningful pressure, >8 days = trapped/explosive
   var dtc=d.daysToCover||99;
-  if      (dtc<0.5){score+=30;reasons.push('SHORTS TRAPPED — '+rnd(dtc,2)+'d to cover');}
-  else if (dtc<1.0){score+=20;reasons.push('DTC < 1 day — very tight');}
-  else if (dtc<2.0){score+=10;reasons.push('DTC < 2 days — squeeze possible');}
-  if      (d.shortPct>=30){score+=25;reasons.push('HEAVY SHORT '+rnd(d.shortPct,1)+'%');}
-  else if (d.shortPct>=20){score+=15;reasons.push('High short '+rnd(d.shortPct,1)+'%');}
-  else if (d.shortPct>=10){score+=8;reasons.push('Moderate short '+rnd(d.shortPct,1)+'%');}
-  if      (d.price<1){score+=20;reasons.push('SUB-$1 — unlimited % upside risk for shorts');}
-  else if (d.price<3){score+=15;reasons.push('Sub-$3 — high % move possible');}
-  else if (d.price<5){score+=8;reasons.push('Sub-$5 — elevated short risk');}
-  if      (catRank===1){score+=20;reasons.push('BINARY CATALYST — shorts cannot hedge');}
+  if      (dtc>=8) {score+=30;reasons.push('DTC '+rnd(dtc,1)+'d — EXPLOSIVE ZONE: shorts need 8+ days to exit. Violent covering possible.');}
+  else if (dtc>=4) {score+=20;reasons.push('DTC '+rnd(dtc,1)+'d — MEANINGFUL PRESSURE: research threshold >4d');}
+  else if (dtc>=2) {score+=10;reasons.push('DTC '+rnd(dtc,1)+'d — building');}
+  else if (dtc>=1) {score+=4; reasons.push('DTC '+rnd(dtc,1)+'d — low pressure');}
+
+  // ── SHORT INTEREST — Primary squeeze fuel ──────────────────────────────────
+  if      (d.shortPct>=30){score+=30;reasons.push('EXTREME SHORT '+rnd(d.shortPct,1)+'% — involuntary buyers');}
+  else if (d.shortPct>=20){score+=22;reasons.push('HIGH SHORT '+rnd(d.shortPct,1)+'% — rocket fuel');}
+  else if (d.shortPct>=15){score+=14;reasons.push('Significant short '+rnd(d.shortPct,1)+'% — research threshold');}
+  else if (d.shortPct>=10){score+=7; reasons.push('Moderate short '+rnd(d.shortPct,1)+'%');}
+  else if (d.shortPct>0)  {score+=2; reasons.push('Light short '+rnd(d.shortPct,1)+'%');}
+  else                     {reasons.push('Short data unavailable — verify via Finviz manually');}
+
+  // ── PRICE ZONE — Small prices = higher % move on covering ─────────────────
+  if      (d.price<1){score+=15;reasons.push('Sub-$1: unlimited % risk for shorts');}
+  else if (d.price<3){score+=10;reasons.push('Sub-$3: high % move possible');}
+  else if (d.price<5){score+=6; reasons.push('Sub-$5: elevated short risk');}
+
+  // ── CATALYST — Binary events make shorts uncoverable ──────────────────────
+  if      (catRank===1){score+=20;reasons.push('BINARY CATALYST (Legal/FDA) — shorts cannot hedge');}
   else if (catRank===2){score+=12;reasons.push('Strong catalyst — short risk elevated');}
-  else if (catRank===3){score+=5;reasons.push('Moderate catalyst');}
-  if      (d.relVol>=10){score+=5;reasons.push('WHALE RVOL '+d.relVol+'x — forced covering');}
-  else if (d.relVol>=5) {score+=3;reasons.push('High RVOL '+d.relVol+'x');}
+  else if (catRank===3){score+=5; reasons.push('Moderate catalyst');}
+
+  // ── FPR OVERRIDE — Float Pressure Ratio from Genome research ──────────────
+  var fpr = calcFPR(d);
+  if      (fpr>=1.0){score+=15;reasons.push('FPR '+fpr+' PARABOLIC — cascade imminent');}
+  else if (fpr>=0.5){score+=8; reasons.push('FPR '+fpr+' — high squeeze probability');}
+
+  // ── RVOL — Institutional covering already starting ─────────────────────────
+  if      (d.relVol>=10){score+=5;reasons.push('RVOL '+d.relVol+'x — whale-level forced covering');}
+  else if (d.relVol>=5) {score+=3;reasons.push('RVOL '+d.relVol+'x — elevated');}
+
   score=Math.min(100,score);
-  var danger=score>=75?'EXTREME DANGER':score>=55?'HIGH DANGER':score>=35?'MODERATE':'LOW RISK';
-  return { score, danger, reasons };
+  var danger=score>=75?'🔥 EXTREME SQUEEZE':score>=55?'⚡ HIGH DANGER':score>=35?'👀 MODERATE':'LOW RISK';
+  return { score, danger, reasons, fpr };
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2317,6 +2346,43 @@ function calcCascadeConditions(d) {
     entryZone:'$'+rnd(d.price*0.99,4)+' — $'+rnd(d.price*1.01,4),
     stopBelow:'$'+rnd(d.price*0.93,4),
     cascadeEnding,closePos};
+}
+
+// ── /clusters TICKER — Full stop-loss cluster map ─────────────────────────
+async function cmdClusters(sym, chatId) {
+  await tg('⏳ Mapping stop-loss clusters for $'+sym+'...', chatId);
+  var d = await getStock(sym).catch(function(){return null;});
+  if (!d) return tg('Cannot pull data for $'+sym+'.', chatId);
+  var sc = calcStopClusters(d);
+  var flag = cFlag(sym);
+
+  var msg = '📍 <b>STOP-LOSS CLUSTER MAP — $'+sym+' '+flag+'</b>\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━\n';
+  msg += 'Current: $'+d.price+' ('+(d.changePct>=0?'+':'')+rnd(d.changePct,1)+'%)\n';
+  msg += 'Flush Risk: <b>'+sc.flushRisk+'</b>\n\n';
+
+  if (sc.flushDetected) {
+    msg += sc.flushNote+'\n\n';
+    msg += '<b>🎯 POST-FLUSH ENTRY ACTIVE</b>\n';
+    msg += 'Entry: $'+rnd(d.price*0.995,4)+' — $'+rnd(d.price*1.01,4)+'\n';
+    msg += 'Stop: $'+rnd(sc.flushLevel*0.95,4)+' (below the flush low)\n';
+    msg += 'Logic: Institutions loaded here. They WILL defend this level.\n\n';
+  }
+
+  msg += '<b>IDENTIFIED CLUSTERS:</b>\n';
+  sc.clusters.forEach(function(cl, i) {
+    var e = cl.density==='EXTREME'?'🔴':cl.density==='HIGH'?'🟠':cl.density==='MED'?'🟡':'🟢';
+    msg += e+' $'+cl.level+' — '+cl.type+'\n';
+    msg += '   '+cl.distPct+'% below current'+( cl.flushTarget?' | 🎯 Likely flush target':'')+'  \n';
+  });
+
+  msg += '\n<b>HOW TO USE THIS:</b>\n';
+  msg += '• 🔴/🟠 cluster within 5%: HFT may flush this level before continuing up\n';
+  msg += '• If price dips to cluster on LOW volume: buy the flush (whales absorbing)\n';
+  msg += '• If price dips to cluster on HIGH volume: real selling, respect the level\n';
+  msg += '• Set your STOP 3-4% BELOW the nearest cluster, not above it\n';
+
+  await tg(msg, chatId);
 }
 
 async function cmdCascade(sym, chatId) {
@@ -3466,7 +3532,7 @@ async function cmdTopPick(chatId) {
 
 async function cmdStart(chatId) {
   await tg(
-    '<b>⚔️ MAVERICK INTEL BOT v6.8</b>\n' +
+    '<b>⚔️ MAVERICK INTEL BOT v7.0</b>\n' +
     '<i>Genome-Calibrated | Alpaca News | Finviz Short Data | FPR Engine</i>\n\n' +
 
     '<b>🎯 FOCUS MODE</b>\n' +
@@ -3601,6 +3667,19 @@ async function cmdCheck(sym, chatId) {
     m1 += '\n'+vwapSniper.sniperNote+'\n';
   } else {
     m1 += 'VWAP proxy: $'+vwapSniper.vwapProxy+' — price '+(vwapSniper.aboveVwap?'ABOVE ✅':'BELOW ❌')+'  ('+( vwapSniper.vwapDevPct>=0?'+':'')+vwapSniper.vwapDevPct+'%)\n';
+  }
+  // ── STOP-LOSS CLUSTER MAP — show danger zones and flush events ────────────
+  var clusterData = calcStopClusters(d);
+  if (clusterData.flushDetected) {
+    m1 += '\n'+clusterData.flushNote+'\n';
+  }
+  if (clusterData.clusters.length > 0) {
+    m1 += '\n📍 <b>Stop-Loss Clusters</b> (where HFTs will flush):\n';
+    clusterData.clusters.slice(0,3).forEach(function(cl){
+      var density_emoji = cl.density==='EXTREME'?'🔴':cl.density==='HIGH'?'🟠':cl.density==='MED'?'🟡':'🟢';
+      m1 += density_emoji+' $'+cl.level+' ['+cl.type+'] — '+cl.distPct+'% below'+( cl.flushTarget?' ← FLUSH TARGET':'')+'  \n';
+    });
+    m1 += '<i>If price dips to these zones on low volume: buy the flush alongside institutions.</i>\n';
   }
   // Wash trading warning
   if (sr.washWarning) {
@@ -3995,7 +4074,15 @@ async function cmdPosition(parts, chatId) {
     var eExt  = rnd((+entry - esnip.vwapProxy) / Math.max(esnip.vwapProxy, 0.01) * 100, 1);
     if      (eExt >= 12) { extensionAlert = '\n\n🚨 <b>ANTI-FOMO ALERT:</b> Entry $'+entry+' is <b>'+eExt+'% above VWAP ($'+esnip.vwapProxy+')</b>. Overextended zone. High mean-reversion risk. Consider waiting for VWAP pullback or size down significantly.'; }
     else if (eExt >= 7)  { extensionAlert = '\n\n⚠️ Entry '+eExt+'% above VWAP — extended but manageable. Keep stop tight.'; }
-    else if (eExt < 0)   { extensionAlert = '\n\n✅ Entry '+Math.abs(eExt)+'% below VWAP ($'+esnip.vwapProxy+') — ideal institutional accumulation zone. Good entry location.'; }
+    else if (eExt < 0)   { extensionAlert = '\n\n✅ Entry '+Math.abs(eExt)+'% below VWAP ($'+esnip.vwapProxy+') — institutional accumulation zone. Good entry.'; }
+    // ── CLUSTER PROXIMITY — is this entry near a flush target? ───────────────
+    var eClusters = calcStopClusters(d);
+    if (eClusters.nearestCluster && eClusters.nearestCluster.distPct <= 6) {
+      extensionAlert += '\n\n📍 <b>CLUSTER WARNING:</b> '+eClusters.nearestCluster.type+' stop cluster at $'+eClusters.nearestCluster.level+' is only '+eClusters.nearestCluster.distPct+'% below entry. HFTs may flush this level. Consider stop below $'+rnd(+eClusters.nearestCluster.level*0.97,4)+'.\n<i>Or wait for the flush to complete, then buy the recovery.</i>';
+    }
+    if (eClusters.flushDetected) {
+      extensionAlert += '\n\n'+eClusters.flushNote;
+    }
   }
 
   await tg('<b>$'+ticker+' TRACKED</b> '+cFlag(ticker)+'\n\nEntry:  $'+entry+'\nStop:   $'+stop+' ('+rnd((+stop-+entry)/+entry*100,1)+'%)\nTP1:    $'+tp1+' (+'+rnd((+tp1-+entry)/+entry*100,1)+'%)\nTP2:    '+(tp2?'$'+tp2:'not set')+'\nShares: '+shares+'\nRisk:   $'+risk+'  Reward@TP1: $'+reward1+'  R:R: '+rr+':1'+extensionAlert+'\n\n🛰️ Telemetry active. Confidence pulse every 5min.\n/confidence '+ticker+' for full analysis.', chatId);
@@ -4104,7 +4191,7 @@ async function cmdStatus(chatId) {
   var yTest = await yahooQuote('SPY').catch(function(){return null;});
   var fhTest = FINNHUB ? await fhQuote('SPY').catch(function(){return null;}) : null;
 
-  var msg = '<b>🔧 MAVERICK BOT STATUS v6.7</b>\n\n';
+  var msg = '<b>🔧 MAVERICK BOT STATUS v7.0</b>\n\n';
   msg += '<b>UPTIME:</b> '+upH+'h '+upM+'m\n';
   msg += '<b>MODE:</b> Webhook ✓ (zero polling)\n';
   msg += '<b>TRADING RULE:</b> Sub-$'+TRADE_MAX_PRICE+' only (alerts + scans)\n\n';
@@ -4230,7 +4317,7 @@ async function cmdAI(text, chatId) {
   var personalInsight=getPersonalInsight();
   var protoCtx=activeProtocol?'Active protocol: '+PROTOCOLS[activeProtocol].name+'. ':'';
   var reply=await ai(
-    'You are Maverick Bot v5.3 — elite trading assistant and brilliant general AI. For trading: Maverick Whale Doctrine, Phase 1-2 entry, tight float, whale volume, hard stops. Small account trader — tight risk per trade. '+protoCtx+'Logged '+(memory.trades?memory.trades.length:0)+' trades.'+(personalInsight?' Edge:'+personalInsight+'.':'')+' For non-trading: direct knowledgeable friend. No disclaimers. Max 280 words.',
+    'You are Maverick Bot v7.0 — elite trading assistant and brilliant general AI. For trading: Maverick Whale Doctrine, Phase 1-2 entry, tight float, whale volume, hard stops. Small account trader — tight risk per trade. '+protoCtx+'Logged '+(memory.trades?memory.trades.length:0)+' trades.'+(personalInsight?' Edge:'+personalInsight+'.':'')+' For non-trading: direct knowledgeable friend. No disclaimers. Max 280 words.',
     text, 500, chatId
   );
   if(reply) await tg(reply, chatId);
@@ -4370,6 +4457,8 @@ async function handleUpdate(update) {
     else if (cmd==='/positions')              fire(cmdPositions(chatId));
     else if (cmd==='/confidence'&&parts[1])   fire(cmdConfidence(parts[1].toUpperCase(),chatId));
     else if (cmd==='/confidence')             await tg('Usage: /confidence TICKER  e.g. /confidence GOVX\n(Must have position tracked via /position first)',chatId);
+    else if (cmd==='/clusters'&&parts[1])     fire(cmdClusters(parts[1].toUpperCase(),chatId));
+    else if (cmd==='/clusters')               await tg('Usage: /clusters TICKER  e.g. /clusters ATER',chatId);
     else if (cmd==='/cascade'&&parts[1])      fire(cmdCascade(parts[1].toUpperCase(),chatId));
     else if (cmd==='/cascade')                await tg('Usage: /cascade TICKER  e.g. /cascade GOVX',chatId);
     else if (cmd==='/staircase'||cmd==='/sc') fire(cmdStaircase(chatId));
@@ -4876,6 +4965,14 @@ async function sendTradeConfidencePulse() {
 
     if (conf.pullbackContext) msg += '\n'+conf.pullbackContext;
 
+    // ── CLUSTER CONTEXT IN TRADE ──────────────────────────────────────────────
+    var liveCluster = calcStopClusters(d);
+    if (liveCluster.flushDetected) {
+      msg += '\n\n'+liveCluster.flushNote;
+    } else if (liveCluster.nearestCluster && liveCluster.nearestCluster.distPct <= 6) {
+      msg += '\n\n📍 Next stop cluster: $'+liveCluster.nearestCluster.level+' ['+liveCluster.nearestCluster.type+'] — '+liveCluster.nearestCluster.distPct+'% below. If swept on low volume: DO NOT PANIC. That\'s the flush. Buy the recovery.';
+    }
+
     // Pillar deductions when score is degrading
     if (conf.warnings.length && conf.score < 55) {
       msg += '\n<b>⚠️ Deductions Active:</b>\n';
@@ -4954,7 +5051,150 @@ async function cmdConfidence(sym, chatId) {
   await tg(msg, chatId);
 }
 // Pre-fetches data for all active tickers so deep commands are instant.
-// ── VWAP MEAN-REVERSION SNIPER ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// ── STOP-LOSS CLUSTER ENGINE — Predict where retail stops are hiding ──────
+// ══════════════════════════════════════════════════════════════════════════
+// HFTs know exactly where retail stop-losses cluster. They drive price to those
+// levels, trigger the stops (free inventory at a discount), then let price recover.
+// We predict these clusters from observable price structure — then:
+//   1. WARN before entry: "You're entering near a major stop cluster — flush risk high"
+//   2. SIGNAL the flush: "Price just swept the $X.XX cluster and recovered — BUY THE DIP"
+//   3. SCORE setups: Post-flush absorption is the highest-probability entry in micro-caps
+//
+// CLUSTER LEVELS (where stops accumulate):
+//   Level 1 — Previous day's low (-0% to -3%)
+//   Level 2 — Round numbers ($0.50, $1.00, $1.50, $2.00, $2.50, $5.00, $10.00)
+//   Level 3 — Recent 5-day swing lows (from aggs)
+//   Level 4 — 20-day moving average (MA break = mass stop trigger)
+//   Level 5 — 52-week low (last resort stops — ultra-high density)
+//   Level 6 — Pre-market low (day-trader stops)
+//   Level 7 — VWAP proxy (below VWAP = thesis broken = stops fire)
+//
+function calcStopClusters(d) {
+  var price = d.price;
+  var clusters = [];
+
+  // ── Level 1: Previous day's low ──────────────────────────────────────────
+  if (d.low && d.low > 0 && d.low < price) {
+    var distPct = rnd((price - d.low) / price * 100, 1);
+    clusters.push({
+      level: rnd(d.low * 0.99, 4), // stops cluster just BELOW the low
+      type:  'Yesterday\'s Low',
+      density: distPct <= 5 ? 'HIGH' : distPct <= 10 ? 'MED' : 'LOW',
+      distPct: distPct,
+      flushTarget: true
+    });
+  }
+
+  // ── Level 2: Round numbers within 15% below current price ─────────────────
+  var roundLevels = [0.10, 0.25, 0.50, 0.75, 1.00, 1.50, 2.00, 2.50, 3.00, 4.00, 5.00, 7.50, 10.00, 15.00, 20.00];
+  roundLevels.forEach(function(lvl) {
+    if (lvl < price && lvl > price * 0.75) { // within 25% below current
+      var dPct = rnd((price - lvl) / price * 100, 1);
+      clusters.push({
+        level: rnd(lvl * 0.99, 4), // stops just below round number
+        type: '$'+lvl+' Round Number',
+        density: dPct <= 5 ? 'HIGH' : dPct <= 10 ? 'MED' : 'LOW',
+        distPct: dPct,
+        flushTarget: dPct <= 8
+      });
+    }
+  });
+
+  // ── Level 3: Recent swing lows from aggs (5-day and 10-day) ─────────────
+  if (d._aggs && d._aggs.length >= 5) {
+    var last5 = d._aggs.slice(-5);
+    var low5  = Math.min.apply(null, last5.map(function(b){ return b.l||b.low||9999; }));
+    if (low5 > 0 && low5 < price) {
+      clusters.push({
+        level: rnd(low5 * 0.99, 4),
+        type: '5-Day Swing Low',
+        density: (price - low5)/price < 0.08 ? 'HIGH' : 'MED',
+        distPct: rnd((price-low5)/price*100,1),
+        flushTarget: true
+      });
+    }
+    if (d._aggs.length >= 10) {
+      var last10 = d._aggs.slice(-10);
+      var low10  = Math.min.apply(null, last10.map(function(b){ return b.l||b.low||9999; }));
+      if (low10 > 0 && low10 < price && Math.abs(low10-low5)/price > 0.02) {
+        clusters.push({
+          level: rnd(low10 * 0.99, 4),
+          type: '10-Day Swing Low',
+          density: (price-low10)/price < 0.12 ? 'MED' : 'LOW',
+          distPct: rnd((price-low10)/price*100,1),
+          flushTarget: false
+        });
+      }
+    }
+  }
+
+  // ── Level 4: 52-week low (ultra-high density — last resort stops) ─────────
+  if (d.week52Low && d.week52Low > 0 && d.week52Low < price) {
+    var d52Pct = rnd((price - d.week52Low) / price * 100, 1);
+    clusters.push({
+      level: rnd(d.week52Low * 0.99, 4),
+      type: '52-Week Low ⚠️',
+      density: d52Pct <= 10 ? 'EXTREME' : d52Pct <= 20 ? 'HIGH' : 'MED',
+      distPct: d52Pct,
+      flushTarget: d52Pct <= 15
+    });
+  }
+
+  // ── Level 5: VWAP proxy (below = thesis broken for day traders) ──────────
+  var vsnap = calcVWAPSniper(d, 0);
+  if (vsnap.vwapProxy > 0 && vsnap.vwapProxy < price) {
+    clusters.push({
+      level: rnd(vsnap.vwapProxy * 0.995, 4),
+      type: 'VWAP Proxy',
+      density: vsnap.vwapDevPct <= 5 ? 'HIGH' : 'MED',
+      distPct: rnd(Math.abs(vsnap.vwapDevPct), 1),
+      flushTarget: Math.abs(vsnap.vwapDevPct) <= 8
+    });
+  }
+
+  // Sort by distance ascending (closest danger first)
+  clusters.sort(function(a,b){ return a.distPct - b.distPct; });
+
+  // ── FLUSH DETECTION — did price just sweep a cluster and recover? ─────────
+  // Uses daily rangePos + volume to detect absorption events
+  var range = (d.high||0) - (d.low||0);
+  var rangePos = range > 0 ? (price - (d.low||0)) / range : 0.5;
+  var flushDetected = false, flushLevel = 0, flushNote = '';
+  if (rangePos >= 0.65 && d.relVol >= 3 && range > d.atr * 1.5) {
+    // Price closed in top 35% of a wide range on elevated volume = absorption
+    flushDetected = true;
+    flushLevel = rnd(d.low * 1.001, 4); // just above the day's low
+    flushNote = '🔥 FLUSH ABSORBED: Price swept to $'+rnd(d.low,4)+' on '+d.relVol+'x RVOL and RECOVERED to $'+price+'. Institutions bought the dip. Staircase likely resumes.';
+  }
+
+  // Closest danger cluster to current price
+  var nearestCluster = clusters[0];
+  var flushRisk = nearestCluster && nearestCluster.distPct <= 5 ? 'HIGH' :
+                  nearestCluster && nearestCluster.distPct <= 10 ? 'MODERATE' : 'LOW';
+
+  return { clusters: clusters.slice(0,5), flushDetected, flushLevel, flushNote, flushRisk, nearestCluster, rangePos };
+}
+
+// ── FLUSH ABSORPTION SCORE — for MIS + SAS bonus ──────────────────────────
+// Post-flush is one of the highest-probability entries in micro-cap trading.
+// Whales just loaded cheap inventory. They will DEFEND the level they bought.
+function calcFlushScore(d) {
+  var sc = calcStopClusters(d);
+  var score = 0, notes = [];
+  if (sc.flushDetected) {
+    score += 25;
+    notes.push(sc.flushNote);
+    // Extra points if flush happened near a known cluster level
+    if (sc.clusters.length > 0 && sc.clusters[0].distPct <= 8) {
+      score += 10;
+      notes.push('Flush swept the '+sc.clusters[0].type+' cluster ($'+sc.clusters[0].level+') — this was targeted');
+    }
+    if (d.relVol >= 8) { score += 10; notes.push('RVOL '+d.relVol+'x during flush = institutional absorption confirmed'); }
+    if (sc.rangePos >= 0.80) { score += 5; notes.push('Closed in top 20% of range — buyers overwhelmed sellers'); }
+  }
+  return { score: Math.min(50, score), notes, clusters: sc };
+}
 function calcVWAPSniper(d, misScore) {
   if (!d.open || d.open <= 0) return { vwapProxy:d.price, aboveVwap:true, vwapDevPct:0, isSniperEntry:false, sniperNote:null };
   var vwapProxy = rnd((d.open + (d.high||d.price) + (d.low||d.price) + d.price) / 4, 4);
@@ -5007,7 +5247,7 @@ async function warmCache() {
 
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v6.8           ║');
+  console.log('║    MAVERICK INTEL BOT v7.0           ║');
   console.log('║    GENOME-CALIBRATED RESEARCH ENGINE  ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
@@ -5042,9 +5282,9 @@ async function start() {
   } catch(e) { console.error('[WEBHOOK] setWebhook error:', e.message); }
 
   await tg(
-    '<b>⚔️ MAVERICK INTEL BOT v6.8 — ONLINE</b>\n\n' +
+    '<b>⚔️ MAVERICK INTEL BOT v7.0 — ONLINE</b>\n\n' +
     '📡 Alpaca News | 📊 Finviz Short % | 🧬 Genome-Calibrated | 🔥 FPR Engine\n\n' +
-    '<b>v6.8 DATA UPGRADES:</b>\n' +
+    '<b>v7.0 — CLUSTER ENGINE + SQUEEZE FIX:</b>\n' +
     '• Alpaca news (Benzinga/AP/Reuters) — far richer than Finnhub free tier\n' +
     '• Finviz short interest scraper — real FINRA data, 1hr cached\n' +
     '• Legal/court ruling now Tier 1 catalyst (research: avg +300-515%)\n' +
@@ -5070,7 +5310,7 @@ async function start() {
   setTimeout(runAlgoAndIntradayScan, 90000);
   setTimeout(runPreMarketScanner, 15000);
 
-  console.log('[BOT] v6.8 running. Genome-calibrated. Legal/court Tier-1. FPR active. Catalyst proxy. Compressed spring. Thresholds lowered.');
+  console.log('[BOT] v7.0 running. Genome-calibrated. Legal/court Tier-1. FPR active. Catalyst proxy. Compressed spring. Thresholds lowered.');
 }
 
 start();
