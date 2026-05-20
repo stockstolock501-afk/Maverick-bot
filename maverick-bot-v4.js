@@ -118,9 +118,13 @@ var GROQ_KEY    = process.env.GROQ_KEY          || '';
 var CBRS_KEY    = process.env.CEREBRAS_KEY      || '';
 var JSONBIN_ID  = process.env.JSONBIN_ID        || '';
 var JSONBIN_KEY = process.env.JSONBIN_KEY        || '';
-// Alpaca: optional — gracefully skipped if keys not present
+// Alpaca Markets — free tier, rich news from Benzinga/AP/Reuters
+// Sign up free at alpaca.markets → copy API Key ID + Secret Key
 var ALPACA_KEY  = process.env.ALPACA_KEY_ID     || '';
 var ALPACA_SEC  = process.env.ALPACA_SECRET_KEY || '';
+var CBRS_KEY    = process.env.CEREBRAS_KEY     || '';
+var JSONBIN_ID  = process.env.JSONBIN_ID       || '';
+var JSONBIN_KEY = process.env.JSONBIN_KEY      || '';
 
 // ── STATE ──────────────────────────────────────────────────────────────────
 var positions        = {};
@@ -805,34 +809,34 @@ async function getStock(sym) {
     // Fundamentals
     var floatM=50, shortPct=0;
     if (!week52H || week52H<=0) { week52H=price*2; week52L=price*0.3; }
-
-    // ── SHORT INTEREST: FINVIZ FIRST (FINRA data), Finnhub secondary ─────────
-    // Research finding: Finnhub free tier has near-zero reliable short data for micro-caps.
-    // Finviz scrapes FINRA biweekly reports — same source paid tools use. Run first.
-    if (price <= TRADE_MAX_PRICE && price >= 0.25) {
-      try {
-        var fvFirst = await finvizShortFloat(sym);
-        if (fvFirst > 0) { shortPct = fvFirst; console.log('[SHORT] $'+sym+' Finviz: '+shortPct+'%'); }
-      } catch(e) {}
-    }
-
     var metrics = (parallel[1].status==='fulfilled' && parallel[1].value) ? parallel[1].value : null;
     if (metrics && metrics.metric) {
       var m = metrics.metric;
       if (m.sharesFloat&&m.sharesFloat>0) floatM=m.sharesFloat;
-      // Only use Finnhub short if Finviz had nothing
-      if (shortPct === 0) {
-        var rawShort = m.shortInterestPercentOfFloat || m.shortPercent || 0;
-        if (rawShort > 0) shortPct = rawShort;
-        // Proxy from shortRatio (DTC) if all else fails
-        if (shortPct === 0 && m.shortRatio && m.shortRatio > 0 && floatM > 0 && avgVol > 0) {
-          shortPct = rnd((m.shortRatio * avgVol) / (floatM * 1e6) * 100, 1);
-        }
+      // Short interest — try multiple field names (Finnhub naming varies by plan)
+      var rawShort = m.shortInterestPercentOfFloat || m.shortPercent || m.shortRatio || 0;
+      if (rawShort > 0) shortPct = rawShort;
+      // Proxy estimate when Finnhub has no data: DTC-based approximation
+      // DTC = (float * short%) / avgVol → short% = (DTC * avgVol) / float
+      // We don't know DTC yet, but if Finnhub returned shortRatio (DTC): estimate
+      if (shortPct === 0 && m.shortRatio && m.shortRatio > 0 && floatM > 0 && avgVol > 0) {
+        shortPct = rnd((m.shortRatio * avgVol) / (floatM * 1e6) * 100, 1);
       }
       if (m['52WeekHigh']&&!week52H) week52H=m['52WeekHigh'];
       if (m['52WeekLow']&&!week52L)  week52L=m['52WeekLow'];
     }
+
+    // ── FINVIZ SHORT INTEREST FALLBACK ─────────────────────────────────────
+    // Finnhub free tier often returns 0% for small-caps. Finviz scrapes FINRA data.
+    // Cached 1 hour. Only fires when Finnhub had no data.
+    if (shortPct === 0 && price <= TRADE_MAX_PRICE && price >= 0.25) {
+      try {
+        var fvShort = await finvizShortFloat(sym);
+        if (fvShort > 0) { shortPct = fvShort; }
+      } catch(e) {}
+    }
     var relVol      = rnd(volume/Math.max(avgVol,1),2);
+    var changePct   = prevClose>0 ? rnd((price-prevClose)/prevClose*100,2) : 0;
     var atr         = rnd(price*0.025,4);
     var daysToCover = floatM>0&&avgVol>0 ? rnd((floatM*1e6)/avgVol,2) : 99;
 
@@ -2236,17 +2240,18 @@ async function cmdFocusChat(text, chatId) {
   var reply = await ai(
     'You are a seasoned micro-cap trader with 15 years in the game. ' +
     'You traded through dotcom crashes, meme stock mania, algo-dominated tape. ' +
-    'You think in whale behavior, institutional footprints, probability stacks, and momentum. ' +
+    'You think in whale behavior, institutional footprints, and probability stacks. ' +
     'You know this trader\'s system: Maverick Creed, Supernova Protocol, MIS/SDI/SAS/FPR, staircase exception, VWAP proxy, cascade detector. ' +
-    'You have strong opinions. You push back when setups look wrong. You call clean setups clean. ' +
-    'No disclaimers. Trader to trader. Plain speech. Max 300 words unless the question is complex. ' +
-    'IMPORTANT: When live scanner data is provided in the message, use those numbers exclusively for price/RVOL/float/scores. ' +
-    'Do not recall stale training data for specific stock metrics — use what is in the data block. ' +
-    'You CAN and SHOULD discuss patterns, market dynamics, probability, sector context, and strategy.' +
+    'You have opinions. You push back when setups look wrong. ' +
+    'No disclaimers. No "consult a financial advisor." Trader to trader. ' +
+    'Plain speech. If the setup is garbage, say so. If it\'s clean, call it clean. ' +
+    'ABSOLUTE RULE: You have NO internal knowledge of stock prices. Your training data is stale by months. ' +
+    'ONLY use the [LIVE SCANNER DATA] block. If a metric is not in that block, say "data unavailable." Never estimate.' +
     (activeProtocol ? ' Active protocol: '+activeProtocol+'.' : '') +
     edgeCtx + mktCtx,
 
-    liveCtx + '\n\nTrader: ' + text,
+    // Live data block comes FIRST so model anchors to it before reading the question
+    liveCtx + '\n\nTrader\'s message: ' + text + '\n\nRespond using ONLY the live data above. Max 300 words.',
     700, chatId
   );
 
@@ -2777,17 +2782,18 @@ async function tg(text, chatId) {
 async function ai(system, user, maxTokens, chatId) {
   maxTokens=maxTokens||500;
   var history=(chatId&&chatHistory[chatId])?chatHistory[chatId].slice(-8):[];
-  // ── DATA ANCHORING — guides model to use live data, not block all reasoning ──
-  // Too strict = AI says "no database" and refuses to analyze.
-  // Too loose = AI uses stale training data for prices (confident false positives).
-  // Correct balance: allow reasoning/patterns but REQUIRE using live numbers when present.
+  // ── CRITICAL: Hard-block model from using training data for financials ──────
+  // The model's training data is months old. Any price, RVOL, float, or score
+  // it "knows" internally is stale and will be confidently wrong.
+  // The live data block in the user message is the ONLY authoritative source.
   var dataLockInstruction =
-    '\n\nDATA RULES:\n' +
-    '• When a [LIVE SCANNER DATA] block is present: use ONLY those numbers for price, RVOL, float, short %, scores.\n' +
-    '• You may use your knowledge of market patterns, psychology, sector dynamics, and trading principles.\n' +
-    '• You may NOT recall specific stock prices, RVOL values, or financial metrics from your training — those are months stale.\n' +
-    '• If a specific number is asked about and it is not in the live data block: say "not in my current feed" and work from the data that IS there.\n' +
-    '• Never make up a price, volume, or score. If live data shows $1.74, use $1.74 — not what you remember.';
+    '\n\nCRITICAL DATA RULES — MANDATORY:\n' +
+    '1. You have NO access to current stock prices, RVOL, float, short interest, or financial data.\n' +
+    '2. Your training data for any stock is potentially months or years out of date.\n' +
+    '3. You MUST ONLY reference numbers that appear in the [LIVE DATA] block provided in the message.\n' +
+    '4. If a data point is NOT in the live data block, say "data unavailable" — NEVER estimate, recall, or fabricate.\n' +
+    '5. If no live data block is present, say so before analyzing.\n' +
+    'Violation of these rules produces confident false positives, which costs real money.';
   var fullSystem = system + dataLockInstruction;
   var messages=[{role:'user',content:'[SYSTEM] '+fullSystem}].concat(history).concat([{role:'user',content:user}]);
   if (GROQ_KEY) {
@@ -3189,37 +3195,7 @@ async function scanNewsIntel() {
     }
   } catch(e) { console.error('[NEWS-GNW]', e.message); }
 
-  // ── SOURCE 2E: REUTERS BUSINESS/FINANCE RSS — Free, no key ──────────────────
-  try {
-    var reutRSS = await tFetch('https://feeds.reuters.com/reuters/businessNews', {headers:{'User-Agent':'MaverickIntelBot contact@maverick.bot'}}, 10000);
-    var reutXml = await safeText(reutRSS);
-    if (reutXml) {
-      var rRx = /<item>([\s\S]*?)<\/item>/g, rm;
-      while ((rm = rRx.exec(reutXml)) !== null) {
-        var ri = rm[1];
-        var rTm = ri.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
-        if (!rTm) continue;
-        var rHead = rTm[1].replace(/<[^>]+>/g,'').trim();
-        var rKey  = headlineHash(rHead);
-        if (sentHeadlines.has(rKey)) continue;
-        var rBody = rHead.toLowerCase();
-        var rHits = BULLISH_KW.filter(function(k){return rBody.indexOf(k)!==-1;});
-        var rNegs = BEARISH_KW.filter(function(k){return rBody.indexOf(k)!==-1;});
-        if (rHits.length < 1 || rNegs.length > 0) continue;
-        // Match to watchlist tickers
-        var wlKeys = Object.keys(watchlist);
-        var rTickMatch = wlKeys.find(function(t){ return rBody.toUpperCase().indexOf(t)>-1; });
-        if (!rTickMatch) continue;
-        sentHeadlines.add(rKey);
-        var rCat  = identifyCatalyst(rHead);
-        var rLive = await getStock(rTickMatch).catch(function(){return null;});
-        if (rLive && rLive.price <= TRADE_MAX_PRICE && rLive.price >= 0.25) {
-          var rAlert = await buildMaverickAlert(rTickMatch, rLive, rCat.name+' via Reuters', rCat.name, rCat.rank);
-          await tg(rAlert); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++; await sleep(1500);
-        }
-      }
-    }
-  } catch(e) { console.error('[NEWS-REUTERS]', e.message); }
+  // ── SOURCE 2D: YAHOO TICKER NEWS — Watchlist-specific, no key ─────────────────
   try {
     var wlTickers = Object.keys(watchlist).slice(0,6);
     for (var wti=0; wti<wlTickers.length; wti++) {
@@ -3490,8 +3466,8 @@ async function cmdTopPick(chatId) {
 
 async function cmdStart(chatId) {
   await tg(
-    '<b>⚔️ MAVERICK INTEL BOT v6.9</b>\n' +
-    '<i>Genome-Calibrated | 5 News Sources | Finviz Short | FPR Engine</i>\n\n' +
+    '<b>⚔️ MAVERICK INTEL BOT v6.8</b>\n' +
+    '<i>Genome-Calibrated | Alpaca News | Finviz Short Data | FPR Engine</i>\n\n' +
 
     '<b>🎯 FOCUS MODE</b>\n' +
     '/focus — expert peer conversation (no command routing)\n' +
@@ -5031,8 +5007,8 @@ async function warmCache() {
 
 async function start() {
   console.log('\n╔══════════════════════════════════════╗');
-  console.log('║    MAVERICK INTEL BOT v6.9           ║');
-  console.log('║    BUGS FIXED + 5 NEWS SOURCES       ║');
+  console.log('║    MAVERICK INTEL BOT v6.8           ║');
+  console.log('║    GENOME-CALIBRATED RESEARCH ENGINE  ║');
   console.log('╚══════════════════════════════════════╝\n');
   console.log('  Telegram:   '+(TG_TOKEN?'INTEL_BOT_TOKEN connected':'MISSING'));
   console.log('  Chat ID:    '+(CHAT_ID?'connected ('+CHAT_ID+')':'MISSING — set INTEL_BOT_CHAT'));
@@ -5066,16 +5042,18 @@ async function start() {
   } catch(e) { console.error('[WEBHOOK] setWebhook error:', e.message); }
 
   await tg(
-    '<b>⚔️ MAVERICK INTEL BOT v6.9 — ONLINE</b>\n\n' +
-    '🗞️ 5 News Sources | 📊 Finviz Short First | 🧠 AI Anchor Fixed | 🔥 Genome Calibrated\n\n' +
-    '<b>v6.9 FIXES & UPGRADES:</b>\n' +
-    '• Duplicate variable bug fixed (was causing silent failures at startup)\n' +
-    '• AI data anchor rebalanced — can reason again, anchored to live data for prices\n' +
-    '• Finviz FIRST for short interest (FINRA data), Finnhub secondary\n' +
-    '• News sources: Finnhub + EDGAR 8-K/6-K + EDGAR RSS + GlobeNewswire + Reuters + Yahoo\n' +
-    '• Catalyst fallback: RVOL 5x+ on small float = implied Tier 3 (no more 0-point unknowns)\n' +
-    '• Genome calibration: Legal/court = Tier 1, FPR, compressed spring, optimal gap 15-80%\n\n' +
-    '/help for full command list | /focus to talk trade | /awatch for algo arsenal'
+    '<b>⚔️ MAVERICK INTEL BOT v6.8 — ONLINE</b>\n\n' +
+    '📡 Alpaca News | 📊 Finviz Short % | 🧬 Genome-Calibrated | 🔥 FPR Engine\n\n' +
+    '<b>v6.8 DATA UPGRADES:</b>\n' +
+    '• Alpaca news (Benzinga/AP/Reuters) — far richer than Finnhub free tier\n' +
+    '• Finviz short interest scraper — real FINRA data, 1hr cached\n' +
+    '• Legal/court ruling now Tier 1 catalyst (research: avg +300-515%)\n' +
+    '• Float Pressure Ratio (FPR) = (RVOL × Short%) / Float — parabolic signal\n' +
+    '• Catalyst proxy: RVOL 5x + 15%+ move = implied Tier 3 (no more 0-point unknowns)\n' +
+    '• Compressed spring bonus: within 20% of 52W low = research amplifier\n' +
+    '• Scan/briefing thresholds lowered — DEVELOPING setups now visible\n\n' +
+    'Add to Render env: ALPACA_KEY_ID + ALPACA_SECRET_KEY (free at alpaca.markets)\n' +
+    '/help for full command list.'
   );
 
   setInterval(monitorPositions,  60000);
@@ -5092,7 +5070,7 @@ async function start() {
   setTimeout(runAlgoAndIntradayScan, 90000);
   setTimeout(runPreMarketScanner, 15000);
 
-  console.log('[BOT] v6.9 running. Bugs fixed. 5 news sources. Finviz first. AI rebalanced. Genome calibrated.');
+  console.log('[BOT] v6.8 running. Genome-calibrated. Legal/court Tier-1. FPR active. Catalyst proxy. Compressed spring. Thresholds lowered.');
 }
 
 start();
