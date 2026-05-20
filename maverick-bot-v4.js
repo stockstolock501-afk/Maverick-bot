@@ -2205,18 +2205,28 @@ async function cmdFocusChat(text, chatId) {
       var trend = calcTrend(d, d._aggs||[]);
       var im = calcIntradayMomentum(d);
       var lifecycle = detectLifecyclePhase(d);
+      var fpr = calcFPR(d);
+      // Data block is FIRST in the message — model must anchor to these numbers only
       liveCtx =
-        '\n\n[LIVE DATA: $'+ticker+']'+
-        '\nPrice: $'+d.price+' ('+(d.changePct>=0?'+':'')+rnd(d.changePct,1)+'%) '+cFlag(ticker)+' '+priceZone(d.price).label+
-        '\nRVOL:'+d.relVol+'x Float:'+d.floatM+'M Short:'+rnd(d.shortPct,1)+'% DTC:'+d.daysToCover+'d'+
-        '\nFrom open: '+(im.fromOpen>=0?'+':'')+im.fromOpen+'% VPace:'+im.volumePace+'x VWAP:'+(im.aboveVwap?'ABOVE':'BELOW')+' ($'+im.vwapProxy+')'+
-        '\nMIS:'+mis.pct+'['+mis.tier+'] SDI:'+sdi.score+'['+sdi.danger+'] SAS:'+sas.score+'['+sas.tier+']'+
-        '\nIntraday:'+im.score+'/100['+im.tier+'] Trend:'+trend.direction+' Strength:'+trend.strength+
-        '\n'+lifecycle.emoji+' '+lifecycle.name;
+        '\n\n━━━ LIVE SCANNER DATA — AUTHORITATIVE SOURCE ━━━\n' +
+        'Ticker: $'+ticker+' '+cFlag(ticker)+'\n' +
+        'Timestamp: '+new Date().toISOString()+'\n' +
+        'Price: $'+d.price+' ('+(d.changePct>=0?'+':'')+rnd(d.changePct,1)+'%) | Zone: '+priceZone(d.price).label+'\n' +
+        'RVOL: '+d.relVol+'x | Float: '+d.floatM+'M | Short: '+rnd(d.shortPct,1)+'% | DTC: '+d.daysToCover+'d\n' +
+        'From open: '+(im.fromOpen>=0?'+':'')+im.fromOpen+'% | VPace: '+im.volumePace+'x | VWAP: '+(im.aboveVwap?'ABOVE':'BELOW')+' $'+im.vwapProxy+'\n' +
+        'MIS: '+mis.pct+' ['+mis.tier+'] | FPR: '+fpr+' | SDI: '+sdi.score+' ['+sdi.danger+'] | SAS: '+sas.score+' ['+sas.tier+']\n' +
+        'Trend: '+trend.direction+' Strength: '+trend.strength+' | Intraday: '+im.score+'/100 ['+im.tier+']\n' +
+        lifecycle.emoji+' '+lifecycle.name+'\n' +
+        (d.isPreMarket ? '🌅 PRE-MARKET: $'+d.preMarket+' ('+(d.preMarketChg>=0?'+':'')+rnd(d.preMarketChg,2)+'%)\n' : '') +
+        '━━━ USE ONLY THE NUMBERS ABOVE. DO NOT RECALL FROM TRAINING. ━━━';
+      console.log('[FOCUS] Live data injected for $'+ticker+' price:$'+d.price);
+    } else {
+      liveCtx = '\n\n━━━ LIVE DATA: $'+ticker+' — data unavailable at this moment ━━━\n' +
+                'Do not estimate price, RVOL, float, or any other metric. Say "data unavailable" for $'+ticker+'.';
     }
   }
 
-  // Build market context
+  // Market context
   var mktCtx = '';
   if (algoWatchlist.length) {
     mktCtx = '\n[ALGO ARSENAL: '+algoWatchlist.slice(0,3).map(function(w){return '$'+w.sym+'('+w.convTier+')'}).join(', ')+']';
@@ -2227,22 +2237,20 @@ async function cmdFocusChat(text, chatId) {
   var edgeCtx = getPersonalInsight();
 
   var reply = await ai(
-    // This is the most important system prompt in the bot.
-    // It defines WHO the bot is in focus mode. No bot persona. No disclaimers. Two traders.
     'You are a seasoned micro-cap trader with 15 years in the game. ' +
-    'You have traded through every market condition — dotcom crashes, meme stock mania, algo-dominated tape. ' +
-    'You think in terms of whale behavior, institutional footprints, and probability stacks. ' +
-    'You know this trader\'s complete system: Maverick Creed, Supernova Protocol, MIS/SDI/SAS/SM%/Duration, staircase exception, VWAP proxy whale detection. ' +
-    'You\'ve been tracking the market together. You have opinions. You push back when the setup looks wrong. ' +
-    'You are not a bot assistant. You are a trading partner who happens to know everything. ' +
-    'When data is provided, use it. When it\'s not, speak from experience and pattern recognition. ' +
-    'No disclaimers. No "you should consult a financial advisor." No training wheels. No "I cannot provide financial advice." ' +
-    'Plain speech. Trader to trader. If the setup is garbage, say so. If it\'s clean, call it clean. ' +
-    'Max 300 words unless the question is complex. Reference actual numbers when available.' +
+    'You traded through dotcom crashes, meme stock mania, algo-dominated tape. ' +
+    'You think in whale behavior, institutional footprints, and probability stacks. ' +
+    'You know this trader\'s system: Maverick Creed, Supernova Protocol, MIS/SDI/SAS/FPR, staircase exception, VWAP proxy, cascade detector. ' +
+    'You have opinions. You push back when setups look wrong. ' +
+    'No disclaimers. No "consult a financial advisor." Trader to trader. ' +
+    'Plain speech. If the setup is garbage, say so. If it\'s clean, call it clean. ' +
+    'ABSOLUTE RULE: You have NO internal knowledge of stock prices. Your training data is stale by months. ' +
+    'ONLY use the [LIVE SCANNER DATA] block. If a metric is not in that block, say "data unavailable." Never estimate.' +
     (activeProtocol ? ' Active protocol: '+activeProtocol+'.' : '') +
     edgeCtx + mktCtx,
 
-    text + liveCtx,
+    // Live data block comes FIRST so model anchors to it before reading the question
+    liveCtx + '\n\nTrader\'s message: ' + text + '\n\nRespond using ONLY the live data above. Max 300 words.',
     700, chatId
   );
 
@@ -2773,7 +2781,20 @@ async function tg(text, chatId) {
 async function ai(system, user, maxTokens, chatId) {
   maxTokens=maxTokens||500;
   var history=(chatId&&chatHistory[chatId])?chatHistory[chatId].slice(-8):[];
-  var messages=[{role:'user',content:'[SYSTEM] '+system}].concat(history).concat([{role:'user',content:user}]);
+  // ── CRITICAL: Hard-block model from using training data for financials ──────
+  // The model's training data is months old. Any price, RVOL, float, or score
+  // it "knows" internally is stale and will be confidently wrong.
+  // The live data block in the user message is the ONLY authoritative source.
+  var dataLockInstruction =
+    '\n\nCRITICAL DATA RULES — MANDATORY:\n' +
+    '1. You have NO access to current stock prices, RVOL, float, short interest, or financial data.\n' +
+    '2. Your training data for any stock is potentially months or years out of date.\n' +
+    '3. You MUST ONLY reference numbers that appear in the [LIVE DATA] block provided in the message.\n' +
+    '4. If a data point is NOT in the live data block, say "data unavailable" — NEVER estimate, recall, or fabricate.\n' +
+    '5. If no live data block is present, say so before analyzing.\n' +
+    'Violation of these rules produces confident false positives, which costs real money.';
+  var fullSystem = system + dataLockInstruction;
+  var messages=[{role:'user',content:'[SYSTEM] '+fullSystem}].concat(history).concat([{role:'user',content:user}]);
   if (GROQ_KEY) {
     try {
       var r=await tFetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:maxTokens,temperature:0.3,messages})},15000);
@@ -2792,6 +2813,70 @@ async function ai(system, user, maxTokens, chatId) {
     } catch (e) { console.error('[Cerebras]', e.message); }
   }
   return null;
+}
+
+// ── EDGAR RSS FEED — Real-time 8-K and 6-K filings ───────────────────────────
+// 6-K catches foreign company court/patent events (AIXI +515% was a 6-K).
+// Posts within minutes. No API key. Highest-quality free catalyst source.
+async function edgarRSSRecent() {
+  try {
+    var r = await tFetch(
+      'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&dateb=&owner=include&count=40&search_text=&output=atom',
+      { headers: { 'User-Agent': 'MaverickIntelBot contact@maverick.bot' } }, 10000
+    );
+    var xml = await safeText(r);
+    if (!xml) return [];
+    var entries = [], entryRx = /<entry>([\s\S]*?)<\/entry>/g, em;
+    while ((em = entryRx.exec(xml)) !== null) {
+      var e = em[1];
+      var tM = e.match(/<title>([^<]+)<\/title>/);
+      var lM = e.match(/<link[^>]+href="([^"]+)"/);
+      var sM = e.match(/<summary[^>]*>([\s\S]*?)<\/summary>/);
+      if (tM) entries.push({ title:tM[1].trim(), link:lM?lM[1].trim():'', summary:sM?sM[1].replace(/<[^>]+>/g,'').trim():'' });
+    }
+    return entries;
+  } catch(e) { return []; }
+}
+
+function edgarItemRank(summary) {
+  var s = (summary||'').toLowerCase();
+  if (s.indexOf('item 1.01')>-1 && s.indexOf('item 1.02')>-1) return {rank:5,bearish:true};
+  if (s.indexOf('item 2.01')>-1) return {rank:2,bearish:false};
+  if (s.indexOf('item 1.01')>-1) return {rank:3,bearish:false};
+  if (s.indexOf('item 8.01')>-1) return {rank:3,bearish:false};
+  if (s.indexOf('item 4.01')>-1) return {rank:5,bearish:true};
+  return {rank:4,bearish:false};
+}
+
+// ── GLOBENEWSWIRE RSS — Free PR announcements ─────────────────────────────────
+// #1 retail ignition catalyst per Genome research. No key, no registration.
+async function globeNewsRSS() {
+  try {
+    var r = await tFetch(
+      'https://www.globenewswire.com/RssFeed/subjectcode/25-Financial%20Announcement',
+      { headers: { 'User-Agent': 'MaverickIntelBot contact@maverick.bot' } }, 10000
+    );
+    var xml = await safeText(r);
+    if (!xml) return [];
+    var items = [], iRx = /<item>([\s\S]*?)<\/item>/g, im;
+    while ((im = iRx.exec(xml)) !== null) {
+      var it = im[1];
+      var tM = it.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+      var tkM= it.match(/ticker[^>]*>([A-Z]{1,5})<\/[a-z:]*ticker>/i);
+      if (tM) items.push({ headline:tM[1].replace(/<[^>]+>/g,'').trim(), ticker:tkM?tkM[1]:'' });
+    }
+    return items;
+  } catch(e) { return []; }
+}
+
+// ── YAHOO TICKER NEWS — No key, ticker-specific ───────────────────────────────
+async function yahooTickerNews(sym) {
+  try {
+    var r = await tFetch('https://query1.finance.yahoo.com/v1/finance/news?count=8&symbols='+sym,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MaverickBot/6.8)' } }, 8000);
+    var d = await safeJson(r);
+    return (d && d.items && d.items.result) ? d.items.result : [];
+  } catch(e) { return []; }
 }
 
 // ── AI JSON PARSER — temperature 0.0, ultra-low tokens, pure structured output ──
@@ -3048,7 +3133,93 @@ async function scanNewsIntel() {
     }
   } catch (e) { console.error('[NEWS-SEC]', e.message); }
 
-  // ── SOURCE 3: POLYGON NEWS (tertiary — may return empty on free tier) ────────
+  // ── SOURCE 2B: EDGAR RSS FEED — Real-time 8-K/6-K, catches court/patent events ─
+  // 6-K = foreign company filings (AIXI patent ruling that triggered +515%).
+  // This is the earliest possible signal — files minutes after event.
+  try {
+    var rssEntries = await edgarRSSRecent();
+    for (var re=0; re<Math.min(rssEntries.length,15); re++) {
+      var rEntry = rssEntries[re];
+      var rKey = headlineHash(rEntry.title+rEntry.link);
+      if (sentHeadlines.has(rKey)) continue;
+      // Extract ticker from title: format is usually "COMPANY (TICKER) 8-K ..."
+      var rTickM = rEntry.title.match(/\(([A-Z]{1,5})\)/);
+      var rTick  = rTickM ? rTickM[1] : '';
+      if (!rTick) continue;
+      var rBody = (rEntry.title+' '+rEntry.summary).toLowerCase();
+      var rHits = BULLISH_KW.filter(function(k){return rBody.indexOf(k)!==-1;});
+      var rNegs = BEARISH_KW.filter(function(k){return rBody.indexOf(k)!==-1;});
+      // Also run item-number catalog for rank classification
+      var rItemRank = edgarItemRank(rEntry.summary);
+      if (rItemRank.bearish) { sentHeadlines.add(rKey); continue; } // Skip bearish item types
+      if (rHits.length >= 1 || rItemRank.rank <= 3) {
+        sentHeadlines.add(rKey);
+        var rLive = await getStock(rTick).catch(function(){return null;});
+        if (rLive && rLive.price <= TRADE_MAX_PRICE && rLive.price >= 0.25) {
+          var rReason = '📋 SEC EDGAR '+( rEntry.title.indexOf('6-K')>-1?'6-K (foreign filing)':'8-K')+' — '+identifyCatalyst(rEntry.title).name;
+          var rAlert = await buildMaverickAlert(rTick, rLive, rReason, identifyCatalyst(rEntry.title).name, rItemRank.rank);
+          await tg(rAlert); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++; await sleep(2000);
+        }
+      }
+    }
+  } catch(e) { console.error('[NEWS-EDGAR-RSS]', e.message); }
+
+  // ── SOURCE 2C: GLOBENEWSWIRE RSS — PR announcements, retail ignition catalyst ─
+  try {
+    var gnwItems = await globeNewsRSS();
+    for (var gi=0; gi<Math.min(gnwItems.length,10); gi++) {
+      var gnw = gnwItems[gi];
+      var gnwKey = headlineHash(gnw.headline);
+      if (sentHeadlines.has(gnwKey)) continue;
+      var gnwBody = gnw.headline.toLowerCase();
+      var gnwHits = BULLISH_KW.filter(function(k){return gnwBody.indexOf(k)!==-1;});
+      var gnwNegs = BEARISH_KW.filter(function(k){return gnwBody.indexOf(k)!==-1;});
+      if (gnwHits.length < 1 || gnwNegs.length > 0) continue;
+      // Try to identify ticker from RSS entry or from watchlist cross-reference
+      var gnwTick = gnw.ticker || '';
+      if (!gnwTick) {
+        // Check if any watchlist ticker appears in headline
+        var wKeys = Object.keys(watchlist);
+        gnwTick = wKeys.find(function(t){ return gnwBody.toUpperCase().indexOf(t) > -1; }) || '';
+      }
+      if (!gnwTick || gnwTick.length > 5) continue;
+      sentHeadlines.add(gnwKey);
+      var gnwCat = identifyCatalyst(gnw.headline);
+      var gnwLive = await getStock(gnwTick).catch(function(){return null;});
+      if (gnwLive && gnwLive.price <= TRADE_MAX_PRICE && gnwLive.price >= 0.25) {
+        var gnwReason = '📢 GlobeNewswire PR: '+gnwCat.name+' [AI will verify]';
+        var gnwAlert = await buildMaverickAlert(gnwTick, gnwLive, gnwReason, gnwCat.name, gnwCat.rank);
+        await tg(gnwAlert); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++; await sleep(1500);
+      }
+    }
+  } catch(e) { console.error('[NEWS-GNW]', e.message); }
+
+  // ── SOURCE 2D: YAHOO TICKER NEWS — Watchlist-specific, no key ─────────────────
+  try {
+    var wlTickers = Object.keys(watchlist).slice(0,6);
+    for (var wti=0; wti<wlTickers.length; wti++) {
+      var wtSym = wlTickers[wti];
+      var ytNews = await yahooTickerNews(wtSym);
+      for (var yn=0; yn<ytNews.length; yn++) {
+        var yItem = ytNews[yn];
+        var yKey = headlineHash(yItem.uuid||yItem.title);
+        if (sentHeadlines.has(yKey)) continue;
+        var yBody = ((yItem.title||'')+' '+(yItem.summary||'')).toLowerCase();
+        var yHits = BULLISH_KW.filter(function(k){return yBody.indexOf(k)!==-1;});
+        var yNegs = BEARISH_KW.filter(function(k){return yBody.indexOf(k)!==-1;});
+        if (yHits.length < 1 || yNegs.length > 0) continue;
+        sentHeadlines.add(yKey);
+        var yCat = identifyCatalyst(yItem.title||'');
+        var yLive = await getStock(wtSym).catch(function(){return null;});
+        if (yLive && yLive.price <= TRADE_MAX_PRICE && yLive.price >= 0.25) {
+          var yReason = yCat.name+' via Yahoo News (watchlist alert)';
+          var yAlert = await buildMaverickAlert(wtSym, yLive, yReason, yCat.name, yCat.rank);
+          await tg(yAlert); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++; await sleep(1500);
+        }
+      }
+      await sleep(400);
+    }
+  } catch(e) { console.error('[NEWS-YAHOO]', e.message); }
   try {
     if (POLYGON) {
       var articles = await polyNewsRaw(null, 40);
