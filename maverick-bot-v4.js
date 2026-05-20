@@ -118,10 +118,8 @@ var GROQ_KEY    = process.env.GROQ_KEY          || '';
 var CBRS_KEY    = process.env.CEREBRAS_KEY      || '';
 var JSONBIN_ID  = process.env.JSONBIN_ID        || '';
 var JSONBIN_KEY = process.env.JSONBIN_KEY        || '';
-// Alpaca Markets — free tier, rich news from Benzinga/AP/Reuters
-// Sign up free at alpaca.markets → copy API Key ID + Secret Key
-var ALPACA_KEY  = process.env.ALPACA_KEY_ID     || '';
-var ALPACA_SEC  = process.env.ALPACA_SECRET_KEY || '';
+// NOTE: Alpaca removed — requires ID/address verification (not available)
+// News covered by: Finnhub + EDGAR + EDGAR RSS + GlobeNewswire + Reuters + Yahoo
 var CBRS_KEY    = process.env.CEREBRAS_KEY     || '';
 var JSONBIN_ID  = process.env.JSONBIN_ID       || '';
 var JSONBIN_KEY = process.env.JSONBIN_KEY      || '';
@@ -385,24 +383,6 @@ async function safeText(r, ms) {
       setTimeout(function() { rej(new Error('text() timeout')); }, ms);
     })
   ]);
-}
-
-// ── ALPACA NEWS — Free tier, multi-source (Benzinga, AP, Reuters) ─────────────
-// Far richer than Finnhub free tier. Required env vars: ALPACA_KEY_ID + ALPACA_SECRET_KEY
-// Add at Render: alpaca.markets → free account → API Keys → Paper or Live
-async function alpacaNews(sym, limit) {
-  if (!ALPACA_KEY || !ALPACA_SEC) return [];
-  try {
-    var url = 'https://data.alpaca.markets/v1beta1/news?symbols='+sym+'&limit='+(limit||10)+'&sort=desc';
-    var r = await tFetch(url, {
-      headers: {
-        'APCA-API-KEY-ID':     ALPACA_KEY,
-        'APCA-API-SECRET-KEY': ALPACA_SEC
-      }
-    }, 8000);
-    var d = await safeJson(r);
-    return (d && d.news) ? d.news : [];
-  } catch(e) { return []; }
 }
 
 // ── FINVIZ SHORT INTEREST — Scrapes finviz.com for real short float % ─────────
@@ -3031,66 +3011,6 @@ async function scanNewsIntel() {
   iHealth.newsRunCount++;
   var sent = 0;
 
-  // ── SOURCE 0: ALPACA NEWS (PRIMARY — Benzinga/AP/Reuters, richest free source) ──
-  // Scans watchlist + gainers + algo arsenal. Richer than Finnhub free tier.
-  if (ALPACA_KEY && ALPACA_SEC) {
-    try {
-      var alpacaTickers = Object.keys(watchlist).slice(0,8);
-      algoWatchlist.slice(0,4).forEach(function(w){ if(w&&w.sym&&alpacaTickers.indexOf(w.sym)===-1) alpacaTickers.push(w.sym); });
-      var alpGainers = gainersCache || [];
-      alpGainers.slice(0,8).forEach(function(g){ if(g&&g.ticker&&alpacaTickers.indexOf(g.ticker)===-1) alpacaTickers.push(g.ticker); });
-
-      for (var ai=0; ai<alpacaTickers.length; ai++) {
-        var aSym = alpacaTickers[ai];
-        try {
-          var aNews = await alpacaNews(aSym, 5);
-          for (var an=0; an<aNews.length; an++) {
-            var art = aNews[an];
-            var aKey = headlineHash(art.id || art.headline);
-            if (sentHeadlines.has(aKey)) continue;
-            var artTs = art.created_at ? new Date(art.created_at).getTime()/1000 : 0;
-            if (artTs < lastNewsTs - 7200) continue; // only last 2hrs
-            var aBody = ((art.headline||'') + ' ' + (art.summary||'')).toLowerCase();
-            var aHits = BULLISH_KW.filter(function(k){return aBody.indexOf(k)!==-1;});
-            var aNegs = BEARISH_KW.filter(function(k){return aBody.indexOf(k)!==-1;});
-
-            // Two-phase NLP verification
-            var aNlp = null;
-            if ((aHits.length >= 1 || aNegs.length >= 1) && (GROQ_KEY||CBRS_KEY)) {
-              aNlp = await parseHeadlineSentiment(aSym, art.headline);
-            }
-            var isAlpacaBull = aNlp ? (aNlp.is_catalyst && aNlp.sentiment==='BULLISH' && !aNlp.dilution_event) : (aHits.length>=1 && aNegs.length===0);
-            var isAlpacaBear = aNlp ? (aNlp.sentiment==='BEARISH' || aNlp.dilution_event) : aNegs.length>=1;
-
-            if (isAlpacaBull) {
-              sentHeadlines.add(aKey);
-              if (artTs > lastNewsTs) lastNewsTs = artTs;
-              var aCat  = aNlp ? { rank: aNlp.catalyst_tier||5, name: identifyCatalyst(art.headline).name } : identifyCatalyst(art.headline);
-              var aLive = await getStock(aSym).catch(function(){return null;});
-              if (!aLive || aLive.price > TRADE_MAX_PRICE || aLive.price < 0.25) { await sleep(200); continue; }
-              var aAgeMin = artTs ? Math.round((Date.now()/1000 - artTs)/60) : 0;
-              var aSqueezeTag = aNlp && aNlp.short_squeeze_risk ? ' ⚡ SQUEEZE RISK' : '';
-              var aReason = aCat.name+aSqueezeTag+' via Alpaca ('+aAgeMin+'m ago)'+(aNlp?' [AI verified]':'');
-              var aAlert = await buildMaverickAlert(aSym, aLive, aReason, aCat.name, aCat.rank);
-              await tg(aAlert); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++;
-              await sleep(1500);
-            }
-            if (isAlpacaBear) {
-              sentHeadlines.add(aKey);
-              var dilTag = aNlp && aNlp.dilution_event ? '💧 DILUTION — ' : '';
-              await tg('<b>⚠️ BEARISH — $'+aSym+' '+cFlag(aSym)+'</b>\n'+dilTag+(art.headline||'')+(aNlp?' [AI]':'')+'\nSource: Alpaca/'+( art.source||'news'));
-              sent++; await sleep(1500);
-              // Inverse catalyst check
-              var invD2 = await getStock(aSym).catch(function(){return null;});
-              if (invD2) { var invSDI2=calcSDI(invD2,5); if(invSDI2.score>=55){inverseCatalystWatch[aSym]={firedAt:Date.now(),openPrice:invD2.open||invD2.price,sdi:invSDI2.score};} }
-            }
-          }
-          await sleep(300);
-        } catch(e) {}
-      }
-    } catch(e) { console.error('[NEWS-ALPACA]', e.message); }
-  }
-
   // ── SOURCE 1: TICKER-CENTRIC FINNHUB SCAN ─────────────────────────────────
   // Scan active gainers + watchlist for company-specific news.
   // This is reliable: we pick tickers first, then look for their news.
@@ -3324,6 +3244,38 @@ async function scanNewsIntel() {
     }
   } catch (e) { console.error('[NEWS-POLY]', e.message); }
 
+  // ── SOURCE 2E: REUTERS BUSINESS RSS — Free, cross-referenced to watchlist ───
+  try {
+    var reutR = await tFetch('https://feeds.reuters.com/reuters/businessNews',
+      {headers:{'User-Agent':'MaverickIntelBot contact@maverick.bot'}}, 10000);
+    var reutXml = await safeText(reutR);
+    if (reutXml) {
+      var rRx = /<item>([\s\S]*?)<\/item>/g, rm;
+      while ((rm = rRx.exec(reutXml)) !== null) {
+        var ri = rm[1];
+        var rTm = ri.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+        if (!rTm) continue;
+        var rHead = rTm[1].replace(/<[^>]+>/g,'').trim();
+        var rKey  = headlineHash(rHead);
+        if (sentHeadlines.has(rKey)) continue;
+        var rBody = rHead.toLowerCase();
+        var rHits = BULLISH_KW.filter(function(k){return rBody.indexOf(k)!==-1;});
+        var rNegs = BEARISH_KW.filter(function(k){return rBody.indexOf(k)!==-1;});
+        if (rHits.length < 1 || rNegs.length > 0) continue;
+        var wlKeys = Object.keys(watchlist);
+        var rTick = wlKeys.find(function(t){ return rBody.toUpperCase().indexOf(t)>-1; });
+        if (!rTick) continue;
+        sentHeadlines.add(rKey);
+        var rCat  = identifyCatalyst(rHead);
+        var rLive = await getStock(rTick).catch(function(){return null;});
+        if (rLive && rLive.price <= TRADE_MAX_PRICE && rLive.price >= 0.25) {
+          var rAlert = await buildMaverickAlert(rTick, rLive, rCat.name+' via Reuters', rCat.name, rCat.rank);
+          await tg(rAlert); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++; await sleep(1500);
+        }
+      }
+    }
+  } catch(e) { console.error('[NEWS-REUTERS]', e.message); }
+
   // ── SOURCE 4: FINNHUB WATCHLIST NEWS ─────────────────────────────────────
   try {
     if (FINNHUB) {
@@ -3533,7 +3485,75 @@ async function cmdTopPick(chatId) {
 async function cmdStart(chatId) {
   await tg(
     '<b>⚔️ MAVERICK INTEL BOT v7.0</b>\n' +
-    '<i>Genome-Calibrated | Alpaca News | Finviz Short Data | FPR Engine</i>\n\n' +
+    '<i>Genome-Calibrated | Cluster Engine | 6 News Sources | Finviz Short | FPR</i>\n' +
+    '<i>🇺🇸 +3pts | 🇨🇳 -4pts | 🇮🇱 HARD EXCLUDED | Universe: $0.25–$20</i>\n\n' +
+
+    '<b>🎯 FOCUS MODE</b>\n' +
+    '/focus — expert AI peer conversation (live data auto-injected)\n' +
+    '/focus off — return to command mode\n\n' +
+
+    '<b>🏆 TOP PICK</b>\n' +
+    '/top-pick — highest conviction setup right now, full case runs automatically\n\n' +
+
+    '<b>📊 FULL ANALYSIS</b>\n' +
+    '/check TICKER — 3-part: snapshot → AI conviction → action plan\n' +
+    '/science TICKER — full science (MIS + SDI + SAS + SM% + Duration)\n' +
+    '/mis TICKER — alias for /science\n' +
+    '/sdi TICKER — Short Danger Index (DTC + short % + FPR + catalyst)\n' +
+    '/sas TICKER — 🐋 Stealth Accumulation Score\n' +
+    '/trend TICKER — Trend Recognition Engine (MA5/10/20, HH/HL, staircase)\n' +
+    '/supernova TICKER — 9-ingredient Supernova Protocol\n' +
+    '/supernova-scan — scan universe for supernova candidates\n' +
+    '/cascade TICKER — 🌀 Buy-to-Cover Cascade Detector\n' +
+    '/clusters TICKER — 📍 Stop-Loss Cluster Map (flush zones + entry)\n' +
+    '/confidence TICKER — 🛰️ Trade Confidence Engine (in-trade telemetry)\n\n' +
+
+    '<b>📡 SCANNERS</b>\n' +
+    '/scan — full universe scored + ranked (MIS + SAS + SDI)\n' +
+    '/staircase — 🪜 active staircase scan across universe\n' +
+    '/sc — alias for /staircase\n' +
+    '/squeeze — SDI-powered squeeze candidates (confirmed short data only)\n' +
+    '/intraday — VWAP whale detector + volume pace\n' +
+    '/gappers — live top gainers/gappers\n' +
+    '/news — latest catalysts (NLP two-phase verified, ranked 1-5)\n' +
+    '/autopsy TICKER — 30-day top mover pattern dissection\n' +
+    '/backtest — MIS formula validation vs history\n' +
+    '/briefing — morning briefing (manual trigger)\n\n' +
+
+    '<b>🤖 WATCHLISTS</b>\n' +
+    '/awatch — algo arsenal (7 autonomous slots, updates every 10min)\n' +
+    '/mywatch — your personal watchlist with live prices\n' +
+    '/watch TICKER — add ticker to your watchlist\n' +
+    '/unwatch TICKER — remove ticker from watchlist\n\n' +
+
+    '<b>⚙️ PROTOCOLS</b>\n' +
+    '/ross — Ross Cameron Gap and Go\n' +
+    '/humble — Humble Trader continuation\n' +
+    '/maverick — Maverick adaptive (learns from your trades)\n' +
+    '/protocol off — deactivate active protocol\n\n' +
+
+    '<b>📈 TRADE TRACKING</b>\n' +
+    '/position TICKER ENTRY STOP TP1 TP2 SHARES\n' +
+    '/positions — all open trades with live P&L\n' +
+    '/close TICKER EXITPRICE — close and log the trade\n' +
+    '/scale TICKER SHARES PRICE — log partial exit\n' +
+    '/confidence TICKER — live conviction score + cluster context\n' +
+    '/alert TICKER PRICE above|below — price level alert\n\n' +
+
+    '<b>🧠 LEARNING ENGINE</b>\n' +
+    '/myedge — win rate by float / RVOL / protocol\n' +
+    '/history — last 10 closed trades\n\n' +
+
+    '<b>🔧 DIAGNOSTICS</b>\n' +
+    '/status — system health + organic alert count + news source status\n' +
+    '/test-alert TICKER — full pipeline test\n\n' +
+
+    '<b>💬 NATURAL LANGUAGE</b>\n' +
+    'In /focus mode: type anything. Tickers in ALL-CAPS auto-pull live data.\n' +
+    '"ATER" → live analysis | "scan" → scanner | "top pick" → best setup',
+    chatId
+  );
+}
 
     '<b>🎯 FOCUS MODE</b>\n' +
     '/focus — expert peer conversation (no command routing)\n' +
@@ -3575,28 +3595,6 @@ async function cmdStart(chatId) {
     '/humble — Humble Trader continuation\n' +
     '/maverick — Maverick adaptive (learns from your trades)\n' +
     '/protocol off — deactivate protocol\n\n' +
-
-    '<b>📈 TRADE TRACKING</b>\n' +
-    '/position TICKER ENTRY STOP TP1 TP2 SHARES\n' +
-    '/positions — open trades with live P&L\n' +
-    '/close TICKER EXITPRICE — close and log\n' +
-    '/confidence TICKER — in-trade confidence analysis\n' +
-    '/alert TICKER PRICE above|below\n\n' +
-
-    '<b>🧠 LEARNING ENGINE</b>\n' +
-    '/myedge — win rate by float/RVOL/protocol\n' +
-    '/history — last 10 closed trades\n\n' +
-
-    '<b>🔧 DIAGNOSTICS</b>\n' +
-    '/status — system health + organic alert count\n' +
-    '/test-alert TICKER — full pipeline test\n\n' +
-
-    '<b>💬 NATURAL LANGUAGE</b>\n' +
-    'Type anything in /focus mode. Or use ALL-CAPS tickers anywhere:\n' +
-    '"GOVX" → live analysis  |  "scan" → scanner  |  "top pick" → best setup',
-    chatId
-  );
-}
 
 async function cmdCheck(sym, chatId) {
   var key = 'check:'+sym;
@@ -5283,17 +5281,17 @@ async function start() {
 
   await tg(
     '<b>⚔️ MAVERICK INTEL BOT v7.0 — ONLINE</b>\n\n' +
-    '📡 Alpaca News | 📊 Finviz Short % | 🧬 Genome-Calibrated | 🔥 FPR Engine\n\n' +
-    '<b>v7.0 — CLUSTER ENGINE + SQUEEZE FIX:</b>\n' +
-    '• Alpaca news (Benzinga/AP/Reuters) — far richer than Finnhub free tier\n' +
-    '• Finviz short interest scraper — real FINRA data, 1hr cached\n' +
-    '• Legal/court ruling now Tier 1 catalyst (research: avg +300-515%)\n' +
-    '• Float Pressure Ratio (FPR) = (RVOL × Short%) / Float — parabolic signal\n' +
-    '• Catalyst proxy: RVOL 5x + 15%+ move = implied Tier 3 (no more 0-point unknowns)\n' +
-    '• Compressed spring bonus: within 20% of 52W low = research amplifier\n' +
-    '• Scan/briefing thresholds lowered — DEVELOPING setups now visible\n\n' +
-    'Add to Render env: ALPACA_KEY_ID + ALPACA_SECRET_KEY (free at alpaca.markets)\n' +
-    '/help for full command list.'
+    '📡 6 News Sources | 📍 Cluster Engine | 📊 Finviz Short | 🔥 Genome Calibrated\n\n' +
+    '<b>ACTIVE NEWS FEEDS (all free, no API key):</b>\n' +
+    '• Finnhub ticker news — per-watchlist catalyst scan\n' +
+    '• SEC EDGAR 8-K search — company filing alerts\n' +
+    '• EDGAR RSS — real-time 8-K/6-K (court/patent events fired here)\n' +
+    '• GlobeNewswire RSS — PR announcements (retail ignition catalyst #1)\n' +
+    '• Yahoo ticker news — watchlist-specific, no key\n' +
+    '• Reuters Business RSS — cross-referenced to watchlist\n\n' +
+    '<b>COUNTRY RULES:</b> 🇺🇸 US +3pts | 🇨🇳 CN -4pts | 🇮🇱 IL HARD EXCLUDED\n\n' +
+    '<b>v7.0 ENGINES:</b> Cluster Map | Flush Absorption | FPR | Cascade | Confidence Pulse\n\n' +
+    '/help for all commands | /focus to talk trade | /clusters TICKER for stop-loss map'
   );
 
   setInterval(monitorPositions,  60000);
