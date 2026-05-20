@@ -1,17 +1,22 @@
 /**
  * ╔══════════════════════════════════════════════════════════╗
- * ║         MAVERICK INTEL BOT v7.1 — PATCH RELEASE           ║
+ * ║         MAVERICK INTEL BOT v7.2 — SESSION BUILD           ║
  * ║                                                          ║
- * ║  v7.1 FIXES (from v7.0):                                ║
- * ║  • /check "cmdCheck not defined" — FIXED (orphaned +)   ║
- * ║  • Briefing: now fires ONLY at 7:00/8:00/9:20/14:45 CT  ║
- * ║  • Short interest: 3-source waterfall (Finviz→ShortVol)  ║
- * ║  • Finviz regex: 5-pattern robust scraper               ║
- * ║  • ShortVolume.com: daily FINRA short vol fallback      ║
- * ║  • StockTwits: crowd sentiment injected into /check+focus║
- * ║  • Duplicate var declarations removed                   ║
+ * ║  v7.2 CHANGES:                                           ║
+ * ║  • Algo watchlist → hourly digest only (no per-change)  ║
+ * ║  • /autopsy removed entirely                            ║
+ * ║  • /check restructured: numbers first, logic below      ║
+ * ║  • PIPE SPLIT: wide scoring net / tight alert gate      ║
+ * ║    - identifyCatalyst() widened + Rank 4 fallback       ║
+ * ║    - proxyCatalystRank() loosened (Groq thresholds)     ║
+ * ║    - BULLISH_KW expanded with Phase 2/3 terms           ║
+ * ║    - Alert gate: Rank 1-3 = push, Rank 4-5 = score only ║
  * ║                                                          ║
- * ║  v5.0 — PHASE 3: PROJECT SUPERNOVA SCIENCE              ║
+ * ║  v7.1 FIXES (carried):                                  ║
+ * ║  • /check cmdCheck not defined — FIXED                  ║
+ * ║  • Briefings: 7:00/8:00/9:20/14:45 CT only             ║
+ * ║  • Short interest: 3-source waterfall                   ║
+ * ║  • StockTwits crowd sentiment                           ║
  * ║  • /supernova TICKER — Full Supernova Protocol score     ║
  * ║  • 9 Supernova Ingredients scored live                   ║
  * ║  • Rule of Five engine — 5/9 = tradeable candidate       ║
@@ -245,7 +250,6 @@ function detectIntent(text) {
   if (/\b(squeeze|short squeeze)\b/.test(lower)) return 'squeeze';
   if (/\b(news|catalyst|headline|filing)\b/.test(lower)) return 'news';
   if (/\b(price|check|analyse|analyze|trade|buy|entry|stop|target|worth|setup|chart|look up|doing)\b/.test(lower)) return 'check';
-  if (/\b(autopsy|30.day|pattern)\b/.test(lower)) return 'autopsy';
   if (/\b(ignition|mis score|science score)\b/.test(lower)) return 'science';
   if (/\b(short danger|sdi)\b/.test(lower)) return 'sdi';
   if (/\b(stealth|accumulation|whale detect|sas score|dark pool)\b/.test(lower)) return 'sas';
@@ -1394,26 +1398,35 @@ var CATALYST_MAP = {
   'trading halted':{rank:4,name:'Trading Halt Notice'}
 };
 
-// ── BULLISH KEYWORDS — Research-Expanded ─────────────────────────────────────
-// Added: legal victory terms, AI narrative terms, crypto/EV sector terms
+// ── BULLISH KEYWORDS — SCORING NET (wide — feeds catalyst detection) ─────────
+// Used by scanNewsIntel for initial keyword hit detection.
+// Wider than before: more matches = more catalyst scoring opportunities.
+// Alert gate (NLP + rank) handles noise filtering downstream.
 var BULLISH_KW = [
-  // Legal/Court (NEW — highest magnitude catalyst per research)
+  // Legal/Court (highest magnitude catalyst per research)
   'jury verdict','court ruling','patent ruling','patent win','supreme court','court victory',
   'judgment','damages awarded','won lawsuit','patent affirmed','6-k','awarded damages',
   // FDA/Biotech
   'fda approval','fda approved','fda clearance','pdufa','phase 3 results','phase 3 trial',
-  'breakthrough designation','orphan drug','positive data','clinical readout',
+  'phase 2','clinical trial','ind approval','fast track','priority review',
+  'breakthrough designation','breakthrough therapy','orphan drug','positive data','clinical readout',
   // M&A / Earnings
   'merger','acquisition','buyout','earnings beat','beat estimates','record revenue',
   'revenue growth','returned to profitability','raised guidance','short squeeze',
-  // AI/Tech/Sector themes (per research, narrative amplification is primary catalyst)
+  'going private','reverse merger','debt restructuring',
+  // Contracts / Deals
   'ai partnership','ai contract','artificial intelligence','ai patent','machine learning',
   'government contract','barda contract','dod contract','defense contract',
-  'partnership agreement','contract award','uplisting','nasdaq compliance',
-  'bitcoin','crypto','blockchain','electric vehicle',
-  // Momentum continuation
-  'positive results','clinical data','data readout','reverse split','buyback',
-  'going private','strategic partnership'
+  'partnership agreement','contract award','strategic partnership','collaboration agreement',
+  'license agreement','licensing deal',
+  // Market structure
+  'uplisting','nasdaq compliance','positive results','clinical data','data readout',
+  'reverse split','buyback','bitcoin','crypto','blockchain','electric vehicle',
+  // Funding / Capital
+  'funding round','capital raise','grant awarded','milestone payment',
+  // General positive signals (Rank 4 territory)
+  'positive','approval','approved','win','beat','record','partnership','contract',
+  'uplist','compliance','collaboration','license','funding','granted','awarded'
 ];
 
 var BEARISH_KW = [
@@ -1424,28 +1437,51 @@ var BEARISH_KW = [
   'dose limiting','discontinued'
 ];
 
+// ── IDENTIFY CATALYST — SCORING VERSION (wide net) ───────────────────────
+// Used by ALL scoring engines: MIS, SDI, SAS, /check, /science, /supernova.
+// Intentionally generous — catches Rank 4 potential catalysts that strict NLP misses.
+// Rule: when in doubt, give the stock the benefit of the doubt for scoring.
 function identifyCatalyst(headline) {
   if (!headline) return { rank:5, name:'No Catalyst' };
-  var body=headline.toLowerCase(), bestRank=5, bestName='Unknown Catalyst';
+  var body = headline.toLowerCase(), bestRank = 5, bestName = 'Unknown Catalyst';
   Object.keys(CATALYST_MAP).forEach(function(k){
-    if(body.indexOf(k)!==-1 && CATALYST_MAP[k].rank < bestRank) {
-      bestRank=CATALYST_MAP[k].rank; bestName=CATALYST_MAP[k].name;
+    if (body.indexOf(k) !== -1 && CATALYST_MAP[k].rank < bestRank) {
+      bestRank = CATALYST_MAP[k].rank; bestName = CATALYST_MAP[k].name;
     }
   });
-  return { rank:bestRank, name:bestName };
+  // Rank 4 fallback — any positive signal that beats "no catalyst"
+  // This preserves scoring accuracy even when no exact keyword matched.
+  if (bestRank === 5) {
+    if (/positive|approval|approved|win|won|beat|record|partnership|contract|uplist|compliance|collaboration|license|funding|granted|awarded/i.test(body)) {
+      bestRank = 4; bestName = 'Potential Catalyst';
+    }
+  }
+  return { rank: bestRank, name: bestName };
 }
 
-// ── CATALYST PROXY — When no news is identified ───────────────────────────────
-// Research finding: every major mover gave advance notice through detectable signals.
-// When catalyst is unknown (rank 5), use RVOL + gap + float as implied catalyst proxy.
-// RVOL 5x+ on low float = something is happening. Treat as rank 3, not rank 5.
+// ── IDENTIFY CATALYST — ALERT VERSION (narrow gate) ──────────────────────
+// Used ONLY by scanNewsIntel for Telegram push decisions.
+// Must be Rank 1-3 with no dilution to fire an alert to your phone.
+// Rank 4 catalysts are scored silently but do NOT push a notification.
+function identifyCatalystForAlert(headline) {
+  var result = identifyCatalyst(headline);
+  // Alerts only push for confirmed Rank 1-3; Rank 4-5 = score only, no push
+  return result;
+}
+
+// ── CATALYST PROXY — When no news identified, use price action as evidence ────
+// Groq + research calibrated thresholds. Substantially more generous than v7.0.
+// Rule: a stock with 4x+ RVOL and 8%+ move on a <20M float IS being traded on something.
+// Treat as Rank 3 minimum — don't penalize the score for missing the headline.
 function proxyCatalystRank(d, rawRank) {
   if (rawRank <= 3) return rawRank; // Known catalyst — use as-is
-  // Proxy: strong RVOL + significant gap on small float = implied Tier 3 catalyst
-  if (d.relVol >= 5 && d.changePct >= 15 && d.floatM <= 15) return 3;
-  if (d.relVol >= 10 && d.changePct >= 10) return 3;
-  if (d.relVol >= 3 && d.changePct >= 20 && d.floatM <= 5) return 3;
-  return rawRank; // No proxy — stays rank 4 or 5
+  // Tier 1 proxy: strong evidence of institutional catalyst
+  if (d.relVol >= 4 && d.changePct >= 8  && d.floatM <= 20) return 3;
+  if (d.relVol >= 6 || (d.gapPct && d.gapPct >= 12))         return 3;
+  // Tier 2 proxy: moderate signal
+  if (d.floatM <= 8  && d.changePct >= 10)                    return 4;
+  if (d.relVol >= 3  && d.changePct >= 15)                    return 4;
+  return rawRank;
 }
 
 // ── FLOAT PRESSURE RATIO (FPR) — Day Trade Genome Research ───────────────────
@@ -2093,50 +2129,55 @@ async function updateAlgoWatchlist() {
   scored.sort(function(a,b){return b.score-a.score;});
   // Always fill 7 slots — even if low conviction
   var newList = scored.slice(0,7).map(function(s){return Object.assign({},s,{addedTs:Date.now()});});
-  if (newList.length === 0) return; // Nothing scoreable, skip update
+  if (newList.length === 0) return;
 
-  // Detect slot changes and alert
   var oldSyms = algoWatchlist.map(function(w){return w.sym;});
   var newSyms = newList.map(function(w){return w.sym;});
-  var hasChange = false;
 
-  // Alert: new entries
-  for (var n=0; n<newSyms.length; n++) {
-    if (oldSyms.indexOf(newSyms[n]) === -1) {
-      hasChange = true;
-      var entry = newList[n];
-      await tg(
-        '🤖 <b>ALGO WATCHLIST — SLOT '+(n+1)+' ENTRY</b>\n\n' +
-        '$'+entry.sym+' '+cFlag(entry.sym)+' earned a spot\n' +
-        'Conviction: <b>'+entry.convTier+'</b>  Score: '+entry.score+'/100\n' +
-        'MIS:'+entry.mis+' SDI:'+entry.sdi+' SAS:'+entry.sas+'\n' +
-        '$'+entry.price+' ('+(entry.changePct>=0?'+':'')+rnd(entry.changePct,1)+'%) RVOL:'+entry.relVol+'x Float:'+entry.floatM+'M\n' +
-        'Trend: '+entry.trend+'\n' +
-        entry.reason+'\n\n' +
-        '/check '+entry.sym+' | /trend '+entry.sym
-      );
-      await sleep(1200);
-    }
-  }
-  // Alert: exits
-  for (var o=0; o<oldSyms.length; o++) {
-    if (newSyms.indexOf(oldSyms[o]) === -1) {
-      hasChange = true;
-      var dropReason = scored.find(function(s){return s.sym===oldSyms[o];});
-      await tg(
-        '🤖 <b>ALGO WATCHLIST — DROPPED</b>\n\n' +
-        '$'+oldSyms[o]+' removed from algo arsenal\n' +
-        (dropReason?'New score: '+dropReason.score+'/100 — fell below threshold\n':'No longer scoring\n') +
-        'Replaced by stronger setup'
-      );
-      await sleep(1200);
-    }
-  }
+  // Track entries/exits in memory — but ONLY push hourly digest to Telegram
+  var entries = newSyms.filter(function(s){ return oldSyms.indexOf(s) === -1; });
+  var exits   = oldSyms.filter(function(s){ return newSyms.indexOf(s) === -1; });
 
   algoWatchlist = newList;
   algoWatchTs   = Date.now();
-  if (hasChange) console.log('[ALGO-WATCH] Updated: '+newSyms.join(', '));
-  else console.log('[ALGO-WATCH] No changes. Holding: '+newSyms.join(', '));
+
+  if (entries.length || exits.length) {
+    console.log('[ALGO-WATCH] Updated: +['+entries.join(',')+'] -['+exits.join(',')+'] Holding: '+newSyms.join(', '));
+  } else {
+    console.log('[ALGO-WATCH] No changes. Holding: '+newSyms.join(', '));
+  }
+
+  // ── HOURLY DIGEST — one push per hour max ─────────────────────────────────
+  // Algo runs every 10 min but your phone only hears about it once an hour.
+  if (!runAlgoUpdate._lastAlertTs) runAlgoUpdate._lastAlertTs = 0;
+  var msSinceAlert = Date.now() - runAlgoUpdate._lastAlertTs;
+  if (msSinceAlert < 3600000) return; // < 1 hour since last push — stay quiet
+  runAlgoUpdate._lastAlertTs = Date.now();
+
+  // Build compact hourly digest
+  var high = newList.filter(function(w){ return w.convTier && w.convTier.includes('HIGH'); });
+  var med  = newList.filter(function(w){ return w.convTier && w.convTier.includes('MED'); });
+
+  var msg = '🤖 <b>ALGO ARSENAL — HOURLY UPDATE</b>\n';
+  msg += '<i>'+todayStr()+' | Slots: '+newList.length+'/7</i>\n';
+  if (entries.length) msg += '🟢 New: $'+entries.join(' $')+'\n';
+  if (exits.length)   msg += '🔴 Out: $'+exits.join(' $')+'\n';
+  msg += '━━━━━━━━━━━━━━━━━━\n';
+
+  newList.slice(0,7).forEach(function(w, i) {
+    var emoji = w.convTier && w.convTier.includes('HIGH') ? '🔥' : w.convTier && w.convTier.includes('MED') ? '⚡' : '👀';
+    msg += emoji+' ['+(i+1)+'] <b>$'+w.sym+'</b> '+cFlag(w.sym);
+    msg += '  $'+w.price+' ('+(w.changePct>=0?'+':'')+rnd(w.changePct,1)+'%)';
+    msg += '  RVOL:'+w.relVol+'x  MIS:'+w.mis+'\n';
+  });
+
+  if (high.length) {
+    msg += '\n🔥 <b>HIGH CONVICTION:</b> ';
+    msg += high.map(function(w){ return '/check '+w.sym; }).join(' | ');
+    msg += '\n';
+  }
+  msg += '\n/awatch for full detail | /top-pick for #1 setup';
+  await tg(msg);
 }
 
 // ── /awatch — show algo watchlist ────────────────────────────────────────
@@ -3163,9 +3204,19 @@ async function scanNewsIntel() {
               var ageMin = Math.round((Date.now()/1000 - tnItem.datetime)/60);
               var squeezeFlag = nlpResult && nlpResult.short_squeeze_risk ? ' ⚡ SHORT SQUEEZE RISK' : '';
               var reason = tnCat.name + squeezeFlag + ' ('+ageMin+'m ago' + (nlpResult?' | AI verified':'') + ')';
-              var alertMsg = await buildMaverickAlert(sym, tnLive, reason, tnCat.name, tnCat.rank);
-              await tg(alertMsg); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++;
-              await sleep(1500);
+
+              // ── ALERT GATE: Rank 1-3 = push to phone. Rank 4-5 = score only. ──
+              // Wide keyword net catches everything for scoring accuracy.
+              // Tight rank gate protects your phone from noise.
+              if (tnCat.rank <= 3) {
+                var alertMsg = await buildMaverickAlert(sym, tnLive, reason, tnCat.name, tnCat.rank);
+                await tg(alertMsg); sent++; organicAlertsSent++; iHealth.newsAlertsTotal++;
+                await sleep(1500);
+              } else {
+                // Rank 4-5: log silently for scoring engines, no Telegram push
+                console.log('[NEWS-SCORED] Rank '+tnCat.rank+' catalyst for $'+sym+': "'+tnItem.headline.slice(0,60)+'" — scored only, no alert');
+                iHealth.newsAlertsTotal++; // count as detected, not as push
+              }
             }
             if (isBearish) {
               sentHeadlines.add(headlineHash(tnKey));
@@ -3501,75 +3552,6 @@ async function morningBriefing(manual) {
   await tg(msg);
 }
 
-// ── AUTOPSY ENGINE ─────────────────────────────────────────────────────────
-async function runAutopsy() {
-  procStart('autopsy', '/autopsy', '');
-  await tg('⏳ <b>AUTOPSY ENGINE RUNNING</b>\nDissecting last 30 days of top movers...\nThis takes 2-4 minutes on cold start. I\'ll send results when done. You can type /status to see progress.', CHAT_ID);
-  var gainers=await getTopGainers(), candidates=gainers.map(function(g){return g.ticker;}).slice(0,8);
-  Object.keys(watchlist).forEach(function(t){if(candidates.indexOf(t)===-1)candidates.push(t);});
-  candidates=candidates.slice(0,10);
-  var autopsyResults=[];
-  for (var i=0;i<candidates.length;i++){
-    var sym=candidates[i];
-    try {
-      var aggs=await getAggs(sym,40); if(!aggs||aggs.length<5){await sleep(200);continue;}
-      var biggestMove=0, biggestDay=null, biggestIdx=0;
-      for(var j=1;j<aggs.length;j++){var pc=aggs[j-1].c,cc=aggs[j].c;if(!pc||!cc||pc<=0)continue;var pct=(cc-pc)/pc*100;if(pct>biggestMove){biggestMove=pct;biggestDay=aggs[j];biggestIdx=j;}}
-      if(biggestMove<15||!biggestDay){await sleep(200);continue;}
-      var closeVsHigh=biggestDay.h>0?rnd(biggestDay.c/biggestDay.h*100,1):50;
-      var durationType=closeVsHigh>=80?'SUSTAINED':closeVsHigh>=50?'PARTIAL':'SPIKE-FADE';
-      var estHours=durationType==='SUSTAINED'?5.5:durationType==='PARTIAL'?3.0:1.5;
-      var priorVols=aggs.slice(Math.max(0,biggestIdx-5),biggestIdx).map(function(a){return a.v||0;});
-      var priorAvg=priorVols.length?priorVols.reduce(function(a,b){return a+b;},0)/priorVols.length:500000;
-      var rvolOnDay=priorAvg>0?rnd((biggestDay.v||0)/priorAvg,1):0;
-      var dayDate=new Date(biggestDay.t).toISOString().slice(0,10);
-      var newsItems=await polyNewsRaw(sym,10);
-      var relevantNews=newsItems.filter(function(n){var pub=(n.published_utc||'').slice(0,10);var diff=(new Date(dayDate).getTime()-new Date(pub).getTime())/86400000;return diff>=-1&&diff<=3;});
-      var catalyst={rank:5,name:'Unknown'},catHead='';
-      if(relevantNews.length){catHead=relevantNews[0].title||'';catalyst=identifyCatalyst(catHead);}
-      var d=await getStock(sym).catch(function(){return null;});
-      var floatM=d?d.floatM:50,shrtPct=d?d.shortPct:0;
-      var seqFlags=[];
-      if(floatM<5)seqFlags.push('TIGHT FLOAT');if(shrtPct>20)seqFlags.push('HIGH SHORT');if(rvolOnDay>=5)seqFlags.push('WHALE RVOL');if(catalyst.rank<=2)seqFlags.push('STRONG CATALYST');if(durationType==='SUSTAINED')seqFlags.push('ALL-DAY RUN');
-      autopsyResults.push({sym,maxGainPct:rnd(biggestMove,1),dayDate,catalyst,catHead:catHead.slice(0,120),durationType,estHours,rvolOnDay,closeVsHigh,floatM,shortPct:shrtPct,seqFlags});
-      await sleep(400);
-    } catch(e){console.error('[AUTOPSY]',sym,e.message);}
-  }
-  autopsyResults.sort(function(a,b){return b.maxGainPct-a.maxGainPct;});
-  memory.science={results:autopsyResults,generated:Date.now()};
-  await saveMemory();
-  procEnd('autopsy');
-  return autopsyResults;
-}
-
-function buildAutopsyReport(results) {
-  if(!results||!results.length) return 'No autopsy data. Run /autopsy to analyze.';
-  var top3=results.slice(0,3);
-  var avgMove=rnd(top3.reduce(function(a,r){return a+r.maxGainPct;},0)/top3.length,1);
-  var avgHours=rnd(top3.reduce(function(a,r){return a+r.estHours;},0)/top3.length,1);
-  var avgRvol=rnd(top3.reduce(function(a,r){return a+r.rvolOnDay;},0)/top3.length,1);
-  var catCount={};top3.forEach(function(r){catCount[r.catalyst.name]=(catCount[r.catalyst.name]||0)+1;});
-  var topCat=Object.keys(catCount).sort(function(a,b){return catCount[b]-catCount[a];})[0]||'Unknown';
-  var sustained=top3.filter(function(r){return r.durationType==='SUSTAINED';}).length;
-  var whaleVol=top3.filter(function(r){return r.rvolOnDay>=5;}).length;
-  var tightFlt=top3.filter(function(r){return r.floatM<15;}).length;
-  var strongCat=top3.filter(function(r){return r.catalyst.rank<=2;}).length;
-  var msg='<b>MAVERICK AUTOPSY REPORT</b>\nTop Movers — Last 30 Days\n\n';
-  for(var i=0;i<top3.length;i++){
-    var r=top3[i];
-    msg+='<b>#'+(i+1)+' $'+r.sym+'</b>\nMax Move: +'+r.maxGainPct+'% ('+r.dayDate+')\n';
-    msg+='Catalyst: '+r.catalyst.name+' (Rank '+r.catalyst.rank+'/5)\n';
-    if(r.catHead) msg+='"'+r.catHead.slice(0,80)+'"\n';
-    msg+='Duration: '+r.durationType+' (~'+r.estHours+'h)  RVOL: '+r.rvolOnDay+'x\n';
-    if(r.seqFlags.length) msg+='Sequence: '+r.seqFlags.join(' + ')+'\n';
-    msg+='\n';
-  }
-  msg+='─────────────────────\n<b>SCIENCE FINDINGS</b>\n\n';
-  msg+='Avg move: +'+avgMove+'%  Avg duration: '+avgHours+'h  Avg RVOL: '+avgRvol+'x\nTop catalyst: '+topCat+'\n\n';
-  msg+='<b>PATTERNS:</b>\n• '+sustained+'/3 SUSTAINED all-day\n• '+whaleVol+'/3 RVOL > 5x\n• '+tightFlt+'/3 float < 15M\n• '+strongCat+'/3 Rank 1-2 catalyst\n\n';
-  msg+='<b>IGNITION SEQUENCE:</b>\n1. Catalyst drops (Rank 1-2)\n2. Float < 15M\n3. Gap > 10% pre-market\n4. RVOL > '+(avgRvol>=5?'5x':'3x')+' first hour\n5. First green candle holds VWAP\n\nScore any setup: /science TICKER\nCached 4h. /autopsy to refresh.';
-  return msg;
-}
 
 // ── /top-pick — Bot's single highest-conviction pick right now ─────────────
 async function cmdTopPick(chatId) {
@@ -3639,7 +3621,6 @@ async function cmdStart(chatId) {
     '/intraday — VWAP whale detector + volume pace\n' +
     '/gappers — live top gainers/gappers\n' +
     '/news — latest catalysts (NLP two-phase verified, ranked 1-5)\n' +
-    '/autopsy TICKER — 30-day top mover pattern dissection\n' +
     '/backtest — MIS formula validation vs history\n' +
     '/briefing — morning briefing (manual trigger)\n\n' +
 
@@ -3717,86 +3698,113 @@ async function cmdCheck(sym, chatId) {
   var zone     = priceZone(d.price);
   var countryFlag = country==='US'?'🇺🇸':country==='CN'?'🇨🇳':'🌐';
 
-  // ── MESSAGE 1: DATA SNAPSHOT ─────────────────────────────────────────────
-  var m1 = '<b>🎯 $'+sym+' — '+conviction+'</b> | '+d.source+' '+countryFlag+'\n';
-  m1 += zone.label+'\n';
+  // ── MESSAGE 1: SNIPER CARD — numbers first, logic follows ───────────────────
+  // Designed for one-glance decision making. All actionable numbers in the first
+  // 6 lines. Scores, context, and warnings follow below the fold.
+  var m1 = '';
+
+  // ─── LINE 1: IDENTITY ──────────────────────────────────────────────────────
+  m1 += '<b>$'+sym+'</b>  '+countryFlag+'  '+zone.label+'  <b>'+conviction+'</b>\n';
+
+  // ─── LINE 2: PRICE BAR ─────────────────────────────────────────────────────
   m1 += '━━━━━━━━━━━━━━━━━━━━━━\n';
-  m1 += '$'+d.price+' ('+changeStr+')';
-  if (d.gapPct) m1 += '  Gap:+'+rnd(d.gapPct,1)+'%';
+  m1 += '💲 <b>'+d.price+'</b>  ('+changeStr+')';
+  if (d.gapPct && Math.abs(d.gapPct) >= 1) m1 += '  Gap: '+(d.gapPct>=0?'+':'')+rnd(d.gapPct,1)+'%';
+  m1 += '\n';
+
+  // Pre/post market badge
   var checkHour = nowHourCT();
   if (d.preMarket && d.preMarket > 0 && checkHour < 9.5) {
-    m1 += '\n🌅 <b>PRE-MARKET: $'+d.preMarket+'</b> ('+(d.preMarketChg>=0?'+':'')+rnd(d.preMarketChg,2)+'%) — live';
-    if (d.floatRotPct >= 30) m1 += '\n🚨 <b>FLOAT ROTATION: '+d.floatRotPct+'% of float traded pre-market</b> — EXPLOSIVE INTRADAY SETUP';
-    else if (d.floatRotPct >= 15) m1 += '\n⚡ Float rotation: '+d.floatRotPct+'% pre-market (elevated)';
+    m1 += '🌅 PRE-MKT: <b>$'+d.preMarket+'</b> ('+(d.preMarketChg>=0?'+':'')+rnd(d.preMarketChg,2)+'%)\n';
+    if (d.floatRotPct >= 30) m1 += '🚨 <b>FLOAT ROTATION '+d.floatRotPct+'%</b> — explosive intraday signal\n';
+    else if (d.floatRotPct >= 15) m1 += '⚡ Float rotation: '+d.floatRotPct+'% pre-mkt\n';
   } else if (d.postMarket && d.postMarket > 0 && checkHour >= 16) {
-    m1 += '\n🌙 <b>AFTER-HOURS: $'+d.postMarket+'</b> ('+(d.postMarketChg>=0?'+':'')+rnd(d.postMarketChg,2)+'%) — live';
+    m1 += '🌙 AFTER-HOURS: <b>$'+d.postMarket+'</b> ('+(d.postMarketChg>=0?'+':'')+rnd(d.postMarketChg,2)+'%)\n';
   }
-  m1 += '\n';
-  m1 += 'RVOL: <b>'+d.relVol+'x</b>  Float: <b>'+d.floatM+'M</b>  Short: '+rnd(d.shortPct,1)+'%\n';
-  // ── STOCKTWITS SENTIMENT — crowd positioning signal ──────────────────────
+
+  // ─── LINE 3: MARKET VITALS ─────────────────────────────────────────────────
+  m1 += '📊 RVOL: <b>'+d.relVol+'x</b>  Float: <b>'+d.floatM+'M</b>  Short: <b>'+rnd(d.shortPct,1)+'%</b>  DTC: '+d.daysToCover+'d\n';
+
+  // ─── LINE 4: SCORES (the heartbeat) ────────────────────────────────────────
+  var misCheck = calcMIS(d, catRank);
+  var misBar = mis.pct >= 80 ? '🔥' : mis.pct >= 65 ? '⚡' : mis.pct >= 50 ? '📈' : '📉';
+  var sdiBar = sdi.score >= 70 ? '🔥' : sdi.score >= 50 ? '⚡' : '⬜';
+  var sasBar = sas.score >= 70 ? '🐋' : sas.score >= 50 ? '⚡' : '⬜';
+  m1 += misBar+' MIS: <b>'+mis.pct+'</b>  '+sdiBar+' SDI: <b>'+sdi.score+'</b>  '+sasBar+' SAS: <b>'+sas.score+'</b>  Setup: '+sr.score+'\n';
+
+  // ─── LINE 5: ACTION LEVELS ─────────────────────────────────────────────────
+  m1 += '━━━━━━━━━━━━━━━━━━━━━━\n';
+  m1 += '🟢 Entry: <b>$'+rnd(d.price*0.988,4)+' – $'+rnd(d.price*1.005,4)+'</b>\n';
+  m1 += '🔴 Stop:  <b>$'+stop+'</b>  ('+rnd((d.price-stop)/d.price*100,1)+'% risk)\n';
+  m1 += '🎯 TP1:   <b>$'+tp1+'</b>  (+'+rnd((tp1-d.price)/d.price*100,1)+'%)  → sell 50%\n';
+  m1 += '🎯 TP2:   <b>$'+tp2+'</b>  (+'+rnd((tp2-d.price)/d.price*100,1)+'%)  → sell 30%\n';
+  m1 += 'R:R  <b>'+rr+':1</b>\n';
+
+  // ─── LINE 6: FPR + CATALYST ────────────────────────────────────────────────
+  if (misCheck.fpr >= 1.0)       m1 += '🔥 FPR <b>'+misCheck.fpr+'</b> — PARABOLIC (>1.0)\n';
+  else if (misCheck.fpr >= 0.5)  m1 += '⚡ FPR <b>'+misCheck.fpr+'</b> — HIGH squeeze probability\n';
+  else if (misCheck.fpr > 0)     m1 += 'FPR: '+misCheck.fpr+'\n';
+  if (catName !== 'No Catalyst')  m1 += '📰 Catalyst: <b>'+catName+'</b> [Rank '+catRank+'/5]\n';
+
+  // ─── SECTION 2: TIMING + VWAP ──────────────────────────────────────────────
+  m1 += '━━━━━━━━━━━━━━━━━━━━━━\n';
+  var checkTimeCT = nowTimeCT();
+  if (checkTimeCT >= 10 && checkTimeCT < 15) {
+    m1 += '⏰ After 10AM CT — declining win rate. Phase 3 continuation only.\n';
+  }
+  if (vwapSniper.isSniperEntry) {
+    m1 += '\n'+vwapSniper.sniperNote+'\n';
+  } else {
+    m1 += 'VWAP: $'+vwapSniper.vwapProxy+' — '+(vwapSniper.aboveVwap?'ABOVE ✅':'BELOW ❌')+'  ('+(vwapSniper.vwapDevPct>=0?'+':'')+vwapSniper.vwapDevPct+'%)\n';
+  }
+
+  // ─── SECTION 3: INTELLIGENCE LAYER ────────────────────────────────────────
+  m1 += '\n<b>📐 SCORES & STRUCTURE</b>\n';
+  m1 += 'MIS: '+mis.pct+'/100 ['+mis.tier+']  Expected: +'+mis.expectedMove+'\n';
+  m1 += 'SDI: '+sdi.score+'/100 ['+sdi.danger+']\n';
+  m1 += 'SAS: '+sas.score+'/100 ['+sas.tier+']\n';
+  m1 += 'Supernova: '+sn.passed+'/9 ingredients ['+sn.grade+']\n';
+  m1 += 'Trend: '+trend.direction+'  Strength: '+trend.strength+'/100\n';
+  m1 += (trend.sma5?'5dMA: $'+trend.sma5+' '+(d.price>trend.sma5?'✅':'❌')+'  ':'');
+  m1 += (trend.sma20?'20dMA: $'+trend.sma20+' '+(d.price>trend.sma20?'✅':'❌'):'')+'\n';
+  m1 += 'HH/HL: '+trend.hhCount+'/'+trend.hlCount+'  VolBias: '+trend.volBias+'x  ROC5: '+(trend.roc5>=0?'+':'')+trend.roc5+'%\n';
+  if (trend.isStaircase || sc_stair.score >= 55) {
+    m1 += '🪜 <b>STAIRCASE PATTERN</b> — Score: '+sc_stair.score+'/100 ['+sc_stair.tier+']\n';
+  }
+
+  // ─── SECTION 4: SEQUENCE + DURATION ───────────────────────────────────────
+  m1 += '\n<b>📋 SEQUENCE</b>\n';
+  m1 += 'Seq A (Explosive): <b>'+seq.scoreA+'%</b>  Seq B (Duration): <b>'+seq.scoreB+'%</b>\n';
+  m1 += '→ Primary: <b>Sequence '+seq.primary+'</b> ['+seq.label+']\n';
+  m1 += '\n<b>'+dur.style+'</b>\n';
+  m1 += 'Duration: '+dur.minMin+'-'+dur.maxMin+' min  |  Hold: '+dur.hold+'\n';
+  m1 += '⚠️ '+dur.exitNote;
+
+  // ─── SECTION 5: STOP-LOSS CLUSTERS ────────────────────────────────────────
+  var clusterData = calcStopClusters(d);
+  if (clusterData.flushDetected || clusterData.clusters.length > 0) {
+    m1 += '\n\n<b>📍 STOP-LOSS CLUSTERS</b>\n';
+    if (clusterData.flushDetected) m1 += clusterData.flushNote+'\n';
+    clusterData.clusters.slice(0,3).forEach(function(cl){
+      var de = cl.density==='EXTREME'?'🔴':cl.density==='HIGH'?'🟠':cl.density==='MED'?'🟡':'🟢';
+      m1 += de+' $'+cl.level+' ['+cl.type+'] — '+cl.distPct+'% below'+(cl.flushTarget?' ← FLUSH TARGET':'')+'\n';
+    });
+    m1 += '<i>Low volume dip to cluster = buy alongside institutions.</i>\n';
+  }
+
+  // ─── SECTION 6: FLAGS + WARNINGS ──────────────────────────────────────────
+  if (sr.washWarning) m1 += '\n🚨 <b>ALGO SPOOFING ALERT</b> — Volume may be manufactured. Do not chase.\n';
+  if (sr.flags.length) m1 += sr.flags.join(' | ')+'\n';
+
+  // StockTwits sentiment
   try {
     var stSent = await getStocktwitsSentiment(sym).catch(function(){return null;});
     if (stSent && stSent.total >= 3) {
       var stEmoji = stSent.bullPct >= 70 ? '🔴' : stSent.bullPct >= 55 ? '🟡' : stSent.bullPct <= 30 ? '🟢' : '⚪';
-      var stNote  = stSent.bullPct >= 70 ? 'crowd at max greed — late stage' : stSent.bullPct <= 30 ? 'max fear — Archetype B zone' : 'mixed sentiment';
-      m1 += stEmoji+' StockTwits: <b>'+stSent.bullPct+'% bull</b> / '+stSent.bearPct+'% bear ('+stSent.total+' msgs) — '+stNote+'\n';
+      var stNote  = stSent.bullPct >= 70 ? 'crowd max greed — late stage' : stSent.bullPct <= 30 ? 'max fear — Archetype B zone' : 'mixed';
+      m1 += '\n'+stEmoji+' StockTwits: <b>'+stSent.bullPct+'% bull</b> / '+stSent.bearPct+'% bear ('+stSent.total+' msgs) — '+stNote+'\n';
     }
   } catch(e) {}
-  // FPR — Float Pressure Ratio (research proprietary indicator)
-  var misCheck = calcMIS(d, catRank);
-  if (misCheck.fpr >= 1.0)  m1 += '🔥 <b>FPR '+misCheck.fpr+'</b> — PARABOLIC potential (research threshold >1.0)\n';
-  else if (misCheck.fpr >= 0.5) m1 += '⚡ <b>FPR '+misCheck.fpr+'</b> — HIGH squeeze probability (>0.5)\n';
-  else if (misCheck.fpr > 0) m1 += 'FPR: '+misCheck.fpr+'\n';
-  // Research: entry timing — optimal 9:45AM-11AM ET / 8:45AM-10AM CT. After 10AM CT: lower win rate
-  var checkTimeCT = nowTimeCT();
-  if (checkTimeCT >= 10 && checkTimeCT < 15) {
-    m1 += '⏰ <b>TIME NOTE:</b> Research shows momentum entries after 10AM CT have declining win rates. Phase 3 continuation only.\n';
-  }
-  // VWAP sniper
-  if (vwapSniper.isSniperEntry) {
-    m1 += '\n'+vwapSniper.sniperNote+'\n';
-  } else {
-    m1 += 'VWAP proxy: $'+vwapSniper.vwapProxy+' — price '+(vwapSniper.aboveVwap?'ABOVE ✅':'BELOW ❌')+'  ('+( vwapSniper.vwapDevPct>=0?'+':'')+vwapSniper.vwapDevPct+'%)\n';
-  }
-  // ── STOP-LOSS CLUSTER MAP — show danger zones and flush events ────────────
-  var clusterData = calcStopClusters(d);
-  if (clusterData.flushDetected) {
-    m1 += '\n'+clusterData.flushNote+'\n';
-  }
-  if (clusterData.clusters.length > 0) {
-    m1 += '\n📍 <b>Stop-Loss Clusters</b> (where HFTs will flush):\n';
-    clusterData.clusters.slice(0,3).forEach(function(cl){
-      var density_emoji = cl.density==='EXTREME'?'🔴':cl.density==='HIGH'?'🟠':cl.density==='MED'?'🟡':'🟢';
-      m1 += density_emoji+' $'+cl.level+' ['+cl.type+'] — '+cl.distPct+'% below'+( cl.flushTarget?' ← FLUSH TARGET':'')+'  \n';
-    });
-    m1 += '<i>If price dips to these zones on low volume: buy the flush alongside institutions.</i>\n';
-  }
-  // Wash trading warning
-  if (sr.washWarning) {
-    m1 += '🚨 <b>ALGO SPOOFING ALERT</b> — High RVOL but low accumulation signal. Volume may be manufactured. Do not chase.\n';
-  }
-  if (catName !== 'No Catalyst') m1 += 'Catalyst: <b>'+catName+'</b> [Rank '+catRank+'/5]\n';
-  if (sr.flags.length) m1 += sr.flags.join(' | ')+'\n';
-  m1 += '\n<b>SCORES:</b>\n';
-  m1 += 'MIS: <b>'+mis.pct+'/100</b> ['+mis.tier+']  Expected: +'+mis.expectedMove+'\n';
-  m1 += 'SDI: <b>'+sdi.score+'/100</b> ['+sdi.danger+']\n';
-  m1 += 'SAS: <b>'+sas.score+'/100</b> ['+sas.tier+']\n';
-  m1 += 'Setup: '+sr.score+'/100  Supernova: '+sn.passed+'/9 ingredients\n';
-  m1 += '\n<b>TREND:</b> '+trend.direction+'  Strength:'+trend.strength+'/100\n';
-  m1 += (trend.sma5?'5dMA:$'+trend.sma5+' '+(d.price>trend.sma5?'✅':'❌')+'  ':'');
-  m1 += (trend.sma20?'20dMA:$'+trend.sma20+' '+(d.price>trend.sma20?'✅':'❌'):'')+'\n';
-  m1 += 'HH/HL: '+trend.hhCount+'/'+trend.hlCount+'  VolBias:'+trend.volBias+'x  ROC5:'+( trend.roc5>=0?'+':'')+trend.roc5+'%\n';
-  if (trend.isStaircase || sc_stair.score >= 55) {
-    m1 += '🪜 <b>STAIRCASE PATTERN</b> — Score:'+sc_stair.score+'/100 ['+sc_stair.tier+']\n';
-  }
-  m1 += '\n<b>SEQUENCE MATCH:</b>\n';
-  m1 += 'Seq A (Explosive):  <b>'+seq.scoreA+'%</b>\n';
-  m1 += 'Seq B (Duration):   <b>'+seq.scoreB+'%</b>\n';
-  m1 += '→ Primary: Sequence <b>'+seq.primary+'</b> ['+seq.label+']\n';
-  m1 += '\n<b>'+dur.style+'</b>\n';
-  m1 += 'Duration: '+dur.minMin+'-'+dur.maxMin+' min\n';
-  m1 += 'Hold plan: '+dur.hold+'\n';
-  m1 += '⚠️ '+dur.exitNote;
   await tg(m1, chatId);
   await sleep(300);
 
@@ -4011,12 +4019,6 @@ async function cmdSDI(sym, chatId) {
   else if(sdi.score>=55) msg+='Shorts nervous. RVOL spike forces covers.';
   else msg+='Shorts comfortable. Need stronger catalyst or RVOL to move this.';
   await tg(msg, chatId);
-}
-
-async function cmdAutopsy(chatId) {
-  if(memory.science&&memory.science.results&&memory.science.generated&&(Date.now()-memory.science.generated)<4*3600*1000) return tg(buildAutopsyReport(memory.science.results), chatId);
-  var results=await runAutopsy();
-  await tg(results&&results.length?buildAutopsyReport(results):'Autopsy failed. Check /check SPY to verify data is working.', chatId);
 }
 
 async function cmdGappers(chatId) {
@@ -4394,7 +4396,6 @@ async function cmdAI(text, chatId) {
   if (intent==='news')      return cmdNews(chatId);
   if (intent==='gappers')   return cmdGappers(chatId);
   if (intent==='squeeze')   return cmdSqueeze(chatId);
-  if (intent==='autopsy')   return cmdAutopsy(chatId);
   if (intent==='supernova' && ticker) return cmdSupernova(ticker, chatId);
   if (intent==='supernova') return tg('Supernova which ticker? Try: "supernova MDAI" or /supernova MDAI', chatId);
   if (intent==='sas' && ticker) return cmdSAS(ticker, chatId);
@@ -4530,7 +4531,6 @@ async function handleUpdate(update) {
     else if (cmd==='/sdi')                    await tg('Usage: /sdi TICKER  e.g. /sdi AAPL',chatId);
     else if (cmd==='/sas'&&parts[1])          fire(cmdSAS(parts[1].toUpperCase(),chatId));
     else if (cmd==='/sas')                    await tg('Usage: /sas TICKER  e.g. /sas MDAI',chatId);
-    else if (cmd==='/autopsy')                fire(cmdAutopsy(chatId));
     else if (cmd==='/supernova'&&parts[1])    fire(cmdSupernova(parts[1].toUpperCase(),chatId));
     else if (cmd==='/supernova')              await tg('Usage: /supernova TICKER  e.g. /supernova MDAI',chatId);
     else if (cmd==='/supernova-scan')         fire(cmdSupernovaScan(chatId));
@@ -4683,17 +4683,12 @@ async function runBacktest(chatId) {
     chatId
   );
 
-  // Get candidate tickers from autopsy cache or fresh gainers
+  // Build candidate universe from current gainers + base scan
   var candidates = [];
-  if (memory.science && memory.science.results && memory.science.results.length) {
-    candidates = memory.science.results.map(function(r){return r.sym;});
-    await tg('Using cached autopsy data — ' + candidates.length + ' tickers from last autopsy.', chatId);
-  } else {
-    var gainers = await getTopGainers();
-    candidates  = gainers.map(function(g){return g.ticker;}).slice(0,8);
-    candidates  = candidates.concat(BASE_SCAN.slice(0,10));
-    await tg('No autopsy cache. Using current gainers + base universe.', chatId);
-  }
+  var gainers = await getTopGainers();
+  candidates = gainers.map(function(g){return g.ticker;}).slice(0,8);
+  candidates = candidates.concat(BASE_SCAN.slice(0,10));
+  await tg('Using live universe — ' + candidates.length + ' tickers queued.', chatId);
   candidates = candidates.filter(function(v,i,a){return a.indexOf(v)===i;}).slice(0,18);
 
   var results = [];
@@ -4742,7 +4737,7 @@ async function runBacktest(chatId) {
   }
 
   if (!results.length) {
-    return tg('Backtest incomplete — not enough historical move data found.\nTry running /autopsy first to populate the ticker universe, then retry /backtest.', chatId);
+    return tg('Backtest incomplete — not enough historical move data found.\nTry /scan or add tickers to your watchlist with /watch TICKER, then retry /backtest.', chatId);
   }
 
   // ── TIER ANALYSIS ─────────────────────────────────────────────────────
